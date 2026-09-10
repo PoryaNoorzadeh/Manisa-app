@@ -1,6 +1,9 @@
 package com.manisa.manisa_mobile
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import chip.devicecontroller.ChipDeviceController
 import chip.devicecontroller.ClusterIDMapping.OnOff
@@ -41,13 +44,22 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         private const val EVENTS = "com.manisa/matter/events"
         private const val VENDOR_ID = 0xFFF4
         private const val STATUS_OK = 0L
+        private const val PERMISSION_REQUEST_MATTER = 9101
     }
+
+    private data class CommissionRequest(
+        val setupPayload: String,
+        val ssid: String,
+        val password: String,
+        val result: MethodChannel.Result,
+    )
 
     private lateinit var platform: AndroidChipPlatform
     private lateinit var controller: ChipDeviceController
     private var eventSink: EventChannel.EventSink? = null
     private var pendingCommission: MethodChannel.Result? = null
     private var pendingCommissionNodeId: Long = 0
+    private var pendingPermissionCommission: CommissionRequest? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -95,8 +107,17 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 }
                 "setOnOff" -> withNodeAndEndpoint(call, result) { nodeId, endpoint ->
                     val value = call.argument<Boolean>("value")
-                        ?: return@withNodeAndEndpoint result.error("invalid_args", "value is required", null)
-                    invokeOnOff(nodeId, endpoint, if (value) OnOff.Command.On else OnOff.Command.Off, result)
+                        ?: return@withNodeAndEndpoint result.error(
+                            "invalid_args",
+                            "value is required",
+                            null,
+                        )
+                    invokeOnOff(
+                        nodeId,
+                        endpoint,
+                        if (value) OnOff.Command.On else OnOff.Command.Off,
+                        result,
+                    )
                 }
                 "toggleOnOff" -> withNodeAndEndpoint(call, result) { nodeId, endpoint ->
                     invokeOnOff(nodeId, endpoint, OnOff.Command.Toggle, result)
@@ -114,28 +135,90 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun commissionWifi(call: MethodCall, result: MethodChannel.Result) {
-        if (pendingCommission != null) {
-            result.error("commissioning_busy", "Another Matter device is already being commissioned", null)
+        if (pendingCommission != null || pendingPermissionCommission != null) {
+            result.error(
+                "commissioning_busy",
+                "Another Matter device is already being commissioned",
+                null,
+            )
             return
         }
         val setupPayload = call.argument<String>("setupPayload")?.trim().orEmpty()
         val ssid = call.argument<String>("ssid")?.trim().orEmpty()
         val password = call.argument<String>("password").orEmpty()
         if (!setupPayload.startsWith("MT:") || ssid.isEmpty()) {
-            result.error("invalid_args", "Valid Matter setup payload and Wi-Fi SSID are required", null)
+            result.error(
+                "invalid_args",
+                "Valid Matter setup payload and Wi-Fi SSID are required",
+                null,
+            )
             return
         }
 
+        val request = CommissionRequest(setupPayload, ssid, password, result)
+        val missingPermissions = requiredMatterPermissions().filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missingPermissions.isNotEmpty()) {
+            pendingPermissionCommission = request
+            requestPermissions(missingPermissions.toTypedArray(), PERMISSION_REQUEST_MATTER)
+            return
+        }
+        startCommissionWifi(request)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != PERMISSION_REQUEST_MATTER) return
+        val pending = pendingPermissionCommission ?: return
+        pendingPermissionCommission = null
+        val granted = grantResults.isNotEmpty() && grantResults.all {
+            it == PackageManager.PERMISSION_GRANTED
+        }
+        if (!granted) {
+            pending.result.error(
+                "matter_permission_denied",
+                "Bluetooth permission is required to add a Matter device",
+                null,
+            )
+            return
+        }
+        startCommissionWifi(pending)
+    }
+
+    private fun requiredMatterPermissions(): List<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            listOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    private fun startCommissionWifi(request: CommissionRequest) {
         val nodeId = nextNodeId()
-        val network = NetworkCredentials.forWiFi(NetworkCredentials.WiFiCredentials(ssid, password))
+        val network = NetworkCredentials.forWiFi(
+            NetworkCredentials.WiFiCredentials(request.ssid, request.password),
+        )
         val params = CommissionParameters.Builder()
             .setNetworkCredentials(network)
             .build()
 
-        pendingCommission = result
+        pendingCommission = request.result
         pendingCommissionNodeId = nodeId
         controller.setCompletionListener(commissioningListener)
-        controller.pairDeviceWithCode(nodeId, setupPayload, true, false, params)
+        controller.pairDeviceWithCode(
+            nodeId,
+            request.setupPayload,
+            true,
+            false,
+            params,
+        )
     }
 
     private val commissioningListener = object : GenericChipDeviceListener() {
@@ -148,38 +231,50 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 pending.error("commissioning_failed", "Matter commissioning failed", errorCode)
                 return
             }
-            discoverOnOffEndpoints(nodeId, object : MethodChannel.Result {
-                override fun success(result: Any?) {
-                    val endpoints = result as? List<*> ?: emptyList<Any>()
-                    pendingCommission = null
-                    pendingCommissionNodeId = 0
-                    pending.success(
-                        mapOf(
-                            "nodeId" to nodeId,
-                            "onOffEndpoints" to endpoints,
-                        ),
-                    )
-                }
+            discoverOnOffEndpoints(
+                nodeId,
+                object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        val endpoints = result as? List<*> ?: emptyList<Any>()
+                        pendingCommission = null
+                        pendingCommissionNodeId = 0
+                        pending.success(
+                            mapOf(
+                                "nodeId" to nodeId,
+                                "onOffEndpoints" to endpoints,
+                            ),
+                        )
+                    }
 
-                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                    pendingCommission = null
-                    pendingCommissionNodeId = 0
-                    pending.error(errorCode, errorMessage, errorDetails)
-                }
+                    override fun error(
+                        errorCode: String,
+                        errorMessage: String?,
+                        errorDetails: Any?,
+                    ) {
+                        pendingCommission = null
+                        pendingCommissionNodeId = 0
+                        pending.error(errorCode, errorMessage, errorDetails)
+                    }
 
-                override fun notImplemented() {
-                    pendingCommission = null
-                    pendingCommissionNodeId = 0
-                    pending.notImplemented()
-                }
-            }, subscribe = true)
+                    override fun notImplemented() {
+                        pendingCommission = null
+                        pendingCommissionNodeId = 0
+                        pending.notImplemented()
+                    }
+                },
+                subscribe = true,
+            )
         }
 
         override fun onError(error: Throwable?) {
             val pending = pendingCommission ?: return
             pendingCommission = null
             pendingCommissionNodeId = 0
-            pending.error("commissioning_error", error?.message ?: "Matter commissioning error", null)
+            pending.error(
+                "commissioning_error",
+                error?.message ?: "Matter commissioning error",
+                null,
+            )
         }
     }
 
@@ -201,7 +296,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
                     override fun onReport(nodeState: NodeState) {
                         val endpoints = nodeState.endpointStates
-                            .filter { (_, endpointState) -> endpointState.clusterStates.containsKey(OnOff.ID) }
+                            .filter { (_, endpointState) ->
+                                endpointState.clusterStates.containsKey(OnOff.ID)
+                            }
                             .keys
                             .map { it.toInt() }
                             .filter { it > 0 }
@@ -245,7 +342,11 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                             ?.getAttributeState(OnOff.Attribute.OnOff.id)
                             ?.tlv
                         if (tlv == null) {
-                            result.error("missing_state", "OnOff state was not returned", null)
+                            result.error(
+                                "missing_state",
+                                "OnOff state was not returned",
+                                null,
+                            )
                             return
                         }
                         result.success(TlvReader(tlv).getBool(AnonymousTag))
@@ -280,14 +381,22 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             controller.invoke(
                 object : InvokeCallback {
                     override fun onError(ex: Exception?) {
-                        result.error("matter_invoke_failed", ex?.message ?: "Matter command failed", null)
+                        result.error(
+                            "matter_invoke_failed",
+                            ex?.message ?: "Matter command failed",
+                            null,
+                        )
                     }
 
                     override fun onResponse(invokeElement: InvokeElement?, successCode: Long) {
                         if (successCode == STATUS_OK) {
                             result.success(null)
                         } else {
-                            result.error("matter_invoke_failed", "Matter command returned error", successCode)
+                            result.error(
+                                "matter_invoke_failed",
+                                "Matter command returned error",
+                                successCode,
+                            )
                         }
                     }
                 },
