@@ -151,10 +151,10 @@ jobs:
 
       - name: Build official Matter Android controller
         working-directory: matter
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
         run: |
           export PATH="$RUNNER_TEMP/kotlinc/bin:$PATH"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          test -f "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
           source scripts/bootstrap.sh
           ./scripts/build/build_examples.py --target android-arm64-chip-tool build
 
