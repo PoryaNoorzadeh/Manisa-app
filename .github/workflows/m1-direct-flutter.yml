@@ -1,0 +1,140 @@
+name: m1-direct-flutter
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/m1-direct-flutter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integrated-direct-matter-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Manisa
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Validate Flutter
+        working-directory: apps/mobile
+        run: |
+          dart format --output=none --set-exit-if-changed lib test
+          flutter analyze
+          flutter test
+
+      - name: Clone Matter SDK and Android dependencies
+        run: |
+          git clone --branch v1.5.1.0 --depth 1 --filter=blob:none \
+            https://github.com/project-chip/connectedhomeip.git matter
+          python3 matter/scripts/checkout_submodules.py \
+            --shallow --platform android --jobs 8
+
+      - name: Install Android SDK 34 and NDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -perm -111 | head -n 1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0" "ndk;28.2.13676358"
+
+      - name: Install Kotlin required by Matter build
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/kotlin.zip" \
+            https://github.com/JetBrains/kotlin/releases/download/v2.1.10/kotlin-compiler-2.1.10.zip
+          unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+
+      - name: Build Matter Android controller libraries
+        working-directory: matter
+        run: |
+          export PATH="$RUNNER_TEMP/kotlinc/bin:$PATH"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          source scripts/bootstrap.sh
+          ./scripts/build/build_examples.py --target android-arm64-chip-tool build
+
+      - name: Generate Flutter Android shell
+        working-directory: apps/mobile
+        run: flutter create --platforms=android --org com.manisa --project-name manisa_mobile .
+
+      - name: Embed Matter runtime and Manisa bridge
+        run: |
+          mkdir -p apps/mobile/android/app/libs
+          mkdir -p apps/mobile/android/app/src/main/jniLibs/arm64-v8a
+          cp matter/examples/android/CHIPTool/app/libs/*.jar apps/mobile/android/app/libs/
+          cp matter/examples/android/CHIPTool/app/libs/jniLibs/arm64-v8a/*.so \
+            apps/mobile/android/app/src/main/jniLibs/arm64-v8a/
+
+          mkdir -p apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile
+          cp apps/mobile/native/android/MainActivity.kt \
+            apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/MainActivity.kt
+          cp apps/mobile/native/android/GenericChipDeviceListener.kt \
+            apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/GenericChipDeviceListener.kt
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gradle = Path('apps/mobile/android/app/build.gradle.kts')
+          text = gradle.read_text()
+          text = text.replace('minSdk = flutter.minSdkVersion', 'minSdk = 28')
+          if 'fileTree(mapOf("dir" to "libs"' not in text:
+              marker = 'dependencies {'
+              addition = '''dependencies {\n    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))'''
+              if marker in text:
+                  text = text.replace(marker, addition, 1)
+              else:
+                  text += '\n\ndependencies {\n    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))\n}\n'
+          gradle.write_text(text)
+
+          manifest = Path('apps/mobile/android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          permissions = '''    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />\n    <uses-permission android:name="android.permission.CAMERA" />\n'''
+          if 'android.permission.BLUETOOTH_SCAN' not in text:
+              token = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
+              if token not in text:
+                  raise SystemExit('Unexpected Flutter AndroidManifest format')
+              text = text.replace(token, token + permissions, 1)
+          manifest.write_text(text)
+          PY
+
+      - name: Build integrated Manisa Direct Matter APK
+        working-directory: apps/mobile
+        run: flutter build apk --debug --target-platform android-arm64
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p dist
+          cp apps/mobile/build/app/outputs/flutter-apk/app-debug.apk \
+            dist/manisa-m1-direct-matter-arm64-debug.apk
+          sha256sum dist/manisa-m1-direct-matter-arm64-debug.apk > dist/SHA256SUMS.txt
+
+      - name: Upload integrated APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: manisa-m1-direct-matter-apk
+          path: |
+            dist/manisa-m1-direct-matter-arm64-debug.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
