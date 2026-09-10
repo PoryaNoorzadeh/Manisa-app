@@ -108,14 +108,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Checkout official Matter SDK
-        uses: actions/checkout@v4
-        with:
-          repository: project-chip/connectedhomeip
-          ref: v1.5.1.0
-          submodules: recursive
-          fetch-depth: 1
-          path: matter
+      - name: Shallow clone official Matter SDK
+        run: |
+          git clone --branch v1.5.1.0 --depth 1 --filter=blob:none \
+            https://github.com/project-chip/connectedhomeip.git matter
+          git -C matter submodule update --init --recursive --depth 1 --jobs 8
 
       - name: Install Android SDK 34 and NDK
         run: |
