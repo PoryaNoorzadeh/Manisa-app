@@ -7,9 +7,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/application"
+	"github.com/PoryaNoorzadeh/Manisa-app/internal/auth"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/domain"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -32,6 +34,11 @@ type createDeviceRequest struct {
 	Transport   string  `json:"transport"`
 }
 
+type pairRequest struct {
+	Code       string `json:"code"`
+	ClientName string `json:"clientName"`
+}
+
 type commissionMatterRequest struct {
 	HomeID        string  `json:"homeId"`
 	RoomID        *string `json:"roomId,omitempty"`
@@ -52,8 +59,12 @@ type deviceCommandRequest struct {
 	Params     map[string]any `json:"params,omitempty"`
 }
 
-func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.Handler {
+func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service, authServices ...*auth.Service) http.Handler {
 	mux := http.NewServeMux()
+	var authService *auth.Service
+	if len(authServices) > 0 {
+		authService = authServices[0]
+	}
 
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "manisa-core"})
@@ -66,6 +77,22 @@ func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.H
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
 	})
+
+	if authService != nil {
+		mux.HandleFunc("POST /api/v1/pair", func(w http.ResponseWriter, r *http.Request) {
+			var req pairRequest
+			if err := decodeJSON(w, r, &req); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_json"})
+				return
+			}
+			client, token, err := authService.Pair(r.Context(), req.Code, req.ClientName)
+			if err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "pairing_rejected"})
+				return
+			}
+			writeJSON(w, http.StatusCreated, map[string]any{"client": client, "token": token})
+		})
+	}
 
 	mux.HandleFunc("GET /api/v1/system", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -178,16 +205,9 @@ func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.H
 			return
 		}
 		device, err := app.CommissionDevice(r.Context(), application.CommissionDeviceInput{
-			HomeID:        req.HomeID,
-			RoomID:        req.RoomID,
-			Name:          req.Name,
-			ProductType:   req.ProductType,
-			Transport:     req.Transport,
-			SetupPayload:  req.SetupPayload,
-			WiFiSSID:      req.WiFiSSID,
-			WiFiPassword:  req.WiFiPassword,
-			ThreadDataset: req.ThreadDataset,
-			NetworkOnly:   req.NetworkOnly,
+			HomeID: req.HomeID, RoomID: req.RoomID, Name: req.Name, ProductType: req.ProductType,
+			Transport: req.Transport, SetupPayload: req.SetupPayload, WiFiSSID: req.WiFiSSID,
+			WiFiPassword: req.WiFiPassword, ThreadDataset: req.ThreadDataset, NetworkOnly: req.NetworkOnly,
 		})
 		if err != nil {
 			writeError(w, err)
@@ -203,10 +223,7 @@ func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.H
 			return
 		}
 		if err := app.ExecuteDeviceCommand(r.Context(), r.PathValue("deviceID"), application.DeviceCommandInput{
-			Endpoint:   req.Endpoint,
-			Capability: req.Capability,
-			Action:     req.Action,
-			Params:     req.Params,
+			Endpoint: req.Endpoint, Capability: req.Capability, Action: req.Action, Params: req.Params,
 		}); err != nil {
 			writeError(w, err)
 			return
@@ -214,7 +231,30 @@ func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.H
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	return requestLogger(logger, mux)
+	var handler http.Handler = mux
+	if authService != nil {
+		handler = requireLocalAuth(authService, mux)
+	}
+	return requestLogger(logger, handler)
+}
+
+func requireLocalAuth(authService *auth.Service, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/health/") || r.URL.Path == "/api/v1/pair" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		header := strings.TrimSpace(r.Header.Get("Authorization"))
+		if !strings.HasPrefix(header, "Bearer ") {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+		if _, err := authService.Authenticate(r.Context(), strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))); err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func serveEvents(w http.ResponseWriter, r *http.Request, app *application.Service) {
