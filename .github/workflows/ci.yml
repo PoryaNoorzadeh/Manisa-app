@@ -108,11 +108,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Shallow clone official Matter SDK
+      - name: Clone official Matter SDK and Android dependencies
         run: |
           git clone --branch v1.5.1.0 --depth 1 --filter=blob:none \
             https://github.com/project-chip/connectedhomeip.git matter
-          git -C matter submodule update --init --recursive --depth 1 --jobs 8
+          python3 matter/scripts/checkout_submodules.py \
+            --shallow --platform android --jobs 8
 
       - name: Install Android SDK 34 and NDK
         run: |
