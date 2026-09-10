@@ -18,4 +18,7 @@ type Store interface {
 	ListDevices(ctx context.Context, homeID string) ([]Device, error)
 	UpsertDeviceState(ctx context.Context, state DeviceState) error
 	ListDeviceStates(ctx context.Context, deviceID string) ([]DeviceState, error)
+	CreateLocalClient(ctx context.Context, client LocalClient) error
+	GetLocalClientByTokenHash(ctx context.Context, tokenHash string) (LocalClient, error)
+	TouchLocalClient(ctx context.Context, clientID string) error
 }
