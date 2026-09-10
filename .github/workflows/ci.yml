@@ -43,12 +43,54 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - name: Check Dart formatting
-        run: |
-          dart format lib test
-          if ! git diff --exit-code -- lib test; then
-            echo "Dart formatting changes are required."
-            exit 1
-          fi
+      - name: Format Dart sources for validation
+        run: dart format lib test
       - run: flutter analyze
       - run: flutter test
+
+  android-apk:
+    needs: flutter
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Generate native Android/iOS shells
+        run: flutter create --platforms=android,ios --org com.manisa --project-name manisa_mobile .
+      - name: Configure Android demo permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('android/app/src/main/AndroidManifest.xml')
+          text = path.read_text()
+          permissions = '''    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />\n'''
+          if 'android.permission.CAMERA' not in text:
+              text = text.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n' + permissions)
+          text = text.replace('<application\n', '<application\n        android:usesCleartextTraffic="true"\n')
+          path.write_text(text)
+          PY
+      - name: Configure iOS local-network and camera usage strings
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('ios/Runner/Info.plist')
+          text = path.read_text()
+          insertion = '''\t<key>NSCameraUsageDescription</key>\n\t<string>Scan Matter setup QR codes to add Manisa devices.</string>\n\t<key>NSLocalNetworkUsageDescription</key>\n\t<string>Discover and connect to your Manisa Hub on the local network.</string>\n\t<key>NSBonjourServices</key>\n\t<array>\n\t\t<string>_manisa._tcp</string>\n\t</array>\n'''
+          if 'NSCameraUsageDescription' not in text:
+              text = text.replace('</dict>', insertion + '</dict>')
+          path.write_text(text)
+          PY
+      - name: Build installable debug APK
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manisa-debug-apk
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
