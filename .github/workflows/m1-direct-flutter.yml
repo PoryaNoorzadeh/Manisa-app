@@ -118,23 +118,50 @@ jobs:
           manifest.write_text(text)
           PY
 
-      - name: Build integrated Manisa Direct Matter APK
+      - name: Build optimized Manisa Direct Matter APK
         working-directory: apps/mobile
-        run: flutter build apk --debug --target-platform android-arm64
+        run: |
+          flutter build apk \
+            --release \
+            --target-platform android-arm64 \
+            --split-per-abi
 
-      - name: Prepare artifact
+      - name: Prepare artifact and size report
         run: |
           mkdir -p dist
-          cp apps/mobile/build/app/outputs/flutter-apk/app-debug.apk \
-            dist/manisa-m1-direct-matter-arm64-debug.apk
-          sha256sum dist/manisa-m1-direct-matter-arm64-debug.apk > dist/SHA256SUMS.txt
+          APK="apps/mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
+          test -f "$APK"
+          cp "$APK" dist/manisa-m1-direct-matter-arm64-release.apk
+          sha256sum dist/manisa-m1-direct-matter-arm64-release.apk > dist/SHA256SUMS.txt
+          python3 - <<'PY' | tee dist/SIZE_REPORT.txt
+          import os
+          import zipfile
 
-      - name: Upload integrated APK
+          apk = 'dist/manisa-m1-direct-matter-arm64-release.apk'
+          size = os.path.getsize(apk)
+          print(f'APK size: {size / 1024 / 1024:.2f} MiB')
+          print(f'APK bytes: {size}')
+          print('\nLargest packaged entries:')
+          with zipfile.ZipFile(apk) as archive:
+              entries = sorted(
+                  archive.infolist(),
+                  key=lambda item: item.compress_size,
+                  reverse=True,
+              )[:20]
+              for item in entries:
+                  print(
+                      f'{item.compress_size / 1024 / 1024:8.2f} MiB compressed  '
+                      f'{item.file_size / 1024 / 1024:8.2f} MiB raw  {item.filename}'
+                  )
+          PY
+
+      - name: Upload optimized integrated APK
         uses: actions/upload-artifact@v4
         with:
-          name: manisa-m1-direct-matter-apk
+          name: manisa-m1-direct-matter-release-apk
           path: |
-            dist/manisa-m1-direct-matter-arm64-debug.apk
+            dist/manisa-m1-direct-matter-arm64-release.apk
             dist/SHA256SUMS.txt
+            dist/SIZE_REPORT.txt
           if-no-files-found: error
           retention-days: 14
