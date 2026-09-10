@@ -14,7 +14,11 @@ void main() {
   final tokenStore = SecureTokenStore();
   final api = HttpManisaApi(discovery, tokenStore: tokenStore);
   final realtime = ManisaRealtime(discovery, tokenStore: tokenStore);
-  final controller = AppController(api: api, realtime: realtime, tokenStore: tokenStore);
+  final controller = AppController(
+    api: api,
+    realtime: realtime,
+    tokenStore: tokenStore,
+  );
 
   runApp(ManisaApp(controller: controller));
 }
