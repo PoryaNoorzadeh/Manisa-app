@@ -1,13 +1,27 @@
 services:
+  matter-server:
+    image: ghcr.io/matter-js/matterjs-server:1.4.0
+    network_mode: host
+    read_only: true
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDRESS: "127.0.0.1"
+      STORAGE_PATH: "/data"
+      LOG_LEVEL: "info"
+    volumes:
+      - matter-data:/data
+
   manisa-core:
     build: .
+    network_mode: host
     environment:
       MANISA_HTTP_ADDR: ":8080"
       MANISA_DB_PATH: "/data/manisa.db"
+      MANISA_MATTER_WS_URL: "ws://127.0.0.1:5580/ws"
     volumes:
       - manisa-data:/data
-    ports:
-      - "8080:8080"
+    depends_on:
+      - matter-server
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
@@ -17,3 +31,4 @@ services:
 
 volumes:
   manisa-data:
+  matter-data:
