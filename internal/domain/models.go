@@ -38,6 +38,14 @@ type DeviceState struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
+type LocalClient struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	TokenHash string    `json:"-"`
+	CreatedAt time.Time `json:"createdAt"`
+	LastUsed  time.Time `json:"lastUsed"`
+}
+
 type RealtimeEvent struct {
 	Sequence   uint64    `json:"sequence"`
 	Type       string    `json:"type"`
