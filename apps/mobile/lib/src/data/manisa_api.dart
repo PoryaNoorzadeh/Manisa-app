@@ -2,9 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../discovery/hub_discovery.dart';
+import '../security/token_store.dart';
 import 'models.dart';
 
 abstract interface class ManisaApi {
+  Future<void> pair({required String code, required String clientName});
   Future<List<Home>> listHomes();
   Future<List<Room>> listRooms(String homeId);
   Future<List<Device>> listDevices(String homeId);
@@ -20,11 +22,32 @@ abstract interface class ManisaApi {
 }
 
 final class HttpManisaApi implements ManisaApi {
-  HttpManisaApi(this._discovery, {HttpClient? client})
-      : _client = client ?? HttpClient();
+  HttpManisaApi(this._discovery, {required TokenStore tokenStore, HttpClient? client})
+      : _tokenStore = tokenStore,
+        _client = client ?? HttpClient();
 
   final HubDiscovery _discovery;
+  final TokenStore _tokenStore;
   final HttpClient _client;
+
+  @override
+  Future<void> pair({required String code, required String clientName}) async {
+    final hub = await _discovery.discover();
+    final request = await _client.postUrl(hub.resolve('/api/v1/pair'));
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(<String, Object?>{'code': code, 'clientName': clientName}));
+    final response = await request.close();
+    final body = await utf8.decodeStream(response);
+    if (response.statusCode != HttpStatus.created) {
+      throw ManisaApiException(response.statusCode, body);
+    }
+    final payload = jsonDecode(body) as Map<String, Object?>;
+    final token = payload['token'] as String?;
+    if (token == null || token.isEmpty) {
+      throw const ManisaApiException(500, 'pair response missing token');
+    }
+    await _tokenStore.write(token);
+  }
 
   @override
   Future<List<Home>> listHomes() async => _list('/api/v1/homes', Home.fromJson);
@@ -62,8 +85,8 @@ final class HttpManisaApi implements ManisaApi {
     JsonMap params = const <String, Object?>{},
   }) async {
     final hub = await _discovery.discover();
-    final uri = hub.resolve('/api/v1/devices/${Uri.encodeComponent(deviceId)}/commands');
-    final request = await _client.postUrl(uri);
+    final request = await _client.postUrl(hub.resolve('/api/v1/devices/${Uri.encodeComponent(deviceId)}/commands'));
+    await _authorize(request);
     request.headers.contentType = ContentType.json;
     request.write(jsonEncode(<String, Object?>{
       'endpoint': endpoint,
@@ -79,24 +102,29 @@ final class HttpManisaApi implements ManisaApi {
     await response.drain<void>();
   }
 
-  Future<List<T>> _list<T>(
-    String path,
-    T Function(JsonMap json) decode,
-  ) async {
+  Future<List<T>> _list<T>(String path, T Function(JsonMap json) decode) async {
     final value = await _get(path);
-    return (value! as List<Object?>)
-        .map((item) => decode(item! as JsonMap))
-        .toList(growable: false);
+    return (value! as List<Object?>).map((item) => decode(item! as JsonMap)).toList(growable: false);
   }
 
   Future<Object?> _get(String path) async {
     final hub = await _discovery.discover();
-    final response = await (await _client.getUrl(hub.resolve(path))).close();
+    final request = await _client.getUrl(hub.resolve(path));
+    await _authorize(request);
+    final response = await request.close();
     final body = await utf8.decodeStream(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ManisaApiException(response.statusCode, body);
     }
     return jsonDecode(body);
+  }
+
+  Future<void> _authorize(HttpClientRequest request) async {
+    final token = await _tokenStore.read();
+    if (token == null || token.isEmpty) {
+      throw const ManisaApiException(401, 'hub is not paired');
+    }
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
   }
 }
 
