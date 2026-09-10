@@ -153,7 +153,7 @@ final class PlatformDirectMatterController implements DirectMatterController {
       <String, Object?>{'nodeId': nodeId, 'endpoint': endpoint},
     );
     if (result == null) {
-      throw const PlatformException(
+      throw PlatformException(
         code: 'matter_invalid_response',
         message: 'Matter bridge returned no OnOff state',
       );
