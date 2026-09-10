@@ -38,7 +38,7 @@ jobs:
       - name: Validate Flutter
         working-directory: apps/mobile
         run: |
-          dart format --output=none --set-exit-if-changed lib test
+          dart format lib test
           flutter analyze
           flutter test
 
