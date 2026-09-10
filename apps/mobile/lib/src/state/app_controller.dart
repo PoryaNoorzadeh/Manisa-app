@@ -77,6 +77,27 @@ final class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> createHome(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Home name is required');
+    }
+    loading = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      final home = await _api.createHome(trimmed);
+      homes = <Home>[...homes, home];
+      await selectHome(home.id, notifyLoading: false);
+    } catch (error) {
+      errorMessage = 'Create home failed: $error';
+      rethrow;
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> _loadDashboard() async {
     homes = await _api.listHomes();
     if (homes.isNotEmpty) {
