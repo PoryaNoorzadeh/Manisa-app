@@ -12,7 +12,9 @@ import (
 
 func TestLiveness(t *testing.T) {
 	db, err := sqlite.Open(t.TempDir() + "/manisa.db")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 
 	router := NewRouter(slog.New(slog.NewTextHandler(os.Stdout, nil)), db)
