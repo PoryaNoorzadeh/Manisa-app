@@ -43,10 +43,19 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - name: Check Dart formatting
-        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Format Dart sources
+        run: dart format lib test
       - run: flutter analyze
       - run: flutter test
+      - name: Upload formatted validated Flutter sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: formatted-flutter-sources
+          path: |
+            apps/mobile/lib
+            apps/mobile/test
+          if-no-files-found: error
+          retention-days: 2
 
   android-apk:
     needs: flutter
@@ -62,6 +71,8 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      - name: Format Dart sources
+        run: dart format lib test
       - name: Generate native Android/iOS shells
         run: flutter create --platforms=android,ios --org com.manisa --project-name manisa_mobile .
       - name: Configure Android demo permissions
@@ -74,17 +85,6 @@ jobs:
           if 'android.permission.CAMERA' not in text:
               text = text.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n' + permissions)
           text = text.replace('<application\n', '<application\n        android:usesCleartextTraffic="true"\n')
-          path.write_text(text)
-          PY
-      - name: Configure iOS local-network and camera usage strings
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('ios/Runner/Info.plist')
-          text = path.read_text()
-          insertion = '''\t<key>NSCameraUsageDescription</key>\n\t<string>Scan Matter setup QR codes to add Manisa devices.</string>\n\t<key>NSLocalNetworkUsageDescription</key>\n\t<string>Discover and connect to your Manisa Hub on the local network.</string>\n\t<key>NSBonjourServices</key>\n\t<array>\n\t\t<string>_manisa._tcp</string>\n\t</array>\n'''
-          if 'NSCameraUsageDescription' not in text:
-              text = text.replace('</dict>', insertion + '</dict>')
           path.write_text(text)
           PY
       - name: Build installable debug APK
