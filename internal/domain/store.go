@@ -1,6 +1,11 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var ErrNotFound = errors.New("not found")
 
 type Store interface {
 	CreateHome(ctx context.Context, home Home) error
@@ -8,5 +13,6 @@ type Store interface {
 	CreateRoom(ctx context.Context, room Room) error
 	ListRooms(ctx context.Context, homeID string) ([]Room, error)
 	CreateDevice(ctx context.Context, device Device) error
+	GetDevice(ctx context.Context, deviceID string) (Device, error)
 	ListDevices(ctx context.Context, homeID string) ([]Device, error)
 }
