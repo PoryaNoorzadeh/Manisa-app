@@ -29,6 +29,27 @@ type Device struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
+type DeviceState struct {
+	DeviceID   string    `json:"deviceId"`
+	Endpoint   uint16    `json:"endpoint"`
+	Capability string    `json:"capability"`
+	Value      any       `json:"value"`
+	Source     string    `json:"source"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+type RealtimeEvent struct {
+	Sequence   uint64    `json:"sequence"`
+	Type       string    `json:"type"`
+	DeviceID   string    `json:"deviceId,omitempty"`
+	Endpoint   uint16    `json:"endpoint,omitempty"`
+	Capability string    `json:"capability,omitempty"`
+	Value      any       `json:"value,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	Initial    bool      `json:"initial,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+
 type CapabilityDescriptor struct {
 	ID       string         `json:"id"`
 	Readable bool           `json:"readable"`

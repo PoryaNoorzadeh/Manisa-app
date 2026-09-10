@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/application"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/domain"
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 )
 
 type createHomeRequest struct {
@@ -73,6 +76,10 @@ func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.H
 		})
 	})
 
+	mux.HandleFunc("GET /api/v1/events", func(w http.ResponseWriter, r *http.Request) {
+		serveEvents(w, r, app)
+	})
+
 	mux.HandleFunc("GET /api/v1/device-types", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, app.ListDeviceTypes())
 	})
@@ -84,6 +91,15 @@ func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.H
 			return
 		}
 		writeJSON(w, http.StatusOK, descriptor)
+	})
+
+	mux.HandleFunc("GET /api/v1/devices/{deviceID}/state", func(w http.ResponseWriter, r *http.Request) {
+		states, err := app.DeviceStates(r.Context(), r.PathValue("deviceID"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, states)
 	})
 
 	mux.HandleFunc("GET /api/v1/homes", func(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +215,32 @@ func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.H
 	})
 
 	return requestLogger(logger, mux)
+}
+
+func serveEvents(w http.ResponseWriter, r *http.Request, app *application.Service) {
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.CloseNow()
+
+	ctx := conn.CloseRead(context.Background())
+	events, unsubscribe := app.SubscribeEvents(128)
+	defer unsubscribe()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-events:
+			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := wsjson.Write(writeCtx, conn, event)
+			cancel()
+			if err != nil {
+				return
+			}
+		}
+	}
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {

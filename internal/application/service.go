@@ -22,6 +22,7 @@ var (
 type Service struct {
 	store  domain.Store
 	matter matter.Controller
+	events *eventBus
 }
 
 type CommissionDeviceInput struct {
@@ -45,7 +46,7 @@ type DeviceCommandInput struct {
 }
 
 func New(store domain.Store, matterController matter.Controller) *Service {
-	return &Service{store: store, matter: matterController}
+	return &Service{store: store, matter: matterController, events: newEventBus()}
 }
 
 func (s *Service) CreateHome(ctx context.Context, name string) (domain.Home, error) {
@@ -96,6 +97,63 @@ func (s *Service) ListDevices(ctx context.Context, homeID string) ([]domain.Devi
 		return nil, ErrInvalidInput
 	}
 	return s.store.ListDevices(ctx, homeID)
+}
+
+func (s *Service) DeviceStates(ctx context.Context, deviceID string) ([]domain.DeviceState, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return nil, ErrInvalidInput
+	}
+	if _, err := s.store.GetDevice(ctx, deviceID); err != nil {
+		return nil, err
+	}
+	return s.store.ListDeviceStates(ctx, deviceID)
+}
+
+func (s *Service) SubscribeEvents(buffer int) (<-chan domain.RealtimeEvent, func()) {
+	return s.events.subscribe(buffer)
+}
+
+func (s *Service) ApplyMatterAttribute(ctx context.Context, event matter.AttributeEvent) error {
+	device, err := s.store.GetDeviceByExternalNodeID(ctx, string(event.NodeID))
+	if errors.Is(err, domain.ErrNotFound) {
+		// Matter fabrics may contain nodes not owned by Manisa. Ignore them until
+		// they are explicitly imported into the Manisa product model.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	mapping, ok := capability.FromMatterAttribute(device.ProductType, event.Path, event.Value)
+	if !ok {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	state := domain.DeviceState{
+		DeviceID:   device.ID,
+		Endpoint:   mapping.Endpoint,
+		Capability: mapping.Capability,
+		Value:      mapping.Value,
+		Source:     "matter",
+		UpdatedAt:  now,
+	}
+	if err := s.store.UpsertDeviceState(ctx, state); err != nil {
+		return fmt.Errorf("persist matter state: %w", err)
+	}
+
+	s.events.publish(domain.RealtimeEvent{
+		Type:       "device.state_changed",
+		DeviceID:   device.ID,
+		Endpoint:   mapping.Endpoint,
+		Capability: mapping.Capability,
+		Value:      mapping.Value,
+		Source:     "matter",
+		Initial:    event.Initial,
+		Timestamp:  now,
+	})
+	return nil
 }
 
 func (s *Service) ListDeviceTypes() []domain.DeviceDescriptor {

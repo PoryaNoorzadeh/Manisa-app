@@ -68,7 +68,19 @@ CREATE TABLE IF NOT EXISTS devices (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_external_node_id
+  ON devices(external_node_id) WHERE external_node_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS device_states (
+  device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  endpoint INTEGER NOT NULL,
+  capability TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  source TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(device_id, endpoint, capability)
+);
 INSERT OR IGNORE INTO schema_version(version) VALUES (1);
+INSERT OR IGNORE INTO schema_version(version) VALUES (2);
 `
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
