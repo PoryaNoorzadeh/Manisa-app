@@ -7,6 +7,7 @@ import 'models.dart';
 
 abstract interface class ManisaApi {
   Future<void> pair({required String code, required String clientName});
+  Future<Home> createHome(String name);
   Future<List<Home>> listHomes();
   Future<List<Room>> listRooms(String homeId);
   Future<List<Device>> listDevices(String homeId);
@@ -63,6 +64,21 @@ final class HttpManisaApi implements ManisaApi {
       throw const ManisaApiException(500, 'pair response missing token');
     }
     await _tokenStore.write(token);
+  }
+
+  @override
+  Future<Home> createHome(String name) async {
+    final hub = await _discovery.discover();
+    final request = await _client.postUrl(hub.resolve('/api/v1/homes'));
+    await _authorize(request);
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(<String, Object?>{'name': name}));
+    final response = await request.close();
+    final body = await utf8.decodeStream(response);
+    if (response.statusCode != HttpStatus.created) {
+      throw ManisaApiException(response.statusCode, body);
+    }
+    return Home.fromJson(jsonDecode(body) as JsonMap);
   }
 
   @override
