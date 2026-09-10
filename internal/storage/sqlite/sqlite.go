@@ -79,8 +79,16 @@ CREATE TABLE IF NOT EXISTS device_states (
   updated_at TEXT NOT NULL,
   PRIMARY KEY(device_id, endpoint, capability)
 );
+CREATE TABLE IF NOT EXISTS local_clients (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  last_used TEXT NOT NULL
+);
 INSERT OR IGNORE INTO schema_version(version) VALUES (1);
 INSERT OR IGNORE INTO schema_version(version) VALUES (2);
+INSERT OR IGNORE INTO schema_version(version) VALUES (3);
 `
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
