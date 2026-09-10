@@ -1,0 +1,19 @@
+services:
+  manisa-core:
+    build: .
+    environment:
+      MANISA_HTTP_ADDR: ":8080"
+      MANISA_DB_PATH: "/data/manisa.db"
+    volumes:
+      - manisa-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  manisa-data:
