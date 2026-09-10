@@ -12,6 +12,7 @@ import (
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/adapters/matterjs"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/application"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/config"
+	"github.com/PoryaNoorzadeh/Manisa-app/internal/discovery"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/httpapi"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/matter"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/storage/sqlite"
@@ -35,6 +36,14 @@ func main() {
 	runtimeCtx, runtimeCancel := context.WithCancel(context.Background())
 	defer runtimeCancel()
 	go runMatterEvents(runtimeCtx, logger, matterController, app)
+
+	mdnsAdvertiser, err := discovery.Start(cfg.HTTPAddr)
+	if err != nil {
+		logger.Warn("mDNS advertisement unavailable", "error", err)
+	} else {
+		defer mdnsAdvertiser.Close()
+		logger.Info("mDNS advertisement started", "service", discovery.ServiceType)
+	}
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -74,7 +83,6 @@ func runMatterEvents(ctx context.Context, logger *slog.Logger, source matter.Eve
 		}
 		logger.Warn("matter event stream disconnected", "error", err, "retry_in", backoff)
 
-		// A stable connection should not inherit an old exponential penalty.
 		if time.Since(started) > time.Minute {
 			backoff = time.Second
 		}
