@@ -11,6 +11,7 @@ import (
 
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/adapters/matterjs"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/application"
+	"github.com/PoryaNoorzadeh/Manisa-app/internal/auth"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/config"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/discovery"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/httpapi"
@@ -19,8 +20,12 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if err != nil {
+		logger.Error("load configuration", "error", err)
+		os.Exit(1)
+	}
 
 	db, err := sqlite.Open(cfg.DatabasePath)
 	if err != nil {
@@ -32,6 +37,7 @@ func main() {
 	store := sqlite.NewStore(db)
 	matterController := matterjs.New(cfg.MatterWSURL)
 	app := application.New(store, matterController)
+	authService := auth.New(store, cfg.PairingCode)
 
 	runtimeCtx, runtimeCancel := context.WithCancel(context.Background())
 	defer runtimeCancel()
@@ -47,7 +53,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(logger, db, app),
+		Handler:           httpapi.NewRouter(logger, db, app, authService),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
