@@ -9,7 +9,7 @@ import 'src/state/app_controller.dart';
 
 void main() {
   final config = AppConfig.fromEnvironment();
-  final discovery = ConfiguredHubDiscovery(config.hubUri);
+  final discovery = MdnsHubDiscovery(fallback: config.hubUri);
   final api = HttpManisaApi(discovery);
   final realtime = ManisaRealtime(discovery);
   final controller = AppController(api: api, realtime: realtime);
