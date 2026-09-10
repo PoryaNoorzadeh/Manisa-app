@@ -4,11 +4,14 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Base64
 import android.util.Log
+import chip.devicecontroller.AttestationTrustStoreDelegate
 import chip.devicecontroller.ChipDeviceController
 import chip.devicecontroller.ClusterIDMapping.OnOff
 import chip.devicecontroller.CommissionParameters
 import chip.devicecontroller.ControllerParams
+import chip.devicecontroller.DeviceAttestation
 import chip.devicecontroller.GetConnectedDeviceCallbackJni.GetConnectedDeviceCallback
 import chip.devicecontroller.InvokeCallback
 import chip.devicecontroller.NetworkCredentials
@@ -33,6 +36,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.util.Arrays
 import matter.tlv.AnonymousTag
 import matter.tlv.TlvReader
 import matter.tlv.TlvWriter
@@ -91,6 +95,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 .setEnableServerInteractions(true)
                 .build(),
         )
+        // M1 hardware uses development/test Matter credentials. CHIPTool installs the
+        // same test PAA roots; without them device attestation can abort commissioning.
+        controller.setAttestationTrustStoreDelegate(ManisaTestAttestationTrustStore())
         controller.setCompletionListener(commissioningListener)
     }
 
@@ -212,6 +219,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         pendingCommission = request.result
         pendingCommissionNodeId = nodeId
         controller.setCompletionListener(commissioningListener)
+        Log.i(TAG, "Starting Matter commissioning for nodeId=$nodeId")
         controller.pairDeviceWithCode(
             nodeId,
             request.setupPayload,
@@ -223,12 +231,17 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private val commissioningListener = object : GenericChipDeviceListener() {
         override fun onCommissioningComplete(nodeId: Long, errorCode: Long) {
+            Log.i(TAG, "Matter commissioning complete nodeId=$nodeId errorCode=$errorCode")
             val pending = pendingCommission ?: return
             if (nodeId != pendingCommissionNodeId) return
             if (errorCode != STATUS_OK) {
                 pendingCommission = null
                 pendingCommissionNodeId = 0
-                pending.error("commissioning_failed", "Matter commissioning failed", errorCode)
+                pending.error(
+                    "commissioning_failed",
+                    "Matter commissioning failed (error $errorCode)",
+                    errorCode,
+                )
                 return
             }
             discoverOnOffEndpoints(
@@ -267,6 +280,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
 
         override fun onError(error: Throwable?) {
+            Log.e(TAG, "Matter commissioning listener error", error)
             val pending = pendingCommission ?: return
             pendingCommission = null
             pendingCommissionNodeId = 0
@@ -523,5 +537,42 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     override fun onCancel(arguments: Any?) {
         eventSink = null
+    }
+}
+
+private class ManisaTestAttestationTrustStore : AttestationTrustStoreDelegate {
+    private val paaCertificates = listOf(TEST_PAA_FFF1_CERT, TEST_PAA_NO_VID_CERT)
+
+    override fun getProductAttestationAuthorityCert(skid: ByteArray): ByteArray? =
+        paaCertificates
+            .asSequence()
+            .map { Base64.decode(it, Base64.DEFAULT) }
+            .firstOrNull { certificate ->
+                Arrays.equals(DeviceAttestation.extractSkidFromPaaCert(certificate), skid)
+            }
+
+    companion object {
+        private const val TEST_PAA_FFF1_CERT =
+            "MIIBvTCCAWSgAwIBAgIITqjoMYLUHBwwCgYIKoZIzj0EAwIwMDEYMBYGA1UEAwwP\n" +
+                "TWF0dGVyIFRlc3QgUEFBMRQwEgYKKwYBBAGConwCAQwERkZGMTAgFw0yMTA2Mjgx\n" +
+                "NDIzNDNaGA85OTk5MTIzMTIzNTk1OVowMDEYMBYGA1UEAwwPTWF0dGVyIFRlc3Qg\n" +
+                "UEFBMRQwEgYKKwYBBAGConwCAQwERkZGMTBZMBMGByqGSM49AgEGCCqGSM49AwEH\n" +
+                "A0IABLbLY3KIfyko9brIGqnZOuJDHK2p154kL2UXfvnO2TKijs0Duq9qj8oYShpQ\n" +
+                "NUKWDUU/MD8fGUIddR6Pjxqam3WjZjBkMBIGA1UdEwEB/wQIMAYBAf8CAQEwDgYD\n" +
+                "VR0PAQH/BAQDAgEGMB0GA1UdDgQWBBRq/SJ3H1Ef7L8WQZdnENzcMaFxfjAfBgNV\n" +
+                "HSMEGDAWgBRq/SJ3H1Ef7L8WQZdnENzcMaFxfjAKBggqhkjOPQQDAgNHADBEAiBQ\n" +
+                "qoAC9NkyqaAFOPZTaK0P/8jvu8m+t9pWmDXPmqdRDgIgI7rI/g8j51RFtlM5CBpH\n" +
+                "mUkpxyqvChVI1A0DTVFLJd4="
+
+        private const val TEST_PAA_NO_VID_CERT =
+            "MIIBkTCCATegAwIBAgIHC4+6qN2G7jAKBggqhkjOPQQDAjAaMRgwFgYDVQQDDA9N\n" +
+                "YXR0ZXIgVGVzdCBQQUEwIBcNMjEwNjI4MTQyMzQzWhgPOTk5OTEyMzEyMzU5NTla\n" +
+                "MBoxGDAWBgNVBAMMD01hdHRlciBUZXN0IFBBQTBZMBMGByqGSM49AgEGCCqGSM49\n" +
+                "AwEHA0IABBDvAqgah7aBIfuo0xl4+AejF+UKqKgoRGgokUuTPejt1KXDnJ/3Gkzj\n" +
+                "ZH/X9iZTt9JJX8ukwPR/h2iAA54HIEqjZjBkMBIGA1UdEwEB/wQIMAYBAf8CAQEw\n" +
+                "DgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBR4XOcFuGuPTm/Hk6pgy0PqaWiC1TAf\n" +
+                "BgNVHSMEGDAWgBR4XOcFuGuPTm/Hk6pgy0PqaWiC1TAKBggqhkjOPQQDAgNIADBF\n" +
+                "AiEAue/bPqBqUuwL8B5h2u0sLRVt22zwFBAdq3mPrAX6R+UCIGAGHT411g2dSw1E\n" +
+                "ja12EvfoXFguP8MS3Bh5TdNzcV5d"
     }
 }
