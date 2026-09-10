@@ -41,6 +41,10 @@ final class DashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) => ListenableBuilder(
         listenable: controller,
         builder: (context, _) {
+          if (!controller.paired) {
+            return _PairingScreen(controller: controller);
+          }
+
           if (controller.loading && controller.homes.isEmpty) {
             return const Scaffold(body: Center(child: CircularProgressIndicator()));
           }
@@ -76,6 +80,100 @@ final class DashboardScreen extends StatelessWidget {
           );
         },
       );
+}
+
+final class _PairingScreen extends StatefulWidget {
+  const _PairingScreen({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_PairingScreen> createState() => _PairingScreenState();
+}
+
+final class _PairingScreenState extends State<_PairingScreen> {
+  final TextEditingController _codeController = TextEditingController();
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Icon(Icons.home_work_outlined, size: 64),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Connect to your Manisa Hub',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Make sure your phone is on the same local network as the hub, then enter the pairing code printed on the hub.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 28),
+                  TextField(
+                    controller: _codeController,
+                    enabled: !widget.controller.loading,
+                    obscureText: true,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _pair(),
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      labelText: 'Hub pairing code',
+                      prefixIcon: Icon(Icons.key_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: widget.controller.loading ? null : _pair,
+                    icon: widget.controller.loading
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.link),
+                    label: Text(widget.controller.loading ? 'Connecting…' : 'Pair Hub'),
+                  ),
+                  if (widget.controller.errorMessage != null) ...<Widget>[
+                    const SizedBox(height: 16),
+                    Text(
+                      widget.controller.errorMessage!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pair() async {
+    final code = _codeController.text.trim();
+    if (code.isEmpty) {
+      return;
+    }
+    await widget.controller.pair(code);
+  }
 }
 
 final class _DashboardBody extends StatelessWidget {
@@ -114,9 +212,7 @@ final class _DashboardBody extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       children: <Widget>[
         Text(
-          controller.homes
-              .firstWhere((home) => home.id == controller.selectedHomeId)
-              .name,
+          controller.homes.firstWhere((home) => home.id == controller.selectedHomeId).name,
           style: Theme.of(context).textTheme.headlineMedium,
         ),
         const SizedBox(height: 20),
