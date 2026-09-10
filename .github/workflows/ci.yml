@@ -18,7 +18,14 @@ jobs:
           go-version: '1.27.1'
           cache: true
       - run: go mod tidy
-      - run: test -z "$(gofmt -l .)"
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following Go files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build ./cmd/manisa-core
