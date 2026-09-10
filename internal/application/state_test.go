@@ -20,7 +20,9 @@ func (f *stateTestMatterController) Commission(context.Context, matter.Commissio
 
 func (f *stateTestMatterController) RemoveNode(context.Context, matter.NodeID) error { return nil }
 
-func (f *stateTestMatterController) Execute(context.Context, matter.NodeID, matter.Command) error { return nil }
+func (f *stateTestMatterController) Execute(context.Context, matter.NodeID, matter.Command) error {
+	return nil
+}
 
 func TestMatterAttributePersistsAndPublishesCanonicalState(t *testing.T) {
 	ctx := context.Background()
