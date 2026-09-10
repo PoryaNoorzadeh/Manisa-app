@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -65,21 +66,37 @@ func (s *Store) CreateDevice(ctx context.Context, device domain.Device) error {
 	return nil
 }
 
+func (s *Store) GetDevice(ctx context.Context, deviceID string) (domain.Device, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,home_id,room_id,name,product_type,transport,external_node_id,created_at,updated_at FROM devices WHERE id=?`, deviceID)
+	device, err := scanDevice(row.Scan)
+	if errors.Is(err, sql.ErrNoRows) { return domain.Device{}, domain.ErrNotFound }
+	if err != nil { return domain.Device{}, fmt.Errorf("get device: %w", err) }
+	return device, nil
+}
+
 func (s *Store) ListDevices(ctx context.Context, homeID string) ([]domain.Device, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,home_id,room_id,name,product_type,transport,external_node_id,created_at,updated_at FROM devices WHERE home_id=? ORDER BY created_at`, homeID)
 	if err != nil { return nil, fmt.Errorf("list devices: %w", err) }
 	defer rows.Close()
 	var out []domain.Device
 	for rows.Next() {
-		var d domain.Device
-		var roomID, nodeID sql.NullString
-		var created, updated string
-		if err := rows.Scan(&d.ID, &d.HomeID, &roomID, &d.Name, &d.ProductType, &d.Transport, &nodeID, &created, &updated); err != nil { return nil, err }
-		if roomID.Valid { d.RoomID = &roomID.String }
-		if nodeID.Valid { d.ExternalNodeID = &nodeID.String }
-		d.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		d.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
-		out = append(out, d)
+		device, err := scanDevice(rows.Scan)
+		if err != nil { return nil, err }
+		out = append(out, device)
 	}
 	return out, rows.Err()
+}
+
+type scanFunc func(dest ...any) error
+
+func scanDevice(scan scanFunc) (domain.Device, error) {
+	var d domain.Device
+	var roomID, nodeID sql.NullString
+	var created, updated string
+	if err := scan(&d.ID, &d.HomeID, &roomID, &d.Name, &d.ProductType, &d.Transport, &nodeID, &created, &updated); err != nil { return domain.Device{}, err }
+	if roomID.Valid { d.RoomID = &roomID.String }
+	if nodeID.Valid { d.ExternalNodeID = &nodeID.String }
+	d.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	d.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	return d, nil
 }
