@@ -12,6 +12,17 @@ abstract interface class ManisaApi {
   Future<List<Device>> listDevices(String homeId);
   Future<DeviceDescriptor> deviceDescriptor(String deviceId);
   Future<List<DeviceState>> deviceStates(String deviceId);
+  Future<Device> commissionMatterDevice({
+    required String homeId,
+    String? roomId,
+    required String name,
+    required String productType,
+    required String transport,
+    required String setupPayload,
+    String wifiSsid = '',
+    String wifiPassword = '',
+    String threadDataset = '',
+  });
   Future<void> executeCommand({
     required String deviceId,
     required int endpoint,
@@ -22,8 +33,11 @@ abstract interface class ManisaApi {
 }
 
 final class HttpManisaApi implements ManisaApi {
-  HttpManisaApi(this._discovery, {required TokenStore tokenStore, HttpClient? client})
-      : _tokenStore = tokenStore,
+  HttpManisaApi(
+    this._discovery, {
+    required TokenStore tokenStore,
+    HttpClient? client,
+  })  : _tokenStore = tokenStore,
         _client = client ?? HttpClient();
 
   final HubDiscovery _discovery;
@@ -35,7 +49,9 @@ final class HttpManisaApi implements ManisaApi {
     final hub = await _discovery.discover();
     final request = await _client.postUrl(hub.resolve('/api/v1/pair'));
     request.headers.contentType = ContentType.json;
-    request.write(jsonEncode(<String, Object?>{'code': code, 'clientName': clientName}));
+    request.write(
+      jsonEncode(<String, Object?>{'code': code, 'clientName': clientName}),
+    );
     final response = await request.close();
     final body = await utf8.decodeStream(response);
     if (response.statusCode != HttpStatus.created) {
@@ -50,7 +66,8 @@ final class HttpManisaApi implements ManisaApi {
   }
 
   @override
-  Future<List<Home>> listHomes() async => _list('/api/v1/homes', Home.fromJson);
+  Future<List<Home>> listHomes() async =>
+      _list('/api/v1/homes', Home.fromJson);
 
   @override
   Future<List<Room>> listRooms(String homeId) async => _list(
@@ -66,7 +83,9 @@ final class HttpManisaApi implements ManisaApi {
 
   @override
   Future<DeviceDescriptor> deviceDescriptor(String deviceId) async {
-    final json = await _get('/api/v1/devices/${Uri.encodeComponent(deviceId)}/descriptor');
+    final json = await _get(
+      '/api/v1/devices/${Uri.encodeComponent(deviceId)}/descriptor',
+    );
     return DeviceDescriptor.fromJson(json! as JsonMap);
   }
 
@@ -77,6 +96,45 @@ final class HttpManisaApi implements ManisaApi {
       );
 
   @override
+  Future<Device> commissionMatterDevice({
+    required String homeId,
+    String? roomId,
+    required String name,
+    required String productType,
+    required String transport,
+    required String setupPayload,
+    String wifiSsid = '',
+    String wifiPassword = '',
+    String threadDataset = '',
+  }) async {
+    final hub = await _discovery.discover();
+    final request = await _client.postUrl(
+      hub.resolve('/api/v1/matter/commission'),
+    );
+    await _authorize(request);
+    request.headers.contentType = ContentType.json;
+    request.write(
+      jsonEncode(<String, Object?>{
+        'homeId': homeId,
+        if (roomId != null && roomId.isNotEmpty) 'roomId': roomId,
+        'name': name,
+        'productType': productType,
+        'transport': transport,
+        'setupPayload': setupPayload,
+        if (wifiSsid.isNotEmpty) 'wifiSsid': wifiSsid,
+        if (wifiPassword.isNotEmpty) 'wifiPassword': wifiPassword,
+        if (threadDataset.isNotEmpty) 'threadDataset': threadDataset,
+      }),
+    );
+    final response = await request.close();
+    final body = await utf8.decodeStream(response);
+    if (response.statusCode != HttpStatus.created) {
+      throw ManisaApiException(response.statusCode, body);
+    }
+    return Device.fromJson(jsonDecode(body) as JsonMap);
+  }
+
+  @override
   Future<void> executeCommand({
     required String deviceId,
     required int endpoint,
@@ -85,15 +143,21 @@ final class HttpManisaApi implements ManisaApi {
     JsonMap params = const <String, Object?>{},
   }) async {
     final hub = await _discovery.discover();
-    final request = await _client.postUrl(hub.resolve('/api/v1/devices/${Uri.encodeComponent(deviceId)}/commands'));
+    final request = await _client.postUrl(
+      hub.resolve(
+        '/api/v1/devices/${Uri.encodeComponent(deviceId)}/commands',
+      ),
+    );
     await _authorize(request);
     request.headers.contentType = ContentType.json;
-    request.write(jsonEncode(<String, Object?>{
-      'endpoint': endpoint,
-      'capability': capability,
-      'action': action,
-      if (params.isNotEmpty) 'params': params,
-    }));
+    request.write(
+      jsonEncode(<String, Object?>{
+        'endpoint': endpoint,
+        'capability': capability,
+        'action': action,
+        if (params.isNotEmpty) 'params': params,
+      }),
+    );
     final response = await request.close();
     if (response.statusCode != HttpStatus.noContent) {
       final body = await utf8.decodeStream(response);
@@ -102,9 +166,14 @@ final class HttpManisaApi implements ManisaApi {
     await response.drain<void>();
   }
 
-  Future<List<T>> _list<T>(String path, T Function(JsonMap json) decode) async {
+  Future<List<T>> _list<T>(
+    String path,
+    T Function(JsonMap json) decode,
+  ) async {
     final value = await _get(path);
-    return (value! as List<Object?>).map((item) => decode(item! as JsonMap)).toList(growable: false);
+    return (value! as List<Object?>)
+        .map((item) => decode(item! as JsonMap))
+        .toList(growable: false);
   }
 
   Future<Object?> _get(String path) async {
