@@ -321,7 +321,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun readOnOff(nodeId: Long, endpoint: Int, result: MethodChannel.Result) {
         withConnectedDevice(nodeId, result) { devicePointer ->
             val path = ChipAttributePath.newInstance(
-                endpoint.toLong(),
+                endpoint,
                 OnOff.ID,
                 OnOff.Attribute.OnOff.id,
             )
@@ -337,7 +337,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
                     override fun onReport(nodeState: NodeState) {
                         val tlv = nodeState
-                            .getEndpointState(endpoint.toLong())
+                            .getEndpointState(endpoint)
                             ?.getClusterState(OnOff.ID)
                             ?.getAttributeState(OnOff.Attribute.OnOff.id)
                             ?.tlv
@@ -372,7 +372,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             writer.startStructure(AnonymousTag)
             writer.endStructure()
             val invoke = InvokeElement.newInstance(
-                endpoint.toLong(),
+                endpoint,
                 OnOff.ID,
                 command.id,
                 writer.getEncoded(),
@@ -411,7 +411,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun subscribeOnOff(nodeId: Long, devicePointer: Long, endpoints: List<Int>) {
         val paths = endpoints.map { endpoint ->
             ChipAttributePath.newInstance(
-                endpoint.toLong(),
+                endpoint,
                 OnOff.ID,
                 OnOff.Attribute.OnOff.id,
             )
@@ -435,7 +435,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 override fun onReport(nodeState: NodeState) {
                     for (endpoint in endpoints) {
                         val tlv = nodeState
-                            .getEndpointState(endpoint.toLong())
+                            .getEndpointState(endpoint)
                             ?.getClusterState(OnOff.ID)
                             ?.getAttributeState(OnOff.Attribute.OnOff.id)
                             ?.tlv
