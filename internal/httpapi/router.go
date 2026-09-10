@@ -3,12 +3,32 @@ package httpapi
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/PoryaNoorzadeh/Manisa-app/internal/application"
 )
 
-func NewRouter(logger *slog.Logger, db *sql.DB) http.Handler {
+type createHomeRequest struct {
+	Name string `json:"name"`
+}
+
+type createRoomRequest struct {
+	HomeID string `json:"homeId"`
+	Name   string `json:"name"`
+}
+
+type createDeviceRequest struct {
+	HomeID      string  `json:"homeId"`
+	RoomID      *string `json:"roomId,omitempty"`
+	Name        string  `json:"name"`
+	ProductType string  `json:"productType"`
+	Transport   string  `json:"transport"`
+}
+
+func NewRouter(logger *slog.Logger, db *sql.DB, app *application.Service) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
@@ -16,8 +36,7 @@ func NewRouter(logger *slog.Logger, db *sql.DB) http.Handler {
 	})
 
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		if err := db.PingContext(ctx); err != nil {
+		if err := db.PingContext(r.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready"})
 			return
 		}
@@ -33,7 +52,91 @@ func NewRouter(logger *slog.Logger, db *sql.DB) http.Handler {
 		})
 	})
 
+	mux.HandleFunc("GET /api/v1/homes", func(w http.ResponseWriter, r *http.Request) {
+		homes, err := app.ListHomes(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, homes)
+	})
+
+	mux.HandleFunc("POST /api/v1/homes", func(w http.ResponseWriter, r *http.Request) {
+		var req createHomeRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_json"})
+			return
+		}
+		home, err := app.CreateHome(r.Context(), req.Name)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, home)
+	})
+
+	mux.HandleFunc("GET /api/v1/rooms", func(w http.ResponseWriter, r *http.Request) {
+		rooms, err := app.ListRooms(r.Context(), r.URL.Query().Get("homeId"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, rooms)
+	})
+
+	mux.HandleFunc("POST /api/v1/rooms", func(w http.ResponseWriter, r *http.Request) {
+		var req createRoomRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_json"})
+			return
+		}
+		room, err := app.CreateRoom(r.Context(), req.HomeID, req.Name)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, room)
+	})
+
+	mux.HandleFunc("GET /api/v1/devices", func(w http.ResponseWriter, r *http.Request) {
+		devices, err := app.ListDevices(r.Context(), r.URL.Query().Get("homeId"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, devices)
+	})
+
+	mux.HandleFunc("POST /api/v1/devices", func(w http.ResponseWriter, r *http.Request) {
+		var req createDeviceRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_json"})
+			return
+		}
+		device, err := app.CreateDevice(r.Context(), req.HomeID, req.Name, req.ProductType, req.Transport, req.RoomID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, device)
+	})
+
 	return requestLogger(logger, mux)
+}
+
+func decodeJSON(r *http.Request, dst any) error {
+	defer r.Body.Close()
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
+}
+
+func writeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, application.ErrInvalidInput) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_input"})
+		return
+	}
+	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal_error"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
