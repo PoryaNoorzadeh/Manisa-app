@@ -718,7 +718,8 @@ final class _CapabilityControl extends StatelessWidget {
     }
 
     if (capability.id == 'level' && capability.writable) {
-      final level = value is num ? value.toDouble().clamp(0, 100) : 0.0;
+      final double level =
+          value is num ? value.toDouble().clamp(0.0, 100.0) : 0.0;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
