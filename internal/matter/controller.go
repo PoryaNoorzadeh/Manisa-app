@@ -5,9 +5,11 @@ import "context"
 type NodeID string
 
 type CommissionRequest struct {
-	SetupPayload string
-	WiFiSSID     string
-	WiFiPassword string
+	SetupPayload  string
+	WiFiSSID      string
+	WiFiPassword  string
+	ThreadDataset string
+	NetworkOnly   bool
 }
 
 type CommissionResult struct {
@@ -15,9 +17,10 @@ type CommissionResult struct {
 }
 
 type Command struct {
-	Endpoint uint16
-	Name     string
-	Payload  map[string]any
+	Endpoint  uint16
+	ClusterID uint32
+	Name      string
+	Payload   map[string]any
 }
 
 type Controller interface {
