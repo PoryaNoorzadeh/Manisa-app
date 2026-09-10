@@ -5,20 +5,27 @@ import 'package:flutter/foundation.dart';
 import '../data/manisa_api.dart';
 import '../data/models.dart';
 import '../realtime/manisa_realtime.dart';
+import '../security/token_store.dart';
 
 final class AppController extends ChangeNotifier {
-  AppController({required ManisaApi api, required ManisaRealtime realtime})
-      : _api = api,
-        _realtime = realtime;
+  AppController({
+    required ManisaApi api,
+    required ManisaRealtime realtime,
+    required TokenStore tokenStore,
+  })  : _api = api,
+        _realtime = realtime,
+        _tokenStore = tokenStore;
 
   final ManisaApi _api;
   final ManisaRealtime _realtime;
+  final TokenStore _tokenStore;
 
   List<Home> homes = const <Home>[];
   List<Room> rooms = const <Room>[];
   List<Device> devices = const <Device>[];
   String? selectedHomeId;
   bool loading = false;
+  bool paired = false;
   String? errorMessage;
 
   final Map<String, DeviceDescriptor> _descriptors = <String, DeviceDescriptor>{};
@@ -35,16 +42,43 @@ final class AppController extends ChangeNotifier {
     errorMessage = null;
     notifyListeners();
     try {
-      homes = await _api.listHomes();
-      if (homes.isNotEmpty) {
-        await selectHome(homes.first.id, notifyLoading: false);
+      final token = await _tokenStore.read();
+      paired = token != null && token.isNotEmpty;
+      if (!paired) {
+        return;
       }
+      await _loadDashboard();
       _listenRealtime();
     } catch (error) {
       errorMessage = error.toString();
     } finally {
       loading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> pair(String code, {String clientName = 'Manisa App'}) async {
+    loading = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      await _api.pair(code: code, clientName: clientName);
+      paired = true;
+      await _loadDashboard();
+      _listenRealtime();
+    } catch (error) {
+      paired = false;
+      errorMessage = 'Pairing failed: $error';
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadDashboard() async {
+    homes = await _api.listHomes();
+    if (homes.isNotEmpty) {
+      await selectHome(homes.first.id, notifyLoading: false);
     }
   }
 
