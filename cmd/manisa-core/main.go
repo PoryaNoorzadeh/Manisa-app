@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PoryaNoorzadeh/Manisa-app/internal/application"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/config"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/httpapi"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/storage/sqlite"
@@ -25,9 +26,12 @@ func main() {
 	}
 	defer db.Close()
 
+	store := sqlite.NewStore(db)
+	app := application.New(store)
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(logger, db),
+		Handler:           httpapi.NewRouter(logger, db, app),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
