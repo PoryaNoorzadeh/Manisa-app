@@ -28,8 +28,10 @@ final class AppController extends ChangeNotifier {
   bool paired = false;
   String? errorMessage;
 
-  final Map<String, DeviceDescriptor> _descriptors = <String, DeviceDescriptor>{};
-  final Map<String, Map<String, DeviceState>> _states = <String, Map<String, DeviceState>>{};
+  final Map<String, DeviceDescriptor> _descriptors =
+      <String, DeviceDescriptor>{};
+  final Map<String, Map<String, DeviceState>> _states =
+      <String, Map<String, DeviceState>>{};
   StreamSubscription<ManisaEvent>? _events;
 
   DeviceDescriptor? descriptorFor(String deviceId) => _descriptors[deviceId];
@@ -107,6 +109,46 @@ final class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> commissionMatterDevice({
+    required String name,
+    required String productType,
+    required String transport,
+    required String setupPayload,
+    String? roomId,
+    String wifiSsid = '',
+    String wifiPassword = '',
+    String threadDataset = '',
+  }) async {
+    final homeId = selectedHomeId;
+    if (homeId == null) {
+      throw StateError('No Manisa home selected');
+    }
+
+    loading = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      await _api.commissionMatterDevice(
+        homeId: homeId,
+        roomId: roomId,
+        name: name,
+        productType: productType,
+        transport: transport,
+        setupPayload: setupPayload,
+        wifiSsid: wifiSsid,
+        wifiPassword: wifiPassword,
+        threadDataset: threadDataset,
+      );
+      await selectHome(homeId, notifyLoading: false);
+    } catch (error) {
+      errorMessage = 'Commissioning failed: $error';
+      rethrow;
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> _loadDevice(Device device) async {
     final results = await Future.wait<Object>(<Future<Object>>[
       _api.deviceDescriptor(device.id),
@@ -150,7 +192,8 @@ final class AppController extends ChangeNotifier {
           capability: event.capability,
           value: event.value,
         );
-        (_states[event.deviceId] ??= <String, DeviceState>{})[state.key] = state;
+        (_states[event.deviceId] ??= <String, DeviceState>{})[state.key] =
+            state;
         notifyListeners();
       },
       onError: (Object error, StackTrace stackTrace) {
