@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PoryaNoorzadeh/Manisa-app/internal/adapters/matterjs"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/application"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/config"
 	"github.com/PoryaNoorzadeh/Manisa-app/internal/httpapi"
@@ -27,7 +28,8 @@ func main() {
 	defer db.Close()
 
 	store := sqlite.NewStore(db)
-	app := application.New(store)
+	matterController := matterjs.New(cfg.MatterWSURL)
+	app := application.New(store, matterController)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -36,7 +38,7 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("manisa-core started", "addr", cfg.HTTPAddr)
+		logger.Info("manisa-core started", "addr", cfg.HTTPAddr, "matter_ws_url", cfg.MatterWSURL)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("http server", "error", err)
 			os.Exit(1)
