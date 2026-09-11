@@ -19,6 +19,7 @@ import chip.devicecontroller.ReportCallback
 import chip.devicecontroller.ResubscriptionAttemptCallback
 import chip.devicecontroller.SubscriptionEstablishedCallback
 import chip.devicecontroller.model.ChipAttributePath
+import chip.devicecontroller.model.ChipPathId
 import chip.devicecontroller.model.ChipEventPath
 import chip.devicecontroller.model.InvokeElement
 import chip.devicecontroller.model.NodeState
@@ -446,7 +447,15 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     }
                 },
                 devicePointer,
-                null,
+                // A null path list means no attributes, not a wildcard read.
+                // Read OnOff on every endpoint to discover all switch channels.
+                listOf(
+                    ChipAttributePath.newInstance(
+                        ChipPathId.forWildcard(),
+                        ChipPathId.forId(OnOff.ID),
+                        ChipPathId.forId(OnOff.Attribute.OnOff.id),
+                    ),
+                ),
                 null,
                 false,
                 0,
