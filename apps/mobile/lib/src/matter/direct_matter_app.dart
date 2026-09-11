@@ -78,7 +78,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
       }
       final devices = await widget.deviceStore.load();
       if (!mounted) return;
-      setState(() => _devices = devices);
+      setState(() {
+        _devices = devices;
+        _loading = false;
+      });
       _events = widget.controller.watchOnOff().listen(
         (event) {
           if (!mounted) return;
@@ -91,14 +94,17 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
           setState(() => _error = 'Realtime Matter update failed: $error');
         },
       );
-      await _refreshAllStates();
+      // A saved device may be offline, and the platform connection attempt can
+      // consequently take a long time.  Do not keep onboarding behind that
+      // refresh: render the saved devices first and update their state in the
+      // background so Add Device remains available.
+      unawaited(_refreshAllStates());
     } catch (error) {
       if (mounted) {
-        setState(() => _error = error.toString());
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
+        setState(() {
+          _error = error.toString();
+          _loading = false;
+        });
       }
     }
   }
