@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout Manisa
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -107,11 +109,14 @@ jobs:
                   text = text.replace(marker, addition, 1)
               else:
                   text += '\n\ndependencies {\n    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))\n}\n'
+          # CHIPTool disables minification. Copied JARs do not carry consumer
+          # rules, so R8 can otherwise remove classes called only through JNI.
+          text += '\nandroid {\n    buildTypes {\n        getByName("release") {\n            isMinifyEnabled = false\n            isShrinkResources = false\n        }\n    }\n}\n'
           gradle.write_text(text)
 
           manifest = Path('apps/mobile/android/app/src/main/AndroidManifest.xml')
           text = manifest.read_text()
-          permissions = '''    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />\n    <uses-permission android:name="android.permission.CAMERA" />\n'''
+          permissions = '''    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />\n    <uses-permission android:name="android.permission.CAMERA" />\n'''
           if 'android.permission.BLUETOOTH_SCAN' not in text:
               token = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
               if token not in text:
@@ -120,7 +125,8 @@ jobs:
           manifest.write_text(text)
           PY
 
-      - name: Build optimized Manisa Direct Matter APK
+      # Match CHIPTool v1.5.1.0: keep JNI-linked classes intact in this recovery build.
+      - name: Build Manisa Direct Matter recovery APK
         working-directory: apps/mobile
         run: |
           flutter build apk \
@@ -135,6 +141,7 @@ jobs:
           test -f "$APK"
           cp "$APK" dist/manisa-m1-direct-matter-arm64-release.apk
           sha256sum dist/manisa-m1-direct-matter-arm64-release.apk > dist/SHA256SUMS.txt
+          git rev-parse HEAD > dist/BUILD_COMMIT.txt
           python3 - <<'PY' | tee dist/SIZE_REPORT.txt
           import os
           import zipfile
@@ -165,5 +172,6 @@ jobs:
             dist/manisa-m1-direct-matter-arm64-release.apk
             dist/SHA256SUMS.txt
             dist/SIZE_REPORT.txt
+            dist/BUILD_COMMIT.txt
           if-no-files-found: error
           retention-days: 14

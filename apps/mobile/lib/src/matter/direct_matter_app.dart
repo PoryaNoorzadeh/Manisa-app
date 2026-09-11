@@ -91,7 +91,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
           setState(() => _error = 'Realtime Matter update failed: $error');
         },
       );
-      await _refreshAllStates();
+      // Recovery baseline: do not start native device discovery during startup.
+      // Saved devices remain visible; the user can refresh them explicitly.
     } catch (error) {
       if (mounted) {
         setState(() => _error = error.toString());

@@ -69,6 +69,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private lateinit var platform: AndroidChipPlatform
     private lateinit var controller: ChipDeviceController
+    private var initializationError: Throwable? = null
     private var bleCommissioner: ManisaBleCommissioner? = null
     private var eventSink: EventChannel.EventSink? = null
     private var pendingCommission: MethodChannel.Result? = null
@@ -81,7 +82,17 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             .setMethodCallHandler(this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENTS)
             .setStreamHandler(this)
-        initializeMatter()
+        try {
+            Log.i(TAG, "Initializing Matter runtime")
+            initializeMatter()
+            Log.i(TAG, "Matter runtime ready")
+        } catch (error: Exception) {
+            initializationError = error
+            Log.e(TAG, "Matter initialization failed", error)
+        } catch (error: LinkageError) {
+            initializationError = error
+            Log.e(TAG, "Matter native library loading failed", error)
+        }
     }
 
     private fun initializeMatter() {
@@ -123,6 +134,14 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        initializationError?.let { error ->
+            result.error(
+                "matter_initialization_failed",
+                "Matter could not start: ${error.javaClass.simpleName}: ${error.message}",
+                null,
+            )
+            return
+        }
         try {
             when (call.method) {
                 "isSupported" -> result.success(true)
@@ -163,6 +182,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun commissionWifi(call: MethodCall, result: MethodChannel.Result) {
+        Log.i(TAG, "commissionWifi request received")
         if (pendingCommission != null || pendingPermissionCommission != null) {
             result.error(
                 "commissioning_busy",
