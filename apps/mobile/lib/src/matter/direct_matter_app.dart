@@ -53,6 +53,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
   final Map<String, bool> _states = <String, bool>{};
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
+  final Set<int> _refreshingNodes = <int>{};
+  final Set<int> _removingNodes = <int>{};
+  static const _readTimeout = Duration(seconds: 15);
   bool _loading = true;
   String? _error;
 
@@ -81,7 +84,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
       setState(() => _devices = devices);
       _events = widget.controller.watchOnOff().listen(
         (event) {
-          if (!mounted) return;
+          if (!_canUpdate(event.nodeId)) return;
           setState(() {
             _states[_stateKey(event.nodeId, event.endpoint)] = event.value;
           });
@@ -91,8 +94,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
           setState(() => _error = 'Realtime Matter update failed: $error');
         },
       );
-      // Recovery baseline: do not start native device discovery during startup.
-      // Saved devices remain visible; the user can refresh them explicitly.
+      // Restore live state without blocking the home screen or onboarding.
+      unawaited(_refreshAllStates());
     } catch (error) {
       if (mounted) {
         setState(() => _error = error.toString());
@@ -104,39 +107,56 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
     }
   }
 
+  bool _canUpdate(int nodeId) => mounted &&
+      !_removingNodes.contains(nodeId) &&
+      _devices.any((device) => device.nodeId == nodeId);
+
   Future<void> _refreshAllStates() async {
-    for (final device in _devices) {
+    for (final device in List<DirectMatterDevice>.of(_devices)) {
+      if (!_canUpdate(device.nodeId) || !_refreshingNodes.add(device.nodeId)) {
+        continue;
+      }
       try {
-        final discovered = await widget.controller.discoverOnOffEndpoints(
-          device.nodeId,
-        );
-        var currentDevice = device;
+        // Read known channels first: a subscription/discovery failure must not
+        // hide a successfully retrieved switch state.
+        for (final endpoint in device.onOffEndpoints) {
+          final value = await widget.controller.readOnOff(
+            nodeId: device.nodeId,
+            endpoint: endpoint,
+          ).timeout(_readTimeout);
+          if (!_canUpdate(device.nodeId)) break;
+          setState(() => _states[_stateKey(device.nodeId, endpoint)] = value);
+        }
+        if (!_canUpdate(device.nodeId)) continue;
+        final discovered = await widget.controller
+            .discoverOnOffEndpoints(device.nodeId).timeout(_readTimeout);
+        if (!_canUpdate(device.nodeId)) continue;
         if (discovered.isNotEmpty &&
             !_sameEndpoints(discovered, device.onOffEndpoints)) {
-          currentDevice = device.copyWith(onOffEndpoints: discovered);
-          await widget.deviceStore.save(currentDevice);
           final index = _devices.indexWhere((item) => item.nodeId == device.nodeId);
-          if (index >= 0 && mounted) {
-            setState(() {
-              final updated = List<DirectMatterDevice>.of(_devices);
-              updated[index] = currentDevice;
-              _devices = updated;
-            });
+          setState(() {
+            final updated = List<DirectMatterDevice>.of(_devices);
+            updated[index] = device.copyWith(onOffEndpoints: discovered);
+            _devices = updated;
+          });
+          for (final endpoint in discovered.where((e) => !device.onOffEndpoints.contains(e))) {
+            final value = await widget.controller.readOnOff(
+              nodeId: device.nodeId, endpoint: endpoint,
+            ).timeout(_readTimeout);
+            if (!_canUpdate(device.nodeId)) break;
+            setState(() => _states[_stateKey(device.nodeId, endpoint)] = value);
           }
         }
-        for (final endpoint in currentDevice.onOffEndpoints) {
-          final value = await widget.controller.readOnOff(
-            nodeId: currentDevice.nodeId,
-            endpoint: endpoint,
-          );
-          if (mounted) {
-            setState(() {
-              _states[_stateKey(currentDevice.nodeId, endpoint)] = value;
-            });
-          }
+        if (_canUpdate(device.nodeId) &&
+            (_error?.startsWith('Could not refresh ${device.name}:') ?? false)) {
+          setState(() => _error = null);
         }
-      } catch (_) {
-        // Keep the device visible while offline. A later refresh can reconnect.
+      } catch (error) {
+        if (_canUpdate(device.nodeId)) {
+          setState(() => _error = 'Could not refresh ${device.name}: $error');
+        }
+      } finally {
+        _refreshingNodes.remove(device.nodeId);
       }
     }
   }
@@ -204,6 +224,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
   }
 
   Future<void> _removeDevice(DirectMatterDevice device) async {
+    if (_removingNodes.contains(device.nodeId)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -221,9 +242,20 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted || _removingNodes.contains(device.nodeId)) return;
+    setState(() {
+      _removingNodes.add(device.nodeId);
+      _error = null;
+      for (final endpoint in device.onOffEndpoints) {
+        _busy.add(_stateKey(device.nodeId, endpoint));
+      }
+    });
     try {
-      await widget.controller.removeDevice(device.nodeId);
+      // Only forget the device after the native RemoveCurrentFabric callback.
+      await widget.controller.removeDevice(device.nodeId).timeout(
+        const Duration(seconds: 45),
+        onTimeout: () => throw TimeoutException('Removal not confirmed; device kept in the list'),
+      );
       await widget.deviceStore.remove(device.nodeId);
       if (mounted) {
         setState(() {
@@ -238,6 +270,15 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
     } catch (error) {
       if (mounted) {
         setState(() => _error = 'Remove failed: $error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _removingNodes.remove(device.nodeId);
+          for (final endpoint in device.onOffEndpoints) {
+            _busy.remove(_stateKey(device.nodeId, endpoint));
+          }
+        });
       }
     }
   }
@@ -403,7 +444,9 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   return SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     title: Text('Gang ${index + 1}'),
-                    subtitle: Text('Matter endpoint $endpoint'),
+                    subtitle: Text(state == null
+                        ? 'Status unavailable · endpoint $endpoint'
+                        : 'Matter endpoint $endpoint'),
                     value: state ?? false,
                     onChanged: state == null || isBusy
                         ? null

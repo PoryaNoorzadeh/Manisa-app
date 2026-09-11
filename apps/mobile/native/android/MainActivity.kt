@@ -15,6 +15,7 @@ import chip.devicecontroller.DeviceAttestation
 import chip.devicecontroller.GetConnectedDeviceCallbackJni.GetConnectedDeviceCallback
 import chip.devicecontroller.InvokeCallback
 import chip.devicecontroller.NetworkCredentials
+import chip.devicecontroller.UnpairDeviceCallback
 import chip.devicecontroller.ReportCallback
 import chip.devicecontroller.ResubscriptionAttemptCallback
 import chip.devicecontroller.SubscriptionEstablishedCallback
@@ -44,6 +45,10 @@ import matter.tlv.TlvWriter
 
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     companion object {
+        // One controller per Android process, including Activity recreation.
+        private var sharedPlatform: AndroidChipPlatform? = null
+        private var sharedController: ChipDeviceController? = null
+        private val pendingRemovals = mutableSetOf<Long>()
         private const val TAG = "ManisaMatter"
         private const val METHODS = "com.manisa/matter/methods"
         private const val EVENTS = "com.manisa/matter/events"
@@ -77,29 +82,31 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private fun initializeMatter() {
         ChipDeviceController.loadJni()
-        platform = AndroidChipPlatform(
-            AndroidBleManager(this),
+        platform = sharedPlatform ?: AndroidChipPlatform(
+            AndroidBleManager(applicationContext),
             AndroidNfcCommissioningManager(),
-            PreferencesKeyValueStoreManager(this),
-            PreferencesConfigurationManager(this),
+            PreferencesKeyValueStoreManager(applicationContext),
+            PreferencesConfigurationManager(applicationContext),
             NsdManagerServiceResolver(
-                this,
+                applicationContext,
                 NsdManagerServiceResolver.NsdManagerResolverAvailState(),
             ),
-            NsdManagerServiceBrowser(this),
+            NsdManagerServiceBrowser(applicationContext),
             ChipMdnsCallbackImpl(),
-            DiagnosticDataProviderImpl(this),
-        )
-        controller = ChipDeviceController(
+            DiagnosticDataProviderImpl(applicationContext),
+        ).also { sharedPlatform = it }
+        controller = sharedController ?: ChipDeviceController(
             ControllerParams.newBuilder()
                 .setControllerVendorId(VENDOR_ID)
                 .setEnableServerInteractions(true)
                 .build(),
-        )
+        ).also { sharedController = it }
         // M1 hardware uses development/test Matter credentials. CHIPTool installs the
         // same test PAA roots; without them device attestation can abort commissioning.
         controller.setAttestationTrustStoreDelegate(ManisaTestAttestationTrustStore())
         controller.setCompletionListener(commissioningListener)
+        controller.startDnssd()
+        Log.i(TAG, "Matter operational discovery ready; controllerNodeId=${controller.controllerNodeId}")
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -131,8 +138,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     invokeOnOff(nodeId, endpoint, OnOff.Command.Toggle, result)
                 }
                 "removeDevice" -> withNodeId(call, result) { nodeId ->
-                    controller.unpairDevice(nodeId)
-                    result.success(null)
+                    removeDevice(nodeId, result)
                 }
                 else -> result.notImplemented()
             }
@@ -290,6 +296,36 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 error?.message ?: "Matter commissioning error",
                 null,
             )
+        }
+    }
+
+    private fun removeDevice(nodeId: Long, result: MethodChannel.Result) {
+        if (!pendingRemovals.add(nodeId)) {
+            result.error("removal_busy", "Device removal is already in progress", nodeId)
+            return
+        }
+        Log.i(TAG, "Requesting removal of current fabric from nodeId=$nodeId")
+        try {
+            controller.unpairDeviceCallback(nodeId, object : UnpairDeviceCallback {
+                override fun onSuccess(remoteDeviceId: Long) {
+                    runOnUiThread {
+                        pendingRemovals.remove(nodeId)
+                        Log.i(TAG, "Device confirmed fabric removal nodeId=$remoteDeviceId")
+                        result.success(null)
+                    }
+                }
+
+                override fun onError(status: Int, remoteDeviceId: Long) {
+                    runOnUiThread {
+                        pendingRemovals.remove(nodeId)
+                        Log.e(TAG, "Fabric removal failed nodeId=$remoteDeviceId status=$status")
+                        result.error("matter_remove_failed", "Device did not confirm removal (error $status)", remoteDeviceId)
+                    }
+                }
+            })
+        } catch (error: Exception) {
+            pendingRemovals.remove(nodeId)
+            throw error
         }
     }
 
