@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 final class DirectMatterCommissionResult {
@@ -115,6 +116,7 @@ final class PlatformDirectMatterController implements DirectMatterController {
       throw ArgumentError.value(ssid, 'ssid', 'Wi-Fi SSID is required');
     }
 
+    debugPrint('ManisaMatter: commissionWifi invoked');
     final result = await _methods.invokeMethod<Object?>(
       'commissionWifi',
       <String, Object?>{

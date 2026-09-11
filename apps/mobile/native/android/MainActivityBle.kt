@@ -15,10 +15,12 @@ import chip.devicecontroller.DeviceAttestation
 import chip.devicecontroller.GetConnectedDeviceCallbackJni.GetConnectedDeviceCallback
 import chip.devicecontroller.InvokeCallback
 import chip.devicecontroller.NetworkCredentials
+import chip.devicecontroller.UnpairDeviceCallback
 import chip.devicecontroller.ReportCallback
 import chip.devicecontroller.ResubscriptionAttemptCallback
 import chip.devicecontroller.SubscriptionEstablishedCallback
 import chip.devicecontroller.model.ChipAttributePath
+import chip.devicecontroller.model.ChipPathId
 import chip.devicecontroller.model.ChipEventPath
 import chip.devicecontroller.model.InvokeElement
 import chip.devicecontroller.model.NodeState
@@ -51,6 +53,10 @@ import matter.tlv.TlvWriter
  */
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     companion object {
+        // One controller per Android process, including Activity recreation.
+        private var sharedPlatform: AndroidChipPlatform? = null
+        private var sharedController: ChipDeviceController? = null
+        private val pendingRemovals = mutableSetOf<Long>()
         private const val TAG = "ManisaMatter"
         private const val METHODS = "com.manisa/matter/methods"
         private const val EVENTS = "com.manisa/matter/events"
@@ -69,6 +75,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private lateinit var platform: AndroidChipPlatform
     private lateinit var controller: ChipDeviceController
+    private var initializationError: Throwable? = null
     private var bleCommissioner: ManisaBleCommissioner? = null
     private var eventSink: EventChannel.EventSink? = null
     private var pendingCommission: MethodChannel.Result? = null
@@ -81,30 +88,40 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             .setMethodCallHandler(this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENTS)
             .setStreamHandler(this)
-        initializeMatter()
+        try {
+            Log.i(TAG, "Initializing Matter runtime")
+            initializeMatter()
+            Log.i(TAG, "Matter runtime ready")
+        } catch (error: Exception) {
+            initializationError = error
+            Log.e(TAG, "Matter initialization failed", error)
+        } catch (error: LinkageError) {
+            initializationError = error
+            Log.e(TAG, "Matter native library loading failed", error)
+        }
     }
 
     private fun initializeMatter() {
         ChipDeviceController.loadJni()
-        platform = AndroidChipPlatform(
-            AndroidBleManager(this),
+        platform = sharedPlatform ?: AndroidChipPlatform(
+            AndroidBleManager(applicationContext),
             AndroidNfcCommissioningManager(),
-            PreferencesKeyValueStoreManager(this),
-            PreferencesConfigurationManager(this),
+            PreferencesKeyValueStoreManager(applicationContext),
+            PreferencesConfigurationManager(applicationContext),
             NsdManagerServiceResolver(
-                this,
+                applicationContext,
                 NsdManagerServiceResolver.NsdManagerResolverAvailState(),
             ),
-            NsdManagerServiceBrowser(this),
+            NsdManagerServiceBrowser(applicationContext),
             ChipMdnsCallbackImpl(),
-            DiagnosticDataProviderImpl(this),
-        )
-        controller = ChipDeviceController(
+            DiagnosticDataProviderImpl(applicationContext),
+        ).also { sharedPlatform = it }
+        controller = sharedController ?: ChipDeviceController(
             ControllerParams.newBuilder()
                 .setControllerVendorId(VENDOR_ID)
                 .setEnableServerInteractions(true)
                 .build(),
-        )
+        ).also { sharedController = it }
         controller.setAttestationTrustStoreDelegate(ManisaTestAttestationTrustStore())
 
         // M1 validation devices use development credentials. Match CHIPTool's behavior and
@@ -120,9 +137,19 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             }
         }
         controller.setCompletionListener(commissioningListener)
+        controller.startDnssd()
+        Log.i(TAG, "Matter operational discovery ready; controllerNodeId=${controller.controllerNodeId}")
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        initializationError?.let { error ->
+            result.error(
+                "matter_initialization_failed",
+                "Matter could not start: ${error.javaClass.simpleName}: ${error.message}",
+                null,
+            )
+            return
+        }
         try {
             when (call.method) {
                 "isSupported" -> result.success(true)
@@ -151,8 +178,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     invokeOnOff(nodeId, endpoint, OnOff.Command.Toggle, result)
                 }
                 "removeDevice" -> withNodeId(call, result) { nodeId ->
-                    controller.unpairDevice(nodeId)
-                    result.success(null)
+                    removeDevice(nodeId, result)
                 }
                 else -> result.notImplemented()
             }
@@ -163,6 +189,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun commissionWifi(call: MethodCall, result: MethodChannel.Result) {
+        Log.i(TAG, "commissionWifi request received")
         if (pendingCommission != null || pendingPermissionCommission != null) {
             result.error(
                 "commissioning_busy",
@@ -394,6 +421,36 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
     }
 
+    private fun removeDevice(nodeId: Long, result: MethodChannel.Result) {
+        if (!pendingRemovals.add(nodeId)) {
+            result.error("removal_busy", "Device removal is already in progress", nodeId)
+            return
+        }
+        Log.i(TAG, "Requesting removal of current fabric from nodeId=$nodeId")
+        try {
+            controller.unpairDeviceCallback(nodeId, object : UnpairDeviceCallback {
+                override fun onSuccess(remoteDeviceId: Long) {
+                    runOnUiThread {
+                        pendingRemovals.remove(nodeId)
+                        Log.i(TAG, "Device confirmed fabric removal nodeId=$remoteDeviceId")
+                        result.success(null)
+                    }
+                }
+
+                override fun onError(status: Int, remoteDeviceId: Long) {
+                    runOnUiThread {
+                        pendingRemovals.remove(nodeId)
+                        Log.e(TAG, "Fabric removal failed nodeId=$remoteDeviceId status=$status")
+                        result.error("matter_remove_failed", "Device did not confirm removal (error $status)", remoteDeviceId)
+                    }
+                }
+            })
+        } catch (error: Exception) {
+            pendingRemovals.remove(nodeId)
+            throw error
+        }
+    }
+
     private fun discoverOnOffEndpoints(
         nodeId: Long,
         result: MethodChannel.Result,
@@ -426,7 +483,15 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     }
                 },
                 devicePointer,
-                null,
+                // A null path list means no attributes, not a wildcard read.
+                // Read OnOff on every endpoint to discover all switch channels.
+                listOf(
+                    ChipAttributePath.newInstance(
+                        ChipPathId.forWildcard(),
+                        ChipPathId.forId(OnOff.ID),
+                        ChipPathId.forId(OnOff.Attribute.OnOff.id),
+                    ),
+                ),
                 null,
                 false,
                 0,
