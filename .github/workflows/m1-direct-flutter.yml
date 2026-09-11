@@ -87,10 +87,12 @@ jobs:
             apps/mobile/android/app/src/main/jniLibs/arm64-v8a/
 
           mkdir -p apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile
-          cp apps/mobile/native/android/MainActivity.kt \
+          cp apps/mobile/native/android/MainActivityBle.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/MainActivity.kt
           cp apps/mobile/native/android/GenericChipDeviceListener.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/GenericChipDeviceListener.kt
+          cp apps/mobile/native/android/ManisaBleCommissioner.kt \
+            apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/ManisaBleCommissioner.kt
 
           python3 - <<'PY'
           from pathlib import Path
