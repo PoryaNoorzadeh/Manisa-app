@@ -45,6 +45,7 @@ void main() {
         nodeId: 7,
         name: 'Living Room Switch',
         onOffEndpoints: <int>[1, 2, 3],
+        channelNames: <int, String>{1: 'لوستر', 2: 'دیوار'},
       );
 
       final decoded = DirectMatterDevice.fromJson(device.toJson());
@@ -52,6 +53,30 @@ void main() {
       expect(decoded.nodeId, device.nodeId);
       expect(decoded.name, device.name);
       expect(decoded.onOffEndpoints, device.onOffEndpoints);
+      expect(decoded.channelNames, device.channelNames);
+      expect(decoded.channelName(1, 0), 'لوستر');
+      expect(decoded.channelName(3, 2), 'خروجی 3');
+    });
+    test('loads legacy JSON without output names', () {
+      final decoded = DirectMatterDevice.fromJson(<String, Object?>{
+        'nodeId': 8,
+        'name': 'Legacy switch',
+        'onOffEndpoints': <Object?>[11, 12],
+      });
+      expect(decoded.channelNames, isEmpty);
+      expect(decoded.channelName(12, 1), 'خروجی 2');
+    });
+
+    test('keeps names bound to endpoint when discovery order changes', () {
+      const device = DirectMatterDevice(
+        nodeId: 9,
+        name: 'Switch',
+        onOffEndpoints: <int>[1, 2],
+        channelNames: <int, String>{1: 'راست', 2: 'چپ'},
+      );
+      final reordered = device.copyWith(onOffEndpoints: <int>[2, 1]);
+      expect(reordered.channelName(2, 0), 'چپ');
+      expect(reordered.channelName(1, 1), 'راست');
     });
   });
 }
