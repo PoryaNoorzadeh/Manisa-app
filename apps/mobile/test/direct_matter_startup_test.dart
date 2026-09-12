@@ -154,6 +154,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('output names validate and persist by endpoint', (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    final store = _RenameStore()..fail = false;
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('نام خروجی‌ها'));
+    await tester.pumpAndSettle();
+    expect(find.text('امتحان این خروجی'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '   ');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('برای همهٔ خروجی‌ها نام بنویس.'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'لوستر پذیرایی');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('لوستر پذیرایی'), findsOneWidget);
+    expect(store.device.channelNames, <int, String>{1: 'لوستر پذیرایی'});
+    expect(store.device.onOffEndpoints, <int>[1]);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    expect(find.text('لوستر پذیرایی'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }
 
 class _Controller implements DirectMatterController {
