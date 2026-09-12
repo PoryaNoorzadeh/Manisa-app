@@ -153,7 +153,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
             updated[index] = updated[index].copyWith(onOffEndpoints: discovered);
             _devices = updated;
           });
-          await widget.deviceStore.save(_devices[index]);
+          try {
+            await widget.deviceStore.save(_devices[index]);
+          } catch (error) {
+            if (_canUpdate(device.nodeId)) {
+              setState(() => _error = 'Could not save discovered channels: $error');
+            }
+          }
           for (final endpoint in discovered.where((e) => !device.onOffEndpoints.contains(e))) {
             final value = await widget.controller.readOnOff(
               nodeId: device.nodeId, endpoint: endpoint,
@@ -510,6 +516,8 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                     children: <Widget>[
                       Text(
                         device.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       Text(
@@ -548,7 +556,11 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   if (state == null) {
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: Text(device.channelName(endpoint, index)),
+                      title: Text(
+                        device.channelName(endpoint, index),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       subtitle: const Text('وضعیت دریافت نشده'),
                       leading: const Icon(Icons.help_outline),
                       trailing: TextButton(
@@ -559,7 +571,11 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   }
                   return SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
-                    title: Text(device.channelName(endpoint, index)),
+                    title: Text(
+                        device.channelName(endpoint, index),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     subtitle: Text(isBusy ? 'در حال انجام…' : state ? 'روشن' : 'خاموش'),
                     value: state,
                     onChanged: isBusy ? null : (next) => onChanged(endpoint, next),
@@ -781,6 +797,7 @@ final class _MatterErrorNotice extends StatelessWidget {
     if (error.contains('matter_ble_failed')) return 'وسیله پیدا نشد. نزدیک آن بمان و حالت اتصال و بلوتوث را بررسی کن.';
     if (error.startsWith('Remove failed')) return 'حذف تأیید نشد. وسیله در فهرست باقی مانده؛ اتصال آن را بررسی کن و دوباره تلاش کن.';
     if (error.startsWith('Command failed')) return 'تغییر وضعیت تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
+    if (error.startsWith('Could not save discovered channels')) return 'کنترل‌های تازه پیدا شدند، اما ذخیره نشدند. دوباره وضعیت را بررسی کن.';
     if (error.startsWith('Could not refresh') || error.startsWith('Realtime')) return 'وضعیت تازه دریافت نشد. برق وسیله و اتصال به وای‌فای خانه را بررسی کن.';
     if (error.contains('initialization') || error.contains('not available')) return 'ارتباط مانیسا راه‌اندازی نشد. اپ را ببند و دوباره باز کن.';
     if (error.contains('PlatformException') || error.contains('Exception') || error.contains('Error')) return 'این مرحله کامل نشد. اتصال و دسترسی‌ها را بررسی کن و دوباره تلاش کن.';
