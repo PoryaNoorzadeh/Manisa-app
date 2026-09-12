@@ -7,31 +7,59 @@ final class DirectMatterDevice {
     required this.nodeId,
     required this.name,
     required this.onOffEndpoints,
+    this.channelNames = const <int, String>{},
   });
 
   final int nodeId;
   final String name;
   final List<int> onOffEndpoints;
+  final Map<int, String> channelNames;
 
-  DirectMatterDevice copyWith({String? name, List<int>? onOffEndpoints}) =>
+  String channelName(int endpoint, int index) =>
+      channelNames[endpoint] ?? 'خروجی ${index + 1}';
+
+  DirectMatterDevice copyWith({
+    String? name,
+    List<int>? onOffEndpoints,
+    Map<int, String>? channelNames,
+  }) =>
       DirectMatterDevice(
         nodeId: nodeId,
         name: name ?? this.name,
         onOffEndpoints: onOffEndpoints ?? this.onOffEndpoints,
+        channelNames: channelNames ?? this.channelNames,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
         'nodeId': nodeId,
         'name': name,
         'onOffEndpoints': onOffEndpoints,
+        'channelNames': channelNames.map(
+          (endpoint, name) => MapEntry(endpoint.toString(), name),
+        ),
       };
 
   factory DirectMatterDevice.fromJson(Map<String, Object?> json) {
     final nodeId = json['nodeId'];
     final name = json['name'];
     final endpoints = json['onOffEndpoints'];
+    final rawNames = json['channelNames'];
     if (nodeId is! int || name is! String || endpoints is! List<Object?>) {
       throw const FormatException('invalid direct Matter device');
+    }
+    final channelNames = <int, String>{};
+    if (rawNames != null) {
+      if (rawNames is! Map<String, Object?>) {
+        throw const FormatException('invalid direct Matter channel names');
+      }
+      for (final entry in rawNames.entries) {
+        final endpoint = int.tryParse(entry.key);
+        final value = entry.value;
+        if (endpoint == null || value is! String || value.trim().isEmpty) {
+          throw const FormatException('invalid direct Matter channel name');
+        }
+        channelNames[endpoint] = value;
+      }
     }
     return DirectMatterDevice(
       nodeId: nodeId,
@@ -42,6 +70,7 @@ final class DirectMatterDevice {
         }
         return value;
       }).toList(growable: false),
+      channelNames: Map<int, String>.unmodifiable(channelNames),
     );
   }
 }
