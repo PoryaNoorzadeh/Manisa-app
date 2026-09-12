@@ -70,6 +70,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
   final Set<int> _removingNodes = <int>{};
   static const _readTimeout = Duration(seconds: 15);
   bool _loading = true;
+  bool _editingName = false;
   String? _error;
 
   @override
@@ -149,7 +150,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
           final index = _devices.indexWhere((item) => item.nodeId == device.nodeId);
           setState(() {
             final updated = List<DirectMatterDevice>.of(_devices);
-            updated[index] = device.copyWith(onOffEndpoints: discovered);
+            updated[index] = updated[index].copyWith(onOffEndpoints: discovered);
             _devices = updated;
           });
           for (final endpoint in discovered.where((e) => !device.onOffEndpoints.contains(e))) {
@@ -188,6 +189,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
   }
 
   Future<void> _addDevice() async {
+    if (_editingName) return;
     final device = await Navigator.of(context).push<DirectMatterDevice>(
       MaterialPageRoute<DirectMatterDevice>(
         builder: (_) => DirectMatterAddDeviceScreen(
@@ -244,7 +246,34 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
     }
   }
 
+
+  Future<void> _renameDevice(DirectMatterDevice device) async {
+    if (_editingName || _removingNodes.isNotEmpty || !_canUpdate(device.nodeId)) return;
+    setState(() => _editingName = true);
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _RenameDeviceDialog(
+          initialName: device.name,
+          onSave: (name) async {
+            final current = _devices.firstWhere((item) => item.nodeId == device.nodeId);
+            await widget.deviceStore.save(current.copyWith(name: name));
+            if (!mounted) return;
+            setState(() {
+              _devices = _devices.map((item) => item.nodeId == device.nodeId
+                  ? item.copyWith(name: name) : item).toList(growable: false);
+            });
+          },
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _editingName = false);
+    }
+  }
+
   Future<void> _removeDevice(DirectMatterDevice device) async {
+    if (_editingName) return;
     if (_removingNodes.contains(device.nodeId)) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -364,6 +393,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
                           onChanged: (endpoint, value) =>
                               _setOnOff(device, endpoint, value),
                           onRemove: () => _removeDevice(device),
+                          onRename: () => _renameDevice(device),
                           onRefresh: _refreshAllStates,
                         ),
                       ),
@@ -409,6 +439,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.busy,
     required this.onChanged,
     required this.onRemove,
+    required this.onRename,
     required this.onRefresh,
   });
 
@@ -417,6 +448,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final Set<String> busy;
   final void Function(int endpoint, bool value) onChanged;
   final VoidCallback onRemove;
+  final VoidCallback onRename;
   final VoidCallback onRefresh;
 
   String _key(int endpoint) => '${device.nodeId}:$endpoint';
@@ -449,8 +481,10 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   tooltip: 'تنظیمات وسیله',
                   onSelected: (value) {
                     if (value == 'remove') onRemove();
+                    if (value == 'rename') onRename();
                   },
                   itemBuilder: (_) => const <PopupMenuEntry<String>>[
+                    PopupMenuItem(value: 'rename', child: Text('تغییر نام')),
                     PopupMenuItem(value: 'remove', child: Text('حذف وسیله')),
                   ],
                 ),
@@ -789,4 +823,79 @@ final class _DirectMatterQrScannerState extends State<_DirectMatterQrScanner> {
     _handled = true;
     Navigator.of(context).pop(raw);
   }
+}
+
+final class _RenameDeviceDialog extends StatefulWidget {
+  const _RenameDeviceDialog({required this.initialName, required this.onSave});
+  final String initialName;
+  final Future<void> Function(String name) onSave;
+
+  @override
+  State<_RenameDeviceDialog> createState() => _RenameDeviceDialogState();
+}
+
+final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
+  late final TextEditingController _name = TextEditingController(text: widget.initialName);
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'یک نام برای وسیله بنویس.');
+      return;
+    }
+    setState(() { _saving = true; _error = null; });
+    try {
+      await widget.onSave(name);
+      if (!mounted) return;
+      setState(() => _saving = false);
+      Navigator.of(context).pop();
+    } catch (_) {
+      if (mounted) setState(() {
+        _saving = false;
+        _error = 'نام ذخیره نشد. دوباره تلاش کن.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_saving,
+    child: AlertDialog(
+      title: const Text('تغییر نام وسیله'),
+      content: SingleChildScrollView(
+        child: TextField(
+          controller: _name,
+          autofocus: true,
+          enabled: !_saving,
+          maxLength: 60,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _save(),
+          decoration: InputDecoration(
+            labelText: 'نام وسیله',
+            helperText: 'مثلاً کلید پذیرایی',
+            errorText: _error,
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('انصراف'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: Text(_saving ? 'در حال ذخیره…' : 'ذخیره'),
+        ),
+      ],
+    ),
+  );
 }
