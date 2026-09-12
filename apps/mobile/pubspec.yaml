@@ -1,7 +1,7 @@
 name: manisa_mobile
 description: Manisa local-first smart home mobile application.
 publish_to: none
-version: 0.2.0+2
+version: 0.3.0+3
 
 environment:
   sdk: ">=3.13.0 <4.0.0"
@@ -9,6 +9,8 @@ environment:
 
 dependencies:
   flutter:
+    sdk: flutter
+  flutter_localizations:
     sdk: flutter
   flutter_secure_storage: ^11.0.0
   mobile_scanner: ^7.4.1

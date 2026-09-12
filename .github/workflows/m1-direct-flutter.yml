@@ -80,6 +80,18 @@ jobs:
         working-directory: apps/mobile
         run: flutter create --platforms=android --org com.manisa --project-name manisa_mobile .
 
+      - name: Apply Manisa launcher artwork
+        run: |
+          mkdir -p apps/mobile/android/app/src/main/res/drawable-nodpi
+          cp apps/mobile/native/android/res/drawable-nodpi/manisa_icon.png apps/mobile/android/app/src/main/res/drawable-nodpi/manisa_icon.png
+          python3 - <<'PYICON'
+          from pathlib import Path
+          p = Path('apps/mobile/android/app/src/main/AndroidManifest.xml')
+          s = p.read_text().replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/manisa_icon"')
+          s = s.replace('android:label="manisa_mobile"', 'android:label="مانیسا"')
+          p.write_text(s)
+          PYICON
+
       - name: Embed Matter runtime and Manisa bridge
         run: |
           mkdir -p apps/mobile/android/app/libs

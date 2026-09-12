@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'direct_device_store.dart';
@@ -20,9 +21,21 @@ final class ManisaDirectApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Manisa',
+      title: 'مانیسا',
+      locale: const Locale('fa'),
+      supportedLocales: const <Locale>[Locale('fa')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF24A3A2),
+        colorSchemeSeed: const Color(0xFF006C70),
+        scaffoldBackgroundColor: const Color(0xFFF3F7F6),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(minimumSize: const Size(48, 56)),
+        ),
+        inputDecorationTheme: const InputDecorationTheme(
+          border: OutlineInputBorder(),
+          filled: true,
+          fillColor: Colors.white,
+        ),
         brightness: Brightness.light,
         useMaterial3: true,
       ),
@@ -153,7 +166,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
         }
       } catch (error) {
         if (_canUpdate(device.nodeId)) {
-          setState(() => _error = 'Could not refresh ${device.name}: $error');
+          setState(() {
+            for (final endpoint in device.onOffEndpoints) {
+              _states.remove(_stateKey(device.nodeId, endpoint));
+            }
+            _error = 'Could not refresh ${device.name}: $error';
+          });
         }
       } finally {
         _refreshingNodes.remove(device.nodeId);
@@ -194,7 +212,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
     bool value,
   ) async {
     final key = _stateKey(device.nodeId, endpoint);
-    if (_busy.contains(key)) return;
+    if (_busy.contains(key) || !_canUpdate(device.nodeId)) return;
     setState(() {
       _busy.add(key);
       _error = null;
@@ -204,17 +222,20 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
         nodeId: device.nodeId,
         endpoint: endpoint,
         value: value,
-      );
+      ).timeout(_readTimeout);
       final confirmed = await widget.controller.readOnOff(
         nodeId: device.nodeId,
         endpoint: endpoint,
-      );
-      if (mounted) {
+      ).timeout(_readTimeout);
+      if (_canUpdate(device.nodeId)) {
         setState(() => _states[key] = confirmed);
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _error = 'Command failed: $error');
+        setState(() {
+          _states.remove(key);
+          _error = 'Command failed: $error';
+        });
       }
     } finally {
       if (mounted) {
@@ -228,16 +249,16 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Remove device?'),
-        content: Text('Remove ${device.name} from this Matter fabric?'),
+        title: const Text('حذف وسیله از مانیسا؟'),
+        content: Text('«${device.name}» از مانیسا حذف شود؟ برای افزودن دوباره، وسیله باید آمادهٔ اتصال باشد.'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: const Text('انصراف'),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Remove'),
+            child: const Text('حذف وسیله'),
           ),
         ],
       ),
@@ -287,10 +308,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Manisa'),
+        title: const Text('مانیسا'),
         actions: <Widget>[
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: 'بررسی وضعیت',
             onPressed: _loading ? null : _refreshAllStates,
             icon: const Icon(Icons.refresh),
           ),
@@ -299,7 +320,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _loading ? null : _addDevice,
         icon: const Icon(Icons.add),
-        label: const Text('Add Device'),
+        label: const Text('افزودن وسیله'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -309,22 +330,22 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                 children: <Widget>[
                   Text(
-                    'My Home',
+                    'خانهٔ من',
                     style: Theme.of(context).textTheme.headlineMedium,
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Direct Matter · Local control',
+                    'وسایل خانه را از همین‌جا کنترل کن',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   if (_error != null) ...<Widget>[
                     const SizedBox(height: 16),
                     MaterialBanner(
-                      content: Text(_error!),
+                      content: _MatterErrorNotice(error: _error!),
                       actions: <Widget>[
                         TextButton(
                           onPressed: () => setState(() => _error = null),
-                          child: const Text('Dismiss'),
+                          child: const Text('بستن'),
                         ),
                       ],
                     ),
@@ -343,6 +364,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
                           onChanged: (endpoint, value) =>
                               _setOnOff(device, endpoint, value),
                           onRemove: () => _removeDevice(device),
+                          onRefresh: _refreshAllStates,
                         ),
                       ),
                 ],
@@ -365,12 +387,12 @@ final class _EmptyDirectMatterState extends StatelessWidget {
             const Icon(Icons.lightbulb_outline, size: 52),
             const SizedBox(height: 16),
             Text(
-              'Add your first device',
+              'اولین وسیله را اضافه کن',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
             const Text(
-              'Scan the Matter QR code. Manisa will commission the device over BLE and then control it directly over Wi-Fi.',
+              'کد روی وسیله را اسکن کن؛ مرحله‌به‌مرحله برای اتصال راهنمایی‌ات می‌کنیم.',
               textAlign: TextAlign.center,
             ),
           ],
@@ -387,6 +409,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.busy,
     required this.onChanged,
     required this.onRemove,
+    required this.onRefresh,
   });
 
   final DirectMatterDevice device;
@@ -394,6 +417,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final Set<String> busy;
   final void Function(int endpoint, bool value) onChanged;
   final VoidCallback onRemove;
+  final VoidCallback onRefresh;
 
   String _key(int endpoint) => '${device.nodeId}:$endpoint';
 
@@ -416,22 +440,25 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       Text(
-                        '${device.onOffEndpoints.length} channel${device.onOffEndpoints.length == 1 ? '' : 's'}',
+                        '${device.onOffEndpoints.length} خروجی',
                       ),
                     ],
                   ),
                 ),
                 PopupMenuButton<String>(
+                  tooltip: 'تنظیمات وسیله',
                   onSelected: (value) {
                     if (value == 'remove') onRemove();
                   },
                   itemBuilder: (_) => const <PopupMenuEntry<String>>[
-                    PopupMenuItem(value: 'remove', child: Text('Remove')),
+                    PopupMenuItem(value: 'remove', child: Text('حذف وسیله')),
                   ],
                 ),
               ],
             ),
             const SizedBox(height: 12),
+            if (device.onOffEndpoints.isEmpty)
+              TextButton(onPressed: onRefresh, child: const Text('دریافت کنترل‌های وسیله')),
             for (var index = 0;
                 index < device.onOffEndpoints.length;
                 index++)
@@ -441,24 +468,30 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   final key = _key(endpoint);
                   final state = states[key];
                   final isBusy = busy.contains(key);
+                  if (state == null) {
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('خروجی ${index + 1}'),
+                      subtitle: const Text('وضعیت دریافت نشده'),
+                      leading: const Icon(Icons.help_outline),
+                      trailing: TextButton(
+                        onPressed: isBusy ? null : onRefresh,
+                        child: const Text('بررسی'),
+                      ),
+                    );
+                  }
                   return SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
-                    title: Text('Gang ${index + 1}'),
-                    subtitle: Text(state == null
-                        ? 'Status unavailable · endpoint $endpoint'
-                        : 'Matter endpoint $endpoint'),
-                    value: state ?? false,
-                    onChanged: state == null || isBusy
-                        ? null
-                        : (next) => onChanged(endpoint, next),
+                    title: Text('خروجی ${index + 1}'),
+                    subtitle: Text(isBusy ? 'در حال انجام…' : state ? 'روشن' : 'خاموش'),
+                    value: state,
+                    onChanged: isBusy ? null : (next) => onChanged(endpoint, next),
                     secondary: isBusy
                         ? const SizedBox.square(
                             dimension: 22,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : Icon(state == true
-                            ? Icons.lightbulb
-                            : Icons.lightbulb_outline),
+                        : Icon(state ? Icons.lightbulb : Icons.lightbulb_outline),
                   );
                 },
               ),
@@ -486,13 +519,16 @@ final class DirectMatterAddDeviceScreen extends StatefulWidget {
 
 final class _DirectMatterAddDeviceScreenState
     extends State<DirectMatterAddDeviceScreen> {
-  final TextEditingController _name = TextEditingController(text: 'Touch Switch');
+  final TextEditingController _name = TextEditingController(text: 'کلید خانه');
   final TextEditingController _payload = TextEditingController();
   final TextEditingController _ssid = TextEditingController();
   final TextEditingController _password = TextEditingController();
   bool _adding = false;
   String? _error;
-  String _stage = 'Ready to scan';
+  String _stage = 'کد روی وسیله را اسکن کن';
+  int _step = 0;
+  bool _showPassword = false;
+  DirectMatterDevice? _pendingDevice;
 
   @override
   void dispose() {
@@ -510,18 +546,19 @@ final class _DirectMatterAddDeviceScreenState
     if (payload != null && mounted) {
       setState(() {
         _payload.text = payload;
-        _stage = 'QR code scanned';
+        _stage = 'کد دریافت شد';
       });
     }
   }
 
   Future<void> _commission() async {
+    if (_adding) return;
     final name = _name.text.trim();
     final payload = _payload.text.trim();
     final ssid = _ssid.text.trim();
     if (name.isEmpty || !payload.startsWith('MT:') || ssid.isEmpty) {
       setState(() {
-        _error = 'Enter a device name, scan a valid Matter QR, and enter Wi-Fi.';
+        _error = 'نام وسیله، کد اتصال و نام وای‌فای را بررسی کن.';
       });
       return;
     }
@@ -529,32 +566,32 @@ final class _DirectMatterAddDeviceScreenState
     setState(() {
       _adding = true;
       _error = null;
-      _stage = 'Commissioning over BLE…';
+      _stage = _pendingDevice == null ? 'در حال اتصال وسیله… نزدیک آن بمان.' : 'در حال ذخیرهٔ وسیله…';
     });
     try {
+      if (_pendingDevice == null) {
       final result = await widget.controller.commissionWifi(
         setupPayload: payload,
         ssid: ssid,
         password: _password.text,
       );
-      if (result.onOffEndpoints.isEmpty) {
-        throw StateError('Device commissioned, but no OnOff endpoint was found.');
-      }
-      final device = DirectMatterDevice(
+      _pendingDevice = DirectMatterDevice(
         nodeId: result.nodeId,
         name: name,
         onOffEndpoints: result.onOffEndpoints,
       );
+      }
+      final device = _pendingDevice!;
       await widget.deviceStore.save(device);
       if (mounted) {
-        setState(() => _stage = 'Device added');
+        setState(() { _stage = 'وسیله اضافه شد'; _adding = false; _pendingDevice = null; });
         Navigator.of(context).pop(device);
       }
     } catch (error) {
       if (mounted) {
         setState(() {
           _error = error.toString();
-          _stage = 'Could not add device';
+          _stage = _pendingDevice == null ? 'اتصال کامل نشد' : 'وسیله متصل شد؛ ذخیره کامل نشد';
         });
       }
     } finally {
@@ -564,101 +601,133 @@ final class _DirectMatterAddDeviceScreenState
     }
   }
 
+  void _next() {
+    if (_step == 0 && !_payload.text.trim().startsWith('MT:')) {
+      setState(() => _error = 'کد QR معتبر Matter را اسکن یا متن آن را وارد کن.');
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() { _step++; _error = null; });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Add Device')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: <Widget>[
-          Text(
-            'Matter over Wi-Fi',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Manisa will use Bluetooth for initial commissioning, then control the device directly over your local Wi-Fi network.',
-          ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: _name,
-            enabled: !_adding,
-            decoration: const InputDecoration(
-              labelText: 'Device name',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _payload,
-            enabled: !_adding,
-            readOnly: true,
-            decoration: InputDecoration(
-              labelText: 'Matter QR',
-              hintText: 'MT:…',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                onPressed: _adding ? null : _scan,
-                icon: const Icon(Icons.qr_code_scanner),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _adding ? null : _scan,
-            icon: const Icon(Icons.qr_code_scanner),
-            label: const Text('Scan Matter QR Code'),
-          ),
-          const SizedBox(height: 20),
-          TextField(
-            controller: _ssid,
-            enabled: !_adding,
-            decoration: const InputDecoration(
-              labelText: 'Wi-Fi name (SSID)',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _password,
-            enabled: !_adding,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Wi-Fi password',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: <Widget>[
-              if (_adding)
-                const Padding(
-                  padding: EdgeInsets.only(right: 12),
-                  child: SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              Expanded(child: Text(_stage)),
+    const titles = <String>['کد اتصال', 'آماده‌کردن وسیله', 'وای‌فای خانه'];
+    return PopScope(
+      canPop: !_adding && _pendingDevice == null,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('افزودن وسیله'),
+          leading: BackButton(onPressed: () {
+            if (_adding || _pendingDevice != null) return;
+            if (_step > 0) {
+              setState(() { _step--; _error = null; });
+            } else {
+              Navigator.of(context).pop();
+            }
+          }),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.all(24),
+          children: <Widget>[
+            Text('مرحلهٔ ${_step + 1} از ۳', style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 8),
+            Text(titles[_step], style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 24),
+            if (_step == 0) ...<Widget>[
+              const Icon(Icons.qr_code_2, size: 80),
+              const SizedBox(height: 16),
+              const Text('کد QR روی وسیله یا جعبه را اسکن کن. برای این کار اجازهٔ دوربین لازم است.'),
+              const SizedBox(height: 16),
+              FilledButton.icon(onPressed: _scan, icon: const Icon(Icons.qr_code_scanner), label: const Text('اسکن کد وسیله')),
+              const SizedBox(height: 16),
+              TextField(controller: _payload, textDirection: TextDirection.ltr,
+                autocorrect: false, enableSuggestions: false,
+                decoration: const InputDecoration(labelText: 'متن کد QR', hintText: 'MT:…', helperText: 'اگر متن QR را داری، اینجا وارد کن.')),
             ],
-          ),
-          if (_error != null) ...<Widget>[
-            const SizedBox(height: 12),
-            Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
+            if (_step == 1) ...<Widget>[
+              const Icon(Icons.bluetooth_searching, size: 64),
+              const SizedBox(height: 16),
+              const Text('وسیله روشن باشد و گوشی نزدیک آن بماند.'),
+              const SizedBox(height: 16),
+              const Text('طبق راهنمای وسیله، آن را در حالت اتصال قرار بده. بازنشانی کارخانه با حالت اتصال فرق دارد.'),
+              const SizedBox(height: 16),
+              const Text('بلوتوث و وای‌فای را روشن کن. هنگام درخواست دسترسی به دستگاه‌های نزدیک، اجازه بده؛ در نسخه‌های قدیمی Android ممکن است اجازهٔ موقعیت لازم باشد.'),
+            ],
+            if (_step == 2) ...<Widget>[
+              const Text('نام و رمز شبکه‌ای را وارد کن که وسیله باید به آن وصل شود.'),
+              const SizedBox(height: 20),
+              TextField(controller: _ssid, enabled: !_adding && _pendingDevice == null,
+                textDirection: TextDirection.ltr, autocorrect: false, enableSuggestions: false,
+                decoration: const InputDecoration(labelText: 'نام وای‌فای')),
+              const SizedBox(height: 16),
+              TextField(controller: _password, enabled: !_adding && _pendingDevice == null,
+                textDirection: TextDirection.ltr, obscureText: !_showPassword,
+                autocorrect: false, enableSuggestions: false,
+                decoration: InputDecoration(labelText: 'رمز وای‌فای', suffixIcon: IconButton(
+                  tooltip: _showPassword ? 'پنهان‌کردن رمز' : 'نمایش رمز',
+                  onPressed: () => setState(() => _showPassword = !_showPassword),
+                  icon: Icon(_showPassword ? Icons.visibility_off : Icons.visibility)))),
+              const SizedBox(height: 20),
+              TextField(controller: _name, enabled: !_adding && _pendingDevice == null,
+                decoration: const InputDecoration(labelText: 'نام وسیله', helperText: 'مثلاً کلید پذیرایی')),
+              const SizedBox(height: 20),
+              if (_adding) const LinearProgressIndicator(),
+              const SizedBox(height: 12),
+              Semantics(liveRegion: true, child: Text(_stage)),
+            ],
+            if (_error != null) ...<Widget>[
+              const SizedBox(height: 16),
+              _MatterErrorNotice(error: _error!),
+            ],
+            const SizedBox(height: 24),
+            if (_step < 2)
+              OutlinedButton(onPressed: _next, child: const Padding(
+                padding: EdgeInsets.all(14), child: Text('ادامه')))
+            else
+              FilledButton.icon(
+                onPressed: _adding ? null : _commission,
+                icon: const Icon(Icons.add_link),
+                label: Text(_adding ? 'در حال اتصال…' : _pendingDevice != null ? 'ذخیرهٔ دوباره' : 'اتصال وسیله')),
           ],
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: _adding ? null : _commission,
-            icon: const Icon(Icons.add_link),
-            label: Text(_adding ? 'Adding…' : 'Add Device'),
-          ),
-        ],
+        ),
       ),
     );
   }
+}
+
+final class _MatterErrorNotice extends StatelessWidget {
+  const _MatterErrorNotice({required this.error});
+  final String error;
+
+  String get message {
+    if (error.contains('matter_ble_failed')) return 'وسیله پیدا نشد. نزدیک آن بمان و حالت اتصال و بلوتوث را بررسی کن.';
+    if (error.startsWith('Remove failed')) return 'حذف تأیید نشد. وسیله در فهرست باقی مانده؛ اتصال آن را بررسی کن و دوباره تلاش کن.';
+    if (error.startsWith('Command failed')) return 'تغییر وضعیت تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
+    if (error.startsWith('Could not refresh') || error.startsWith('Realtime')) return 'وضعیت تازه دریافت نشد. برق وسیله و اتصال به وای‌فای خانه را بررسی کن.';
+    if (error.contains('initialization') || error.contains('not available')) return 'ارتباط مانیسا راه‌اندازی نشد. اپ را ببند و دوباره باز کن.';
+    if (error.contains('PlatformException') || error.contains('Exception') || error.contains('Error')) return 'این مرحله کامل نشد. اتصال و دسترسی‌ها را بررسی کن و دوباره تلاش کن.';
+    return error;
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: <Widget>[
+      Text(message, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+      if (message != error)
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: const Text('جزئیات برای پشتیبانی'),
+          children: <Widget>[SelectableText(
+            // Native exception messages can contain setup data; expose only
+            // the error code, never Wi-Fi credentials or onboarding payloads.
+            RegExp(r'matter_[a-z_]+').firstMatch(error)?.group(0) ?? 'connection_failed',
+            textDirection: TextDirection.ltr,
+          )],
+        ),
+    ],
+  );
 }
 
 final class _DirectMatterQrScanner extends StatefulWidget {
@@ -674,7 +743,7 @@ final class _DirectMatterQrScannerState extends State<_DirectMatterQrScanner> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan Matter QR')),
+      appBar: AppBar(title: const Text('اسکن کد وسیله')),
       body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
@@ -702,7 +771,7 @@ final class _DirectMatterQrScannerState extends State<_DirectMatterQrScanner> {
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Text(
-                  'Scan the Matter QR code printed on the switch.',
+                  'کد QR روی وسیله را داخل کادر قرار بده.',
                   textAlign: TextAlign.center,
                 ),
               ),

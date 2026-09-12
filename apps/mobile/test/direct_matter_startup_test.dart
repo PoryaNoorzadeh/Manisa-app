@@ -23,12 +23,12 @@ void main() {
     expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isTrue);
 
     // A manual refresh may hang on an offline node, but onboarding stays usable.
-    await tester.tap(find.byTooltip('Refresh'));
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pump();
     expect(controller.discoveryCalls, 1);
-    await tester.tap(find.text('Add Device'));
+    await tester.tap(find.text('افزودن وسیله'));
     await tester.pumpAndSettle();
-    expect(find.text('Matter over Wi-Fi'), findsOneWidget);
+    expect(find.text('کد اتصال'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     controller.discovery.complete(<int>[]);
@@ -45,9 +45,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byType(PopupMenuButton<String>));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Remove'));
+      await tester.tap(find.text('حذف وسیله'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.tap(find.widgetWithText(FilledButton, 'حذف وسیله'));
       await tester.pump();
       expect(store.removed, isFalse);
       expect(find.text('Saved switch'), findsOneWidget);
@@ -59,7 +59,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(store.removed, succeeds);
       expect(find.text('Saved switch'), succeeds ? findsNothing : findsOneWidget);
-      if (!succeeds) expect(find.textContaining('Remove failed'), findsOneWidget);
+      if (!succeeds) expect(find.textContaining('حذف تأیید نشد'), findsOneWidget);
     });
   }
 
@@ -69,9 +69,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 16));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Could not refresh Saved switch'), findsOneWidget);
+    expect(find.textContaining('وضعیت تازه دریافت نشد'), findsOneWidget);
     controller.discovery.complete(<int>[1]);
-    await tester.tap(find.byTooltip('Refresh'));
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pumpAndSettle();
     expect(controller.discoveryCalls, 2);
   });
@@ -83,14 +83,48 @@ void main() {
       deviceStore: _Store(),
     ));
     await tester.pumpAndSettle();
-    expect(find.textContaining('matter_initialization_failed'), findsOneWidget);
+    expect(find.textContaining('ارتباط مانیسا راه‌اندازی نشد'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('Persian onboarding validates QR before asking for Wi-Fi', (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    expect(Directionality.of(tester.element(find.text('خانهٔ من'))), TextDirection.rtl);
+    await tester.tap(find.text('افزودن وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('کد QR معتبر'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'MT:TEST');
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    expect(find.text('آماده‌کردن وسیله'), findsOneWidget);
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    expect(find.text('نام وای‌فای'), findsOneWidget);
+    final password = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(password.obscureText, isTrue);
+    expect(password.textDirection, TextDirection.ltr);
+  });
+
+  testWidgets('unknown state has no off switch', (tester) async {
+    final controller = _Controller(readFails: true);
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(find.text('وضعیت دریافت نشده'), findsOneWidget);
+    expect(find.text('بررسی'), findsOneWidget);
+  });
+
 }
 
 class _Controller implements DirectMatterController {
-  _Controller({this.initializationFails = false});
+  _Controller({this.initializationFails = false, this.readFails = false});
+  final bool readFails;
 
   final bool initializationFails;
   final discovery = Completer<List<int>>();
@@ -121,8 +155,10 @@ class _Controller implements DirectMatterController {
   }
 
   @override
-  Future<bool> readOnOff({required int nodeId, required int endpoint}) async =>
-      true;
+  Future<bool> readOnOff({required int nodeId, required int endpoint}) async {
+    if (readFails) throw PlatformException(code: 'matter_read_failed');
+    return true;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
