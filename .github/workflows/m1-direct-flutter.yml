@@ -20,6 +20,25 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Resolve versioned artifact names
+        id: build_meta
+        run: |
+          RAW_VERSION="$(sed -n 's/^version:[[:space:]]*//p' apps/mobile/pubspec.yaml)"
+          APP_VERSION="${RAW_VERSION%%+*}"
+          BUILD_NUMBER="${RAW_VERSION##*+}"
+          test -n "$APP_VERSION"
+          test -n "$BUILD_NUMBER"
+          test "$APP_VERSION" != "$RAW_VERSION"
+          FILE_STEM="manisa-m1-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${FILE_STEM}-bundle" >> "$GITHUB_OUTPUT"
+          echo "checksum_name=${FILE_STEM}.sha256" >> "$GITHUB_OUTPUT"
+          echo "metadata_name=${FILE_STEM}.metadata.txt" >> "$GITHUB_OUTPUT"
+          echo "size_name=${FILE_STEM}.size.txt" >> "$GITHUB_OUTPUT"
+          echo "notes_name=${FILE_STEM}.release-notes.txt" >> "$GITHUB_OUTPUT"
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -80,6 +99,18 @@ jobs:
         working-directory: apps/mobile
         run: flutter create --platforms=android --org com.manisa --project-name manisa_mobile .
 
+      - name: Apply Manisa launcher artwork
+        run: |
+          mkdir -p apps/mobile/android/app/src/main/res/drawable-nodpi
+          cp apps/mobile/native/android/res/drawable-nodpi/manisa_icon.png apps/mobile/android/app/src/main/res/drawable-nodpi/manisa_icon.png
+          python3 - <<'PYICON'
+          from pathlib import Path
+          p = Path('apps/mobile/android/app/src/main/AndroidManifest.xml')
+          s = p.read_text().replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/manisa_icon"')
+          s = s.replace('android:label="manisa_mobile"', 'android:label="مانیسا"')
+          p.write_text(s)
+          PYICON
+
       - name: Embed Matter runtime and Manisa bridge
         run: |
           mkdir -p apps/mobile/android/app/libs
@@ -139,14 +170,38 @@ jobs:
           mkdir -p dist
           APK="apps/mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
           test -f "$APK"
-          cp "$APK" dist/manisa-m1-direct-matter-arm64-release.apk
-          sha256sum dist/manisa-m1-direct-matter-arm64-release.apk > dist/SHA256SUMS.txt
-          git rev-parse HEAD > dist/BUILD_COMMIT.txt
-          python3 - <<'PY' | tee dist/SIZE_REPORT.txt
+          APK_NAME="${{ steps.build_meta.outputs.apk_name }}"
+          cp "$APK" "dist/$APK_NAME"
+          (
+            cd dist
+            sha256sum "$APK_NAME" > "${{ steps.build_meta.outputs.checksum_name }}"
+          )
+          {
+            echo "product=Manisa"
+            echo "milestone=M1"
+            echo "version=${{ steps.build_meta.outputs.app_version }}"
+            echo "build_number=${{ steps.build_meta.outputs.build_number }}"
+            echo "abi=arm64-v8a"
+            echo "build_type=release"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "workflow_run=${{ github.run_id }}"
+          } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
+          cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
+          Manisa M1 acceptance candidate
+          - Persian RTL guided onboarding
+          - Clear on, off, pending and unavailable states
+          - Persistent device and per-output naming
+          - Output names bound to stable Matter endpoints
+          - Explicit output test action during naming
+          - Supplied Manisa launcher icon
+          Manual Matter hardware acceptance is tracked in docs/testing/M1-test-register.md.
+          NOTES
+          python3 - <<'PY' | tee "dist/${{ steps.build_meta.outputs.size_name }}"
           import os
           import zipfile
 
-          apk = 'dist/manisa-m1-direct-matter-arm64-release.apk'
+          from pathlib import Path
+          apk = str(next(Path('dist').glob('manisa-m1-v*-arm64-release.apk')))
           size = os.path.getsize(apk)
           print(f'APK size: {size / 1024 / 1024:.2f} MiB')
           print(f'APK bytes: {size}')
@@ -167,11 +222,12 @@ jobs:
       - name: Upload optimized integrated APK
         uses: actions/upload-artifact@v4
         with:
-          name: manisa-m1-direct-matter-release-apk
+          name: ${{ steps.build_meta.outputs.artifact_name }}
           path: |
-            dist/manisa-m1-direct-matter-arm64-release.apk
-            dist/SHA256SUMS.txt
-            dist/SIZE_REPORT.txt
-            dist/BUILD_COMMIT.txt
+            dist/${{ steps.build_meta.outputs.apk_name }}
+            dist/${{ steps.build_meta.outputs.checksum_name }}
+            dist/${{ steps.build_meta.outputs.metadata_name }}
+            dist/${{ steps.build_meta.outputs.size_name }}
+            dist/${{ steps.build_meta.outputs.notes_name }}
           if-no-files-found: error
           retention-days: 14
