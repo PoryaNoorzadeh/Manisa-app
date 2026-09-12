@@ -128,7 +128,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('تغییر نام'));
+    await tester.tap(find.text('تغییر نام وسیله'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '   ');
     await tester.tap(find.text('ذخیره'));
