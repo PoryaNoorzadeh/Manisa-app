@@ -33,7 +33,11 @@ jobs:
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=${FILE_STEM}-apk" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${FILE_STEM}-bundle" >> "$GITHUB_OUTPUT"
+          echo "checksum_name=${FILE_STEM}.sha256" >> "$GITHUB_OUTPUT"
+          echo "metadata_name=${FILE_STEM}.metadata.txt" >> "$GITHUB_OUTPUT"
+          echo "size_name=${FILE_STEM}.size.txt" >> "$GITHUB_OUTPUT"
+          echo "notes_name=${FILE_STEM}.release-notes.txt" >> "$GITHUB_OUTPUT"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -168,7 +172,7 @@ jobs:
           test -f "$APK"
           APK_NAME="${{ steps.build_meta.outputs.apk_name }}"
           cp "$APK" "dist/$APK_NAME"
-          sha256sum "dist/$APK_NAME" > dist/SHA256SUMS.txt
+          sha256sum "dist/$APK_NAME" > "dist/${{ steps.build_meta.outputs.checksum_name }}"
           {
             echo "product=Manisa"
             echo "milestone=M1"
@@ -178,8 +182,18 @@ jobs:
             echo "build_type=release"
             echo "commit=$(git rev-parse HEAD)"
             echo "workflow_run=${{ github.run_id }}"
-          } > dist/BUILD_METADATA.txt
-          python3 - <<'PY' | tee dist/SIZE_REPORT.txt
+          } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
+          cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
+          Manisa M1 acceptance candidate
+          - Persian RTL guided onboarding
+          - Clear on, off, pending and unavailable states
+          - Persistent device and per-output naming
+          - Output names bound to stable Matter endpoints
+          - Explicit output test action during naming
+          - Supplied Manisa launcher icon
+          Manual Matter hardware acceptance is tracked in docs/testing/M1-test-register.md.
+          NOTES
+          python3 - <<'PY' | tee "dist/${{ steps.build_meta.outputs.size_name }}"
           import os
           import zipfile
 
@@ -208,8 +222,9 @@ jobs:
           name: ${{ steps.build_meta.outputs.artifact_name }}
           path: |
             dist/${{ steps.build_meta.outputs.apk_name }}
-            dist/SHA256SUMS.txt
-            dist/SIZE_REPORT.txt
-            dist/BUILD_METADATA.txt
+            dist/${{ steps.build_meta.outputs.checksum_name }}
+            dist/${{ steps.build_meta.outputs.metadata_name }}
+            dist/${{ steps.build_meta.outputs.size_name }}
+            dist/${{ steps.build_meta.outputs.notes_name }}
           if-no-files-found: error
           retention-days: 14
