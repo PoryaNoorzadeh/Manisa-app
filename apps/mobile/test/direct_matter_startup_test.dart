@@ -120,6 +120,40 @@ void main() {
     expect(find.text('بررسی'), findsOneWidget);
   });
 
+  testWidgets('rename validates, preserves old name on failure and survives reload', (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    final store = _RenameStore();
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تغییر نام'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '   ');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('یک نام برای وسیله بنویس.'), findsOneWidget);
+    expect(store.saves, 0);
+    await tester.enterText(find.byType(TextField), 'کلید پذیرایی');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('نام ذخیره نشد. دوباره تلاش کن.'), findsOneWidget);
+    expect(store.device.name, 'Saved switch');
+    store.fail = false;
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('کلید پذیرایی'), findsOneWidget);
+    expect(store.device.nodeId, 7);
+    expect(store.device.onOffEndpoints, <int>[1]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    expect(find.text('کلید پذیرایی'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }
 
 class _Controller implements DirectMatterController {
@@ -180,4 +214,21 @@ class _Store implements DirectDeviceStore {
 
   @override
   Future<void> remove(int nodeId) async { removed = true; }
+}
+
+class _RenameStore implements DirectDeviceStore {
+  DirectMatterDevice device = const DirectMatterDevice(
+    nodeId: 7, name: 'Saved switch', onOffEndpoints: <int>[1]);
+  bool fail = true;
+  int saves = 0;
+  @override
+  Future<List<DirectMatterDevice>> load() async => <DirectMatterDevice>[device];
+  @override
+  Future<void> save(DirectMatterDevice value) async {
+    saves++;
+    if (fail) throw StateError('storage unavailable');
+    device = value;
+  }
+  @override
+  Future<void> remove(int nodeId) async {}
 }
