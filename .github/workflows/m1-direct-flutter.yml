@@ -172,7 +172,10 @@ jobs:
           test -f "$APK"
           APK_NAME="${{ steps.build_meta.outputs.apk_name }}"
           cp "$APK" "dist/$APK_NAME"
-          sha256sum "dist/$APK_NAME" > "dist/${{ steps.build_meta.outputs.checksum_name }}"
+          (
+            cd dist
+            sha256sum "$APK_NAME" > "${{ steps.build_meta.outputs.checksum_name }}"
+          )
           {
             echo "product=Manisa"
             echo "milestone=M1"
