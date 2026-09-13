@@ -1,0 +1,33 @@
+name: testbed-runner
+
+on:
+  pull_request:
+    paths:
+      - 'tools/testbed/**'
+      - 'docs/testing/M1-testbed-runner.md'
+      - '.github/workflows/testbed-runner.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/testbed/**'
+      - 'docs/testing/M1-testbed-runner.md'
+      - '.github/workflows/testbed-runner.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Compile runner
+        run: python -m py_compile tools/testbed/m1_runner.py tools/testbed/test_m1_runner.py
+      - name: Run runner unit tests
+        run: python -m unittest discover -s tools/testbed -p 'test_*.py' -v
+      - name: Verify command line help
+        run: python tools/testbed/m1_runner.py --help
