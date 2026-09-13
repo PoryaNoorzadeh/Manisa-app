@@ -167,6 +167,7 @@ jobs:
 
       - name: Prepare artifact and size report
         run: |
+          set -o pipefail
           mkdir -p dist
           APK="apps/mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
           test -f "$APK"
@@ -198,12 +199,11 @@ jobs:
           - Supplied Manisa launcher icon
           Manual Matter hardware acceptance is tracked in docs/testing/M1-test-register.md.
           NOTES
-          python3 - <<'PY' | tee "dist/${{ steps.build_meta.outputs.size_name }}"
+          APK_PATH="dist/$APK_NAME" python3 - <<'PY' | tee "dist/${{ steps.build_meta.outputs.size_name }}"
           import os
           import zipfile
 
-          from pathlib import Path
-          apk = str(next(Path('dist').glob('manisa-m1-v*-arm64-release.apk')))
+          apk = os.environ['APK_PATH']
           size = os.path.getsize(apk)
           print(f'APK size: {size / 1024 / 1024:.2f} MiB')
           print(f'APK bytes: {size}')
