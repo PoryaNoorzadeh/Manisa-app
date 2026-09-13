@@ -6,16 +6,19 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
+import 'room_store.dart';
 
 final class ManisaDirectApp extends StatelessWidget {
   const ManisaDirectApp({
     required this.controller,
     required this.deviceStore,
+    this.roomStore = const EmptyRoomStore(),
     super.key,
   });
 
   final DirectMatterController controller;
   final DirectDeviceStore deviceStore;
+  final RoomStore roomStore;
 
   @override
   Widget build(BuildContext context) {
@@ -42,6 +45,7 @@ final class ManisaDirectApp extends StatelessWidget {
       home: DirectMatterHomeScreen(
         controller: controller,
         deviceStore: deviceStore,
+        roomStore: roomStore,
       ),
     );
   }
@@ -51,11 +55,13 @@ final class DirectMatterHomeScreen extends StatefulWidget {
   const DirectMatterHomeScreen({
     required this.controller,
     required this.deviceStore,
+    required this.roomStore,
     super.key,
   });
 
   final DirectMatterController controller;
   final DirectDeviceStore deviceStore;
+  final RoomStore roomStore;
 
   @override
   State<DirectMatterHomeScreen> createState() => _DirectMatterHomeScreenState();
@@ -64,6 +70,7 @@ final class DirectMatterHomeScreen extends StatefulWidget {
 final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     with WidgetsBindingObserver {
   List<DirectMatterDevice> _devices = const <DirectMatterDevice>[];
+  RoomCatalog _roomCatalog = const RoomCatalog();
   final Map<String, bool> _states = <String, bool>{};
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
@@ -115,9 +122,17 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (!supported) {
         throw StateError('Direct Matter is not available on this device.');
       }
-      final devices = await widget.deviceStore.load();
+      final loaded = await Future.wait<Object>(<Future<Object>>[
+        widget.deviceStore.load(),
+        widget.roomStore.load(),
+      ]);
+      final devices = loaded[0] as List<DirectMatterDevice>;
+      final roomCatalog = loaded[1] as RoomCatalog;
       if (!mounted) return;
-      setState(() => _devices = devices);
+      setState(() {
+        _devices = devices;
+        _roomCatalog = roomCatalog;
+      });
       _events = widget.controller.watchOnOff().listen(
         (event) {
           if (!_canUpdate(event.nodeId)) return;
@@ -377,6 +392,163 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
+  void _showMetadataError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تغییرات ذخیره نشد. دوباره تلاش کن.')),
+    );
+  }
+
+  Future<ManisaRoom?> _createRoom() async {
+    if (_editingMetadata) return null;
+    setState(() => _editingMetadata = true);
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (_) => _RoomNameDialog(
+          title: 'اتاق جدید',
+          actionLabel: 'ساخت اتاق',
+          reservedNames: _roomCatalog.rooms.map((room) => room.name).toSet(),
+        ),
+      );
+      if (name == null || !mounted) return null;
+      final room = ManisaRoom(
+        id: 'room-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}',
+        name: name,
+      );
+      final next = _roomCatalog.addRoom(room);
+      await widget.roomStore.save(next);
+      if (!mounted) return null;
+      setState(() => _roomCatalog = next);
+      return room;
+    } catch (_) {
+      _showMetadataError();
+      return null;
+    } finally {
+      if (mounted) setState(() => _editingMetadata = false);
+    }
+  }
+
+  Future<void> _renameRoom(ManisaRoom room) async {
+    if (_editingMetadata) return;
+    setState(() => _editingMetadata = true);
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (_) => _RoomNameDialog(
+          title: 'تغییر نام اتاق',
+          actionLabel: 'ذخیره',
+          initialName: room.name,
+          reservedNames: _roomCatalog.rooms
+              .where((item) => item.id != room.id)
+              .map((item) => item.name)
+              .toSet(),
+        ),
+      );
+      if (name == null || !mounted) return;
+      final next = _roomCatalog.renameRoom(room.id, name);
+      await widget.roomStore.save(next);
+      if (mounted) setState(() => _roomCatalog = next);
+    } catch (_) {
+      _showMetadataError();
+    } finally {
+      if (mounted) setState(() => _editingMetadata = false);
+    }
+  }
+
+  Future<void> _deleteRoom(ManisaRoom room) async {
+    if (_editingMetadata) return;
+    final assignedCount = _devices
+        .where((device) =>
+            _roomCatalog.roomIdForDevice(device.nodeId) == room.id)
+        .length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('حذف اتاق؟'),
+        content: Text(
+          assignedCount == 0
+              ? 'اتاق «${room.name}» حذف شود؟'
+              : 'اتاق «${room.name}» حذف شود؟ $assignedCount وسیله به بخش «بدون اتاق» منتقل می‌شود.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('انصراف'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('حذف اتاق'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _editingMetadata = true);
+    try {
+      final next = _roomCatalog.removeRoom(room.id);
+      await widget.roomStore.save(next);
+      if (mounted) setState(() => _roomCatalog = next);
+    } catch (_) {
+      _showMetadataError();
+    } finally {
+      if (mounted) setState(() => _editingMetadata = false);
+    }
+  }
+
+  Future<void> _assignRoom(DirectMatterDevice device) async {
+    if (_editingMetadata) return;
+    String? roomId;
+    if (_roomCatalog.rooms.isEmpty) {
+      final created = await _createRoom();
+      if (created == null) return;
+      roomId = created.id;
+    } else {
+      const unassigned = '__unassigned__';
+      final current = _roomCatalog.roomIdForDevice(device.nodeId);
+      final selected = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: Text('اتاق «${device.name}»'),
+          children: <Widget>[
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(unassigned),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.home_outlined),
+                title: const Text('بدون اتاق'),
+                trailing: current == null ? const Icon(Icons.check) : null,
+              ),
+            ),
+            for (final room in _roomCatalog.rooms)
+              SimpleDialogOption(
+                onPressed: () => Navigator.of(context).pop(room.id),
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.meeting_room_outlined),
+                  title: Text(room.name),
+                  trailing:
+                      current == room.id ? const Icon(Icons.check) : null,
+                ),
+              ),
+          ],
+        ),
+      );
+      if (selected == null || !mounted) return;
+      roomId = selected == unassigned ? null : selected;
+    }
+    setState(() => _editingMetadata = true);
+    try {
+      final next = _roomCatalog.assignDevice(device.nodeId, roomId);
+      await widget.roomStore.save(next);
+      if (mounted) setState(() => _roomCatalog = next);
+    } catch (_) {
+      _showMetadataError();
+    } finally {
+      if (mounted) setState(() => _editingMetadata = false);
+    }
+  }
+
   Future<void> _removeDevice(DirectMatterDevice device) async {
     if (_editingMetadata) return;
     if (_removingNodes.contains(device.nodeId)) return;
@@ -411,9 +583,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         const Duration(seconds: 45),
         onTimeout: () => throw TimeoutException('Removal not confirmed; device kept in the list'),
       );
+      final nextRoomCatalog =
+          _roomCatalog.assignDevice(device.nodeId, null);
+      await widget.roomStore.save(nextRoomCatalog);
       await widget.deviceStore.remove(device.nodeId);
       if (mounted) {
         setState(() {
+          _roomCatalog = nextRoomCatalog;
           _devices = _devices
               .where((item) => item.nodeId != device.nodeId)
               .toList(growable: false);
@@ -442,12 +618,108 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
+  List<Widget> _roomSections(BuildContext context) {
+    final sections = <Widget>[];
+    for (final room in _roomCatalog.rooms) {
+      final devices = _devices
+          .where((device) =>
+              _roomCatalog.roomIdForDevice(device.nodeId) == room.id)
+          .toList(growable: false);
+      sections.addAll(_roomSection(context, room: room, devices: devices));
+    }
+    final unassigned = _devices
+        .where((device) =>
+            _roomCatalog.roomIdForDevice(device.nodeId) == null)
+        .toList(growable: false);
+    if (unassigned.isNotEmpty) {
+      sections.addAll(
+        _roomSection(context, title: 'بدون اتاق', devices: unassigned),
+      );
+    }
+    return sections;
+  }
+
+  List<Widget> _roomSection(
+    BuildContext context, {
+    ManisaRoom? room,
+    String? title,
+    required List<DirectMatterDevice> devices,
+  }) {
+    return <Widget>[
+      Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(4, 16, 4, 8),
+        child: Row(
+          children: <Widget>[
+            const Icon(Icons.meeting_room_outlined, size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                room?.name ?? title!,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            Text('${devices.length} وسیله'),
+            if (room != null)
+              PopupMenuButton<String>(
+                tooltip: 'تنظیمات اتاق',
+                onSelected: (value) {
+                  if (value == 'rename') _renameRoom(room);
+                  if (value == 'delete') _deleteRoom(room);
+                },
+                itemBuilder: (_) => const <PopupMenuEntry<String>>[
+                  PopupMenuItem(
+                    value: 'rename',
+                    child: Text('تغییر نام اتاق'),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Text('حذف اتاق'),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+      if (devices.isEmpty)
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.devices_other_outlined),
+            title: Text('هنوز وسیله‌ای در این اتاق نیست'),
+          ),
+        ),
+      for (final device in devices)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _DirectMatterDeviceCard(
+            device: device,
+            roomName: room?.name,
+            states: _states,
+            busy: _busy,
+            error: _deviceErrors[device.nodeId],
+            unavailable: _unavailableNodes.contains(device.nodeId),
+            onChanged: (endpoint, value) =>
+                _setOnOff(device, endpoint, value),
+            onRemove: () => _removeDevice(device),
+            onRename: () => _renameDevice(device),
+            onAssignRoom: () => _assignRoom(device),
+            onManageChannels: () => _manageChannels(device),
+            onRefresh: () => _refreshDevice(device),
+          ),
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('مانیسا'),
         actions: <Widget>[
+          IconButton(
+            tooltip: 'افزودن اتاق',
+            onPressed: _loading || _editingMetadata ? null : _createRoom,
+            icon: const Icon(Icons.add_home_outlined),
+          ),
           IconButton(
             tooltip: 'بررسی وضعیت',
             onPressed: _loading ? null : _refreshAllStates,
@@ -495,27 +767,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                     ),
                   ],
                   const SizedBox(height: 24),
-                  if (_devices.isEmpty)
-                    const _EmptyDirectMatterState()
-                  else
-                    for (final device in _devices)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _DirectMatterDeviceCard(
-                          device: device,
-                          states: _states,
-                          busy: _busy,
-                          error: _deviceErrors[device.nodeId],
-                          unavailable:
-                              _unavailableNodes.contains(device.nodeId),
-                          onChanged: (endpoint, value) =>
-                              _setOnOff(device, endpoint, value),
-                          onRemove: () => _removeDevice(device),
-                          onRename: () => _renameDevice(device),
-                          onManageChannels: () => _manageChannels(device),
-                          onRefresh: () => _refreshDevice(device),
-                        ),
-                      ),
+                  if (_devices.isEmpty && _roomCatalog.rooms.isEmpty)
+                    const _EmptyDirectMatterState(),
+                  if (_devices.isNotEmpty || _roomCatalog.rooms.isNotEmpty)
+                    ..._roomSections(context),
                 ],
               ),
             ),
@@ -554,6 +809,7 @@ final class _EmptyDirectMatterState extends StatelessWidget {
 final class _DirectMatterDeviceCard extends StatelessWidget {
   const _DirectMatterDeviceCard({
     required this.device,
+    required this.roomName,
     required this.states,
     required this.busy,
     required this.error,
@@ -561,11 +817,13 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.onChanged,
     required this.onRemove,
     required this.onRename,
+    required this.onAssignRoom,
     required this.onManageChannels,
     required this.onRefresh,
   });
 
   final DirectMatterDevice device;
+  final String? roomName;
   final Map<String, bool> states;
   final Set<String> busy;
   final String? error;
@@ -573,6 +831,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final void Function(int endpoint, bool value) onChanged;
   final VoidCallback onRemove;
   final VoidCallback onRename;
+  final VoidCallback onAssignRoom;
   final VoidCallback onManageChannels;
   final VoidCallback onRefresh;
 
@@ -599,7 +858,9 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       Text(
-                        '${device.onOffEndpoints.length} خروجی',
+                        roomName == null
+                            ? '${device.onOffEndpoints.length} خروجی'
+                            : '${device.onOffEndpoints.length} خروجی · $roomName',
                       ),
                     ],
                   ),
@@ -609,10 +870,12 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   onSelected: (value) {
                     if (value == 'remove') onRemove();
                     if (value == 'rename') onRename();
+                    if (value == 'room') onAssignRoom();
                     if (value == 'channels') onManageChannels();
                   },
                   itemBuilder: (_) => const <PopupMenuEntry<String>>[
                     PopupMenuItem(value: 'rename', child: Text('تغییر نام وسیله')),
+                    PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
                     PopupMenuItem(value: 'channels', child: Text('نام خروجی‌ها')),
                     PopupMenuItem(value: 'remove', child: Text('حذف وسیله')),
                   ],
@@ -990,6 +1253,78 @@ final class _DirectMatterQrScannerState extends State<_DirectMatterQrScanner> {
     _handled = true;
     Navigator.of(context).pop(raw);
   }
+}
+
+final class _RoomNameDialog extends StatefulWidget {
+  const _RoomNameDialog({
+    required this.title,
+    required this.actionLabel,
+    required this.reservedNames,
+    this.initialName = '',
+  });
+
+  final String title;
+  final String actionLabel;
+  final String initialName;
+  final Set<String> reservedNames;
+
+  @override
+  State<_RoomNameDialog> createState() => _RoomNameDialogState();
+}
+
+final class _RoomNameDialogState extends State<_RoomNameDialog> {
+  late final TextEditingController _name =
+      TextEditingController(text: widget.initialName);
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'یک نام برای اتاق بنویس.');
+      return;
+    }
+    final normalized = name.toLowerCase();
+    if (widget.reservedNames
+        .map((item) => item.trim().toLowerCase())
+        .contains(normalized)) {
+      setState(() => _error = 'اتاقی با این نام وجود دارد.');
+      return;
+    }
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.title),
+        content: TextField(
+          controller: _name,
+          autofocus: true,
+          maxLength: 40,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _submit(),
+          decoration: InputDecoration(
+            labelText: 'نام اتاق',
+            helperText: 'مثلاً پذیرایی یا اتاق خواب',
+            errorText: _error,
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('انصراف'),
+          ),
+          FilledButton(
+            onPressed: _submit,
+            child: Text(widget.actionLabel),
+          ),
+        ],
+      );
 }
 
 final class _RenameDeviceDialog extends StatefulWidget {
