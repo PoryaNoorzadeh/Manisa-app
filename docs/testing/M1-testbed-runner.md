@@ -104,7 +104,7 @@ test-results/
     └── manisa-m1-testbed-v0.1.0-run-YYYYMMDDTHHMMSSZ-report.md
 ```
 
-Metadata شامل نسخه Runner، نام و SHA-256 APK، serial گوشی، مدل گوشی، نسخه Android، نسخه نصب‌شده و زمان UTC است.
+Metadata شامل نسخه Runner، نام و SHA-256 APK، شناسهٔ هش‌شدهٔ گوشی، مدل گوشی، نسخه Android، نسخه نصب‌شده و زمان UTC است. serial خام و مسیر کامل فایل روی لپ‌تاپ ذخیره نمی‌شوند.
 
 نتیجه هر تست یکی از این چهار مقدار است:
 
