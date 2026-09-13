@@ -13,14 +13,16 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+import time
 from typing import Sequence
 
-RUNNER_VERSION = "0.1.0"
+RUNNER_VERSION = "0.2.0"
 PACKAGE_NAME = "com.manisa.manisa_mobile"
 MAIN_ACTIVITY = f"{PACKAGE_NAME}/.MainActivity"
 VALID_RESULTS = ("PASS", "FAIL", "BLOCKED", "NOT_RUN")
@@ -32,6 +34,16 @@ class TestCase:
     title: str
     instructions: tuple[str, ...]
     automated_action: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class PerformanceCase:
+    test_id: str
+    title: str
+    instructions: tuple[str, ...]
+    default_samples: int
+    metric: str
+    target_seconds: float | None = None
 
 
 TEST_CASES: tuple[TestCase, ...] = (
@@ -132,6 +144,45 @@ TEST_CASES: tuple[TestCase, ...] = (
 
 DEFAULT_TEST_IDS = tuple(case.test_id for case in TEST_CASES)
 _TEST_BY_ID = {case.test_id: case for case in TEST_CASES}
+
+PERFORMANCE_CASES: tuple[PerformanceCase, ...] = (
+    PerformanceCase(
+        "M1-P01",
+        "زمان فرمان تا تأیید وضعیت",
+        (
+            "Enter را بزن و بلافاصله فرمان روشن/خاموش را در اپ اجرا کن.",
+            "وقتی وضعیت واقعی رله و اپ تأیید شد دوباره Enter بزن.",
+        ),
+        default_samples=30,
+        metric="p95",
+        target_seconds=2.0,
+    ),
+    PerformanceCase(
+        "M1-P02",
+        "زمان بازیابی پس از Retry",
+        (
+            "دستگاه را در وضعیت unavailable قرار بده.",
+            "Enter را بزن و بلافاصله «تلاش دوباره» را اجرا کن.",
+            "بعد از اولین خواندن یا فرمان موفق دوباره Enter بزن.",
+        ),
+        default_samples=5,
+        metric="max",
+        target_seconds=15.0,
+    ),
+    PerformanceCase(
+        "M1-P03",
+        "زمان Commission تا اولین کنترل",
+        (
+            "دستگاه Factory Reset شده را در حالت Pairing آماده کن.",
+            "Enter را بزن و بلافاصله افزودن دستگاه را شروع کن.",
+            "پس از اولین کنترل موفق دوباره Enter بزن.",
+        ),
+        default_samples=5,
+        metric="success_rate",
+    ),
+)
+
+_PERFORMANCE_BY_ID = {case.test_id: case for case in PERFORMANCE_CASES}
 
 
 class RunnerError(RuntimeError):
@@ -244,6 +295,8 @@ class Adb:
 
 
 def resolve_tests(raw: str) -> list[TestCase]:
+    if raw == "none":
+        return []
     requested = DEFAULT_TEST_IDS if raw in ("default", "all") else tuple(
         item.strip().upper() for item in raw.split(",") if item.strip()
     )
@@ -251,6 +304,77 @@ def resolve_tests(raw: str) -> list[TestCase]:
     if unknown:
         raise RunnerError(f"Unknown test id(s): {', '.join(unknown)}")
     return [_TEST_BY_ID[test_id] for test_id in requested]
+
+
+def resolve_performance_cases(raw: str) -> list[PerformanceCase]:
+    if raw == "none":
+        return []
+    requested = (
+        tuple(case.test_id for case in PERFORMANCE_CASES)
+        if raw == "all"
+        else tuple(item.strip().upper() for item in raw.split(",") if item.strip())
+    )
+    unknown = [test_id for test_id in requested if test_id not in _PERFORMANCE_BY_ID]
+    if unknown:
+        raise RunnerError(f"Unknown performance test id(s): {', '.join(unknown)}")
+    return [_PERFORMANCE_BY_ID[test_id] for test_id in requested]
+
+
+def percentile(values: Sequence[float], percentage: float) -> float:
+    if not values:
+        raise ValueError("percentile requires at least one value")
+    if not 0 <= percentage <= 100:
+        raise ValueError("percentage must be between 0 and 100")
+    ordered = sorted(float(value) for value in values)
+    position = (len(ordered) - 1) * percentage / 100
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def summarize_performance(
+    case: PerformanceCase,
+    samples: Sequence[dict[str, object]],
+    requested_samples: int,
+) -> dict[str, object]:
+    passed = [
+        float(sample["duration_seconds"])
+        for sample in samples
+        if sample["status"] == "PASS"
+    ]
+    completed = len(samples)
+    pass_count = len(passed)
+    summary: dict[str, object] = {
+        "requested_samples": requested_samples,
+        "completed_samples": completed,
+        "pass_count": pass_count,
+        "success_rate_percent": round(
+            (pass_count / requested_samples * 100) if requested_samples else 0,
+            2,
+        ),
+        "median_seconds": round(percentile(passed, 50), 3) if passed else None,
+        "p95_seconds": round(percentile(passed, 95), 3) if passed else None,
+        "max_seconds": round(max(passed), 3) if passed else None,
+        "target_metric": case.metric,
+        "target_seconds": case.target_seconds,
+    }
+    all_passed = completed == requested_samples and pass_count == requested_samples
+    if case.metric == "success_rate":
+        target_met = all_passed
+    else:
+        measured = summary[f"{case.metric}_seconds"]
+        target_met = (
+            all_passed
+            and measured is not None
+            and case.target_seconds is not None
+            and float(measured) <= case.target_seconds
+        )
+    summary["target_met"] = target_met
+    summary["status"] = "PASS" if target_met else "FAIL" if completed else "NOT_RUN"
+    return summary
 
 
 def choose_serial(adb_executable: str, requested: str | None) -> str:
@@ -285,6 +409,84 @@ def prompt_result(case: TestCase) -> tuple[str, str]:
     return status, note
 
 
+def prompt_status(prompt: str = "نتیجه") -> str:
+    while True:
+        raw = input(f"{prompt} [p=PASS, f=FAIL, b=BLOCKED, s=NOT_RUN]: ").strip().lower()
+        status = {"p": "PASS", "f": "FAIL", "b": "BLOCKED", "s": "NOT_RUN"}.get(raw)
+        if status:
+            return status
+        print("یکی از p، f، b یا s را وارد کن.")
+
+
+class TimelineRecorder:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.started = time.perf_counter()
+
+    def record(self, event: str, **fields: object) -> None:
+        item = {
+            "timestamp": iso_utc(utc_now()),
+            "elapsed_seconds": round(time.perf_counter() - self.started, 6),
+            "event": event,
+            **fields,
+        }
+        with self.path.open("a", encoding="utf-8") as target:
+            target.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def run_performance_case(
+    case: PerformanceCase,
+    sample_count: int,
+    timeline: TimelineRecorder,
+) -> dict[str, object]:
+    print(f"\n[{case.test_id}] {case.title} — {sample_count} تکرار")
+    for index, instruction in enumerate(case.instructions, 1):
+        print(f"  {index}. {instruction}")
+    samples: list[dict[str, object]] = []
+    for sample_number in range(1, sample_count + 1):
+        input(f"\nنمونه {sample_number}/{sample_count}: برای شروع Enter بزن… ")
+        sample_started_at = utc_now()
+        started = time.perf_counter()
+        timeline.record(
+            "performance_sample_started",
+            test_id=case.test_id,
+            sample=sample_number,
+        )
+        input("پس از مشاهده معیار پایان، فوراً Enter بزن… ")
+        duration = round(time.perf_counter() - started, 3)
+        status = prompt_status("اعتبار این نمونه")
+        note = sanitize_note(input("یادداشت کوتاه (اختیاری): ").strip())
+        sample = {
+            "sample": sample_number,
+            "status": status,
+            "duration_seconds": duration,
+            "started_at": iso_utc(sample_started_at),
+            "finished_at": iso_utc(utc_now()),
+            "note": note,
+        }
+        samples.append(sample)
+        timeline.record(
+            "performance_sample_finished",
+            test_id=case.test_id,
+            sample=sample_number,
+            status=status,
+            duration_seconds=duration,
+        )
+    return {
+        "test_id": case.test_id,
+        "title": case.title,
+        "samples": samples,
+        "summary": summarize_performance(case, samples, sample_count),
+    }
+
+
+def capture_device_log_segment(source: Path, start_offset: int, destination: Path) -> None:
+    with source.open("rb") as raw:
+        raw.seek(start_offset)
+        text = raw.read().decode("utf-8", errors="replace")
+    destination.write_text(sanitize_note(text), encoding="utf-8")
+
+
 def write_json(path: Path, value: object) -> None:
     path.write_text(
         json.dumps(value, ensure_ascii=False, indent=2) + "\n",
@@ -292,7 +494,13 @@ def write_json(path: Path, value: object) -> None:
     )
 
 
-def write_report(path: Path, metadata: dict[str, object], results: list[dict[str, object]]) -> None:
+def write_report(
+    path: Path,
+    metadata: dict[str, object],
+    results: list[dict[str, object]],
+    performance_results: list[dict[str, object]] | None = None,
+) -> None:
+    performance_results = performance_results or []
     counts = {status: 0 for status in VALID_RESULTS}
     for result in results:
         counts[str(result["status"])] += 1
@@ -327,6 +535,30 @@ def write_report(path: Path, metadata: dict[str, object], results: list[dict[str
             f"| {result['test_id']} | {result['title']} | {result['status']} | "
             f"{result['duration_seconds']}s | {note} |"
         )
+    if performance_results:
+        lines.extend(
+            (
+                "",
+                "## نتایج عملکرد",
+                "",
+                "| شناسه | نمونه موفق/درخواستی | Median | P95 | Max | Success rate | هدف | نتیجه |",
+                "|---|---:|---:|---:|---:|---:|---|---|",
+            )
+        )
+        for result in performance_results:
+            summary = result["summary"]
+            target = (
+                "100% success"
+                if summary["target_metric"] == "success_rate"
+                else f"{summary['target_metric']} ≤ {summary['target_seconds']}s"
+            )
+            lines.append(
+                f"| {result['test_id']} | {summary['pass_count']}/{summary['requested_samples']} | "
+                f"{summary['median_seconds'] if summary['median_seconds'] is not None else '—'}s | "
+                f"{summary['p95_seconds'] if summary['p95_seconds'] is not None else '—'}s | "
+                f"{summary['max_seconds'] if summary['max_seconds'] is not None else '—'}s | "
+                f"{summary['success_rate_percent']}% | {target} | {summary['status']} |"
+            )
     lines.extend(
         (
             "",
@@ -336,6 +568,9 @@ def write_report(path: Path, metadata: dict[str, object], results: list[dict[str
             "- `package-dump.txt`: اطلاعات پکیج نصب‌شده",
             "- `metadata.json`: نسخه‌ها، دستگاه و checksum",
             "- `results.json`: نتیجه ساختاریافته تست‌ها",
+            "- `performance.json`: نمونه‌ها و آمار تست‌های عملکردی انتخاب‌شده",
+            "- `timeline.jsonl`: زمان UTC و زمان یکنواخت رخدادهای Runner برای تطبیق لاگ‌ها",
+            "- `device-serial.log`: بخش متناظر لاگ خارجی device، در صورت استفاده از `--device-log-file`",
             "",
             "> نتیجه CI یا شبیه‌سازی جای تست سخت‌افزاری را نمی‌گیرد.",
             "",
@@ -361,7 +596,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tests",
         default="default",
-        help="default/all or comma-separated IDs, for example M1-T09,M1-T11",
+        help="default/all/none or comma-separated IDs, for example M1-T09,M1-T11",
+    )
+    parser.add_argument(
+        "--benchmarks",
+        default="none",
+        help="none/all or comma-separated performance IDs: M1-P01,M1-P02,M1-P03",
+    )
+    parser.add_argument(
+        "--samples",
+        type=int,
+        help="Override the default repetition count for every selected benchmark",
+    )
+    parser.add_argument(
+        "--device-log-file",
+        type=Path,
+        help="Optional append-only firmware log; capture only bytes added during this run",
     )
     parser.add_argument(
         "--output-root",
@@ -388,6 +638,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not apk.is_file() or apk.suffix.lower() != ".apk":
         raise RunnerError(f"APK not found or invalid: {apk}")
     tests = resolve_tests(args.tests)
+    performance_cases = resolve_performance_cases(args.benchmarks)
+    if args.samples is not None and args.samples < 1:
+        raise RunnerError("--samples must be at least 1")
+    if not tests and not performance_cases:
+        raise RunnerError("Select at least one functional test or benchmark")
+    device_log_file = args.device_log_file.expanduser().resolve() if args.device_log_file else None
+    if device_log_file is not None and not device_log_file.is_file():
+        raise RunnerError(f"Device log file was not found: {device_log_file}")
+    device_log_offset = device_log_file.stat().st_size if device_log_file else 0
     adb_executable = shutil.which("adb")
     if not adb_executable:
         raise RunnerError("adb was not found in PATH")
@@ -425,8 +684,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "android_sdk": adb.property("ro.build.version.sdk"),
         "installed_version": installed_version(package_dump),
         "selected_tests": [case.test_id for case in tests],
+        "selected_benchmarks": [case.test_id for case in performance_cases],
+        "device_log_capture": device_log_file is not None,
     }
     write_json(output / "metadata.json", metadata)
+    timeline = TimelineRecorder(output / "timeline.jsonl")
+    timeline.record("run_started", run_id=run_id)
 
     log_path = output / "adb-logcat.txt"
     adb.run("logcat", "-c", check=False)
@@ -439,10 +702,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     results: list[dict[str, object]] = []
+    performance_results: list[dict[str, object]] = []
     try:
         adb.restart_app()
         for case in tests:
             case_started = utc_now()
+            timeline.record("functional_test_started", test_id=case.test_id)
             if args.non_interactive:
                 status, note = "NOT_RUN", "non-interactive metadata collection"
             else:
@@ -464,8 +729,45 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ),
                 }
             )
+            timeline.record(
+                "functional_test_finished",
+                test_id=case.test_id,
+                status=status,
+                duration_seconds=results[-1]["duration_seconds"],
+            )
             write_json(output / "results.json", results)
-            write_report(output / f"{run_id}-report.md", metadata, results)
+            write_report(
+                output / f"{run_id}-report.md",
+                metadata,
+                results,
+                performance_results,
+            )
+        for case in performance_cases:
+            if args.non_interactive:
+                performance_result = {
+                    "test_id": case.test_id,
+                    "title": case.title,
+                    "samples": [],
+                    "summary": summarize_performance(
+                        case,
+                        [],
+                        args.samples or case.default_samples,
+                    ),
+                }
+            else:
+                performance_result = run_performance_case(
+                    case,
+                    args.samples or case.default_samples,
+                    timeline,
+                )
+            performance_results.append(performance_result)
+            write_json(output / "performance.json", performance_results)
+            write_report(
+                output / f"{run_id}-report.md",
+                metadata,
+                results,
+                performance_results,
+            )
     finally:
         if log_process.poll() is None:
             log_process.terminate()
@@ -475,12 +777,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 log_process.kill()
                 log_process.wait(timeout=5)
         log_handle.close()
+        if device_log_file is not None:
+            capture_device_log_segment(
+                device_log_file,
+                device_log_offset,
+                output / "device-serial.log",
+            )
 
     metadata["finished_at"] = iso_utc(utc_now())
+    timeline.record("run_finished", run_id=run_id)
     write_json(output / "metadata.json", metadata)
-    write_report(output / f"{run_id}-report.md", metadata, results)
+    write_json(output / "results.json", results)
+    write_json(output / "performance.json", performance_results)
+    write_report(
+        output / f"{run_id}-report.md",
+        metadata,
+        results,
+        performance_results,
+    )
     print(f"\nگزارش Test Bed آماده شد: {output}")
-    return 2 if any(item["status"] == "FAIL" for item in results) else 0
+    failed = any(item["status"] == "FAIL" for item in results) or any(
+        item["summary"]["status"] == "FAIL" for item in performance_results
+    )
+    return 2 if failed else 0
 
 
 if __name__ == "__main__":
