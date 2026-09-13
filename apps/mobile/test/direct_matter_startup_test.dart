@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_app.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
+import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
   testWidgets('restores live state without blocking onboarding on discovery',
@@ -370,6 +371,87 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('creates a room, assigns a device and restores grouping',
+      (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    final roomStore = _MemoryRoomStore();
+
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+      roomStore: roomStore,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('افزودن اتاق'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'پذیرایی');
+    await tester.tap(find.text('ساخت اتاق'));
+    await tester.pumpAndSettle();
+    expect(find.text('پذیرایی'), findsOneWidget);
+    expect(find.text('هنوز وسیله‌ای در این اتاق نیست'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('تنظیمات وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تغییر اتاق'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(SimpleDialogOption, 'پذیرایی'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(roomStore.catalog.roomIdForDevice(7), isNotNull);
+    expect(find.textContaining('1 خروجی · پذیرایی'), findsOneWidget);
+    expect(find.text('بدون اتاق'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+      roomStore: roomStore,
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('پذیرایی'), findsOneWidget);
+    expect(find.textContaining('1 خروجی · پذیرایی'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('deleting a room moves its devices to unassigned',
+      (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    final roomStore = _MemoryRoomStore(
+      catalog: const RoomCatalog(
+        rooms: <ManisaRoom>[
+          ManisaRoom(id: 'living', name: 'پذیرایی'),
+        ],
+        deviceRooms: <int, String>{7: 'living'},
+      ),
+    );
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+      roomStore: roomStore,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('تنظیمات اتاق'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('حذف اتاق'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('به بخش «بدون اتاق» منتقل می‌شود'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'حذف اتاق'));
+    await tester.pumpAndSettle();
+
+    expect(roomStore.catalog.rooms, isEmpty);
+    expect(roomStore.catalog.roomIdForDevice(7), isNull);
+    expect(find.text('بدون اتاق'), findsOneWidget);
+    expect(find.text('Saved switch'), findsOneWidget);
+  });
+
 
 }
 
@@ -498,4 +580,18 @@ class _RenameStore implements DirectDeviceStore {
   }
   @override
   Future<void> remove(int nodeId) async {}
+}
+
+class _MemoryRoomStore implements RoomStore {
+  _MemoryRoomStore({this.catalog = const RoomCatalog()});
+
+  RoomCatalog catalog;
+
+  @override
+  Future<RoomCatalog> load() async => catalog;
+
+  @override
+  Future<void> save(RoomCatalog value) async {
+    catalog = value;
+  }
 }
