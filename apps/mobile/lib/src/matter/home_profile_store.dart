@@ -18,9 +18,9 @@ final class ManisaHomeProfile {
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'version': 1,
-        'name': name,
-      };
+    'version': 1,
+    'name': name,
+  };
 
   factory ManisaHomeProfile.fromJson(Map<String, Object?> json) {
     final name = json['name'];
@@ -48,7 +48,7 @@ final class EmptyHomeProfileStore implements HomeProfileStore {
 
 final class PreferencesHomeProfileStore implements HomeProfileStore {
   PreferencesHomeProfileStore({SharedPreferencesAsync? preferences})
-      : _preferences = preferences ?? SharedPreferencesAsync();
+    : _preferences = preferences ?? SharedPreferencesAsync();
 
   static const String _key = 'manisa_home_profile_v1';
   final SharedPreferencesAsync _preferences;
