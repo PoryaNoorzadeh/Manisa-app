@@ -84,9 +84,9 @@ void main() {
 
   group('RoomCatalog', () {
     test('round trips rooms and device assignments', () {
-      final catalog = const RoomCatalog().addRoom(
-        const ManisaRoom(id: 'living', name: 'پذیرایی'),
-      ).assignDevice(7, 'living');
+      final catalog = const RoomCatalog()
+          .addRoom(const ManisaRoom(id: 'living', name: 'پذیرایی'))
+          .assignDevice(7, 'living');
 
       final decoded = RoomCatalog.fromJson(catalog.toJson());
 
@@ -100,10 +100,7 @@ void main() {
         'rooms': <Object?>[
           <String, Object?>{'id': 'living', 'name': 'پذیرایی'},
         ],
-        'deviceRooms': <String, Object?>{
-          '7': 'deleted-room',
-          '8': 'living',
-        },
+        'deviceRooms': <String, Object?>{'7': 'deleted-room', '8': 'living'},
       });
 
       expect(decoded.roomIdForDevice(7), isNull);
@@ -118,10 +115,7 @@ void main() {
 
       expect(catalog.rooms, isEmpty);
       expect(catalog.roomIdForDevice(7), isNull);
-      expect(
-        () => catalog.assignDevice(7, 'missing'),
-        throwsArgumentError,
-      );
+      expect(() => catalog.assignDevice(7, 'missing'), throwsArgumentError);
     });
 
     test('moves rooms while preserving assignments', () {
@@ -134,10 +128,11 @@ void main() {
         deviceRooms: <int, String>{7: 'living'},
       ).moveRoom('living', 1);
 
-      expect(
-        catalog.rooms.map((room) => room.id),
-        <String>['bedroom', 'living', 'kitchen'],
-      );
+      expect(catalog.rooms.map((room) => room.id), <String>[
+        'bedroom',
+        'living',
+        'kitchen',
+      ]);
       expect(catalog.roomIdForDevice(7), 'living');
       expect(identical(catalog.moveRoom('bedroom', -1), catalog), isTrue);
       expect(() => catalog.moveRoom('missing', 1), throwsArgumentError);
