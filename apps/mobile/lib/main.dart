@@ -7,6 +7,7 @@ import 'src/discovery/hub_discovery.dart';
 import 'src/matter/direct_device_store.dart';
 import 'src/matter/direct_matter_app.dart';
 import 'src/matter/direct_matter_controller.dart';
+import 'src/matter/room_store.dart';
 import 'src/realtime/manisa_realtime.dart';
 import 'src/security/token_store.dart';
 import 'src/state/app_controller.dart';
@@ -19,6 +20,7 @@ void main() {
       ManisaDirectApp(
         controller: const PlatformDirectMatterController(),
         deviceStore: PreferencesDirectDeviceStore(),
+        roomStore: PreferencesRoomStore(),
       ),
     );
     return;
