@@ -184,11 +184,52 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('offline refresh preserves context and retry restores control',
+      (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+    ));
+    await tester.pumpAndSettle();
+
+    var control =
+        tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    expect(control.value, isTrue);
+    expect(control.onChanged, isNotNull);
+
+    controller.readFails = true;
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('در دسترس نیست · آخرین وضعیت: روشن'),
+      findsOneWidget,
+    );
+    expect(find.text('تلاش دوباره'), findsOneWidget);
+    control = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    expect(control.value, isTrue);
+    expect(control.onChanged, isNull);
+
+    controller.readFails = false;
+    await tester.tap(find.text('تلاش دوباره'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('در دسترس نیست · آخرین وضعیت: روشن'), findsNothing);
+    expect(find.text('تلاش دوباره'), findsNothing);
+    control = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    expect(control.value, isTrue);
+    expect(control.onChanged, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
+
 }
 
 class _Controller implements DirectMatterController {
   _Controller({this.initializationFails = false, this.readFails = false});
-  final bool readFails;
+  bool readFails;
 
   final bool initializationFails;
   final discovery = Completer<List<int>>();
