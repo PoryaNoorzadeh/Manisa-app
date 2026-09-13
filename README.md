@@ -298,7 +298,7 @@ Do not commit real production pairing codes, Wi-Fi credentials, device setup cod
 
 M0 Foundation is complete. The M1 Direct Matter controller is integrated into the branded Persian Flutter app; real-hardware commissioning, app-to-device On/Off control, device removal/recommissioning and state recovery after reopening the app have been demonstrated. Automated coverage also protects startup recovery, retry behavior and per-device error isolation.
 
-The immediate engineering target is **M1 stabilization and acceptance evidence**. The remaining gate is the versioned hardware test suite: physical-touch state propagation, every endpoint-to-relay mapping, Wi-Fi/power/restart recovery, offline behavior and the P01–P03 performance measurements. The canonical status and pending queue live in `docs/testing/M1-test-register.md`; M2 does not start until the essential M1 exit tests have evidence.
+The immediate engineering target is **M1 stabilization and acceptance evidence**. The remaining gate is the versioned hardware test suite: physical-touch state propagation, every endpoint-to-relay mapping, Wi-Fi/power/restart recovery, offline behavior and the P01–P03 performance measurements. The canonical status and pending queue live in `docs/testing/M1-test-register.md`; By explicit user decision, M2 development may proceed under conditional software acceptance of M1. Hardware tests remain tracked in parallel and are required before final hardware acceptance or commercial release.
 
 ## License / development status
 
