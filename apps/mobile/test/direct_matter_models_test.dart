@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
+import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
@@ -120,6 +121,41 @@ void main() {
       expect(
         () => catalog.assignDevice(7, 'missing'),
         throwsArgumentError,
+      );
+    });
+
+    test('moves rooms while preserving assignments', () {
+      final catalog = const RoomCatalog(
+        rooms: <ManisaRoom>[
+          ManisaRoom(id: 'living', name: 'پذیرایی'),
+          ManisaRoom(id: 'bedroom', name: 'اتاق خواب'),
+          ManisaRoom(id: 'kitchen', name: 'آشپزخانه'),
+        ],
+        deviceRooms: <int, String>{7: 'living'},
+      ).moveRoom('living', 1);
+
+      expect(
+        catalog.rooms.map((room) => room.id),
+        <String>['bedroom', 'living', 'kitchen'],
+      );
+      expect(catalog.roomIdForDevice(7), 'living');
+      expect(identical(catalog.moveRoom('bedroom', -1), catalog), isTrue);
+      expect(() => catalog.moveRoom('missing', 1), throwsArgumentError);
+    });
+  });
+
+  group('ManisaHomeProfile', () {
+    test('defaults legacy installs and round trips a custom name', () {
+      expect(const ManisaHomeProfile().name, 'خانهٔ من');
+
+      final renamed = const ManisaHomeProfile().rename('  خانهٔ پوریا  ');
+      final decoded = ManisaHomeProfile.fromJson(renamed.toJson());
+
+      expect(decoded.name, 'خانهٔ پوریا');
+      expect(() => renamed.rename('   '), throwsArgumentError);
+      expect(
+        () => ManisaHomeProfile.fromJson(<String, Object?>{'name': ''}),
+        throwsFormatException,
       );
     });
   });
