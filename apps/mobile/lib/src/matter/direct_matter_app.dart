@@ -170,7 +170,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-  bool _canUpdate(int nodeId) => mounted &&
+  bool _canUpdate(int nodeId) =>
+      mounted &&
       !_removingNodes.contains(nodeId) &&
       _devices.any((device) => device.nodeId == nodeId);
 
@@ -203,13 +204,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (!_canUpdate(device.nodeId)) return;
       if (discovered.isNotEmpty &&
           !_sameEndpoints(discovered, device.onOffEndpoints)) {
-        final index =
-            _devices.indexWhere((item) => item.nodeId == device.nodeId);
+        final index = _devices.indexWhere(
+          (item) => item.nodeId == device.nodeId,
+        );
         if (index < 0) return;
         setState(() {
           final updated = List<DirectMatterDevice>.of(_devices);
-          updated[index] =
-              updated[index].copyWith(onOffEndpoints: discovered);
+          updated[index] = updated[index].copyWith(onOffEndpoints: discovered);
           _devices = updated;
         });
         try {
@@ -222,8 +223,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             });
           }
         }
-        for (final endpoint
-            in discovered.where((e) => !device.onOffEndpoints.contains(e))) {
+        for (final endpoint in discovered.where(
+          (e) => !device.onOffEndpoints.contains(e),
+        )) {
           final value = await widget.controller
               .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
               .timeout(_readTimeout);
@@ -236,8 +238,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (_canUpdate(device.nodeId)) {
         setState(() {
           _unavailableNodes.remove(device.nodeId);
-          if (!(_deviceErrors[device.nodeId]
-                  ?.startsWith('Could not save discovered channels') ??
+          if (!(_deviceErrors[device.nodeId]?.startsWith(
+                'Could not save discovered channels',
+              ) ??
               false)) {
             _deviceErrors.remove(device.nodeId);
           }
@@ -308,15 +311,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       _deviceErrors.remove(device.nodeId);
     });
     try {
-      await widget.controller.setOnOff(
-        nodeId: device.nodeId,
-        endpoint: endpoint,
-        value: value,
-      ).timeout(_readTimeout);
-      final confirmed = await widget.controller.readOnOff(
-        nodeId: device.nodeId,
-        endpoint: endpoint,
-      ).timeout(_readTimeout);
+      await widget.controller
+          .setOnOff(nodeId: device.nodeId, endpoint: endpoint, value: value)
+          .timeout(_readTimeout);
+      final confirmed = await widget.controller
+          .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
+          .timeout(_readTimeout);
       if (_canUpdate(device.nodeId)) {
         setState(() {
           _states[key] = confirmed;
@@ -338,10 +338,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-
-
   Future<void> _manageChannels(DirectMatterDevice device) async {
-    if (_editingMetadata || _removingNodes.isNotEmpty || !_canUpdate(device.nodeId)) return;
+    if (_editingMetadata ||
+        _removingNodes.isNotEmpty ||
+        !_canUpdate(device.nodeId))
+      return;
     setState(() => _editingMetadata = true);
     try {
       await showDialog<void>(
@@ -359,7 +360,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               _states[_stateKey(device.nodeId, endpoint)] != null &&
               !_busy.contains(_stateKey(device.nodeId, endpoint)),
           onSave: (names) async {
-            final index = _devices.indexWhere((item) => item.nodeId == device.nodeId);
+            final index = _devices.indexWhere(
+              (item) => item.nodeId == device.nodeId,
+            );
             if (index < 0) return;
             final updated = _devices[index].copyWith(channelNames: names);
             await widget.deviceStore.save(updated);
@@ -378,7 +381,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   Future<void> _renameDevice(DirectMatterDevice device) async {
-    if (_editingMetadata || _removingNodes.isNotEmpty || !_canUpdate(device.nodeId)) return;
+    if (_editingMetadata ||
+        _removingNodes.isNotEmpty ||
+        !_canUpdate(device.nodeId))
+      return;
     setState(() => _editingMetadata = true);
     try {
       await showDialog<void>(
@@ -387,12 +393,19 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         builder: (_) => _RenameDeviceDialog(
           initialName: device.name,
           onSave: (name) async {
-            final current = _devices.firstWhere((item) => item.nodeId == device.nodeId);
+            final current = _devices.firstWhere(
+              (item) => item.nodeId == device.nodeId,
+            );
             await widget.deviceStore.save(current.copyWith(name: name));
             if (!mounted) return;
             setState(() {
-              _devices = _devices.map((item) => item.nodeId == device.nodeId
-                  ? item.copyWith(name: name) : item).toList(growable: false);
+              _devices = _devices
+                  .map(
+                    (item) => item.nodeId == device.nodeId
+                        ? item.copyWith(name: name)
+                        : item,
+                  )
+                  .toList(growable: false);
             });
           },
         ),
@@ -503,8 +516,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   Future<void> _deleteRoom(ManisaRoom room) async {
     if (_editingMetadata) return;
     final assignedCount = _devices
-        .where((device) =>
-            _roomCatalog.roomIdForDevice(device.nodeId) == room.id)
+        .where(
+          (device) => _roomCatalog.roomIdForDevice(device.nodeId) == room.id,
+        )
         .length;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -571,8 +585,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.meeting_room_outlined),
                   title: Text(room.name),
-                  trailing:
-                      current == room.id ? const Icon(Icons.check) : null,
+                  trailing: current == room.id ? const Icon(Icons.check) : null,
                 ),
               ),
           ],
@@ -600,7 +613,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('حذف وسیله از مانیسا؟'),
-        content: Text('«${device.name}» از مانیسا حذف شود؟ برای افزودن دوباره، وسیله باید آمادهٔ اتصال باشد.'),
+        content: Text(
+          '«${device.name}» از مانیسا حذف شود؟ برای افزودن دوباره، وسیله باید آمادهٔ اتصال باشد.',
+        ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -613,7 +628,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         ],
       ),
     );
-    if (confirmed != true || !mounted || _removingNodes.contains(device.nodeId)) return;
+    if (confirmed != true || !mounted || _removingNodes.contains(device.nodeId))
+      return;
     setState(() {
       _removingNodes.add(device.nodeId);
       _deviceErrors.remove(device.nodeId);
@@ -623,12 +639,15 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     });
     try {
       // Only forget the device after the native RemoveCurrentFabric callback.
-      await widget.controller.removeDevice(device.nodeId).timeout(
-        const Duration(seconds: 45),
-        onTimeout: () => throw TimeoutException('Removal not confirmed; device kept in the list'),
-      );
-      final nextRoomCatalog =
-          _roomCatalog.assignDevice(device.nodeId, null);
+      await widget.controller
+          .removeDevice(device.nodeId)
+          .timeout(
+            const Duration(seconds: 45),
+            onTimeout: () => throw TimeoutException(
+              'Removal not confirmed; device kept in the list',
+            ),
+          );
+      final nextRoomCatalog = _roomCatalog.assignDevice(device.nodeId, null);
       await widget.roomStore.save(nextRoomCatalog);
       await widget.deviceStore.remove(device.nodeId);
       if (mounted) {
@@ -666,14 +685,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     final sections = <Widget>[];
     for (final room in _roomCatalog.rooms) {
       final devices = _devices
-          .where((device) =>
-              _roomCatalog.roomIdForDevice(device.nodeId) == room.id)
+          .where(
+            (device) => _roomCatalog.roomIdForDevice(device.nodeId) == room.id,
+          )
           .toList(growable: false);
       sections.addAll(_roomSection(context, room: room, devices: devices));
     }
     final unassigned = _devices
-        .where((device) =>
-            _roomCatalog.roomIdForDevice(device.nodeId) == null)
+        .where((device) => _roomCatalog.roomIdForDevice(device.nodeId) == null)
         .toList(growable: false);
     if (unassigned.isNotEmpty) {
       sections.addAll(
@@ -725,15 +744,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                   ),
                   PopupMenuItem(
                     value: 'down',
-                    enabled: roomIndex >= 0 &&
+                    enabled:
+                        roomIndex >= 0 &&
                         roomIndex < _roomCatalog.rooms.length - 1,
                     child: const Text('انتقال به پایین'),
                   ),
                   const PopupMenuDivider(),
-                  const PopupMenuItem(
-                    value: 'delete',
-                    child: Text('حذف اتاق'),
-                  ),
+                  const PopupMenuItem(value: 'delete', child: Text('حذف اتاق')),
                 ],
               ),
           ],
@@ -756,8 +773,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             busy: _busy,
             error: _deviceErrors[device.nodeId],
             unavailable: _unavailableNodes.contains(device.nodeId),
-            onChanged: (endpoint, value) =>
-                _setOnOff(device, endpoint, value),
+            onChanged: (endpoint, value) => _setOnOff(device, endpoint, value),
             onRemove: () => _removeDevice(device),
             onRename: () => _renameDevice(device),
             onAssignRoom: () => _assignRoom(device),
@@ -810,8 +826,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                       ),
                       IconButton(
                         tooltip: 'تغییر نام خانه',
-                        onPressed:
-                            _editingMetadata ? null : _renameHome,
+                        onPressed: _editingMetadata ? null : _renameHome,
                         icon: const Icon(Icons.edit_outlined),
                       ),
                     ],
@@ -828,7 +843,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                       actions: <Widget>[
                         TextButton(
                           onPressed: _retrying ? null : _retryConnections,
-                          child: Text(_retrying ? 'در حال بررسی…' : 'تلاش دوباره'),
+                          child: Text(
+                            _retrying ? 'در حال بررسی…' : 'تلاش دوباره',
+                          ),
                         ),
                         TextButton(
                           onPressed: _retrying
@@ -947,9 +964,15 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                     if (value == 'channels') onManageChannels();
                   },
                   itemBuilder: (_) => const <PopupMenuEntry<String>>[
-                    PopupMenuItem(value: 'rename', child: Text('تغییر نام وسیله')),
+                    PopupMenuItem(
+                      value: 'rename',
+                      child: Text('تغییر نام وسیله'),
+                    ),
                     PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
-                    PopupMenuItem(value: 'channels', child: Text('نام خروجی‌ها')),
+                    PopupMenuItem(
+                      value: 'channels',
+                      child: Text('نام خروجی‌ها'),
+                    ),
                     PopupMenuItem(value: 'remove', child: Text('حذف وسیله')),
                   ],
                 ),
@@ -976,10 +999,11 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
             ],
             const SizedBox(height: 12),
             if (device.onOffEndpoints.isEmpty)
-              TextButton(onPressed: onRefresh, child: const Text('دریافت کنترل‌های وسیله')),
-            for (var index = 0;
-                index < device.onOffEndpoints.length;
-                index++)
+              TextButton(
+                onPressed: onRefresh,
+                child: const Text('دریافت کنترل‌های وسیله'),
+              ),
+            for (var index = 0; index < device.onOffEndpoints.length; index++)
               Builder(
                 builder: (context) {
                   final endpoint = device.onOffEndpoints[index];
@@ -1005,18 +1029,18 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   return SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     title: Text(
-                        device.channelName(endpoint, index),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      device.channelName(endpoint, index),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     subtitle: Text(
                       unavailable
                           ? 'در دسترس نیست · آخرین وضعیت: ${state ? 'روشن' : 'خاموش'}'
                           : isBusy
-                              ? 'در حال انجام…'
-                              : state
-                                  ? 'روشن'
-                                  : 'خاموش',
+                          ? 'در حال انجام…'
+                          : state
+                          ? 'روشن'
+                          : 'خاموش',
                     ),
                     value: state,
                     onChanged: isBusy || unavailable
@@ -1027,7 +1051,9 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                             dimension: 22,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : Icon(state ? Icons.lightbulb : Icons.lightbulb_outline),
+                        : Icon(
+                            state ? Icons.lightbulb : Icons.lightbulb_outline,
+                          ),
                   );
                 },
               ),
@@ -1102,32 +1128,40 @@ final class _DirectMatterAddDeviceScreenState
     setState(() {
       _adding = true;
       _error = null;
-      _stage = _pendingDevice == null ? 'در حال اتصال وسیله… نزدیک آن بمان.' : 'در حال ذخیرهٔ وسیله…';
+      _stage = _pendingDevice == null
+          ? 'در حال اتصال وسیله… نزدیک آن بمان.'
+          : 'در حال ذخیرهٔ وسیله…';
     });
     try {
       if (_pendingDevice == null) {
-      final result = await widget.controller.commissionWifi(
-        setupPayload: payload,
-        ssid: ssid,
-        password: _password.text,
-      );
-      _pendingDevice = DirectMatterDevice(
-        nodeId: result.nodeId,
-        name: name,
-        onOffEndpoints: result.onOffEndpoints,
-      );
+        final result = await widget.controller.commissionWifi(
+          setupPayload: payload,
+          ssid: ssid,
+          password: _password.text,
+        );
+        _pendingDevice = DirectMatterDevice(
+          nodeId: result.nodeId,
+          name: name,
+          onOffEndpoints: result.onOffEndpoints,
+        );
       }
       final device = _pendingDevice!;
       await widget.deviceStore.save(device);
       if (mounted) {
-        setState(() { _stage = 'وسیله اضافه شد'; _adding = false; _pendingDevice = null; });
+        setState(() {
+          _stage = 'وسیله اضافه شد';
+          _adding = false;
+          _pendingDevice = null;
+        });
         Navigator.of(context).pop(device);
       }
     } catch (error) {
       if (mounted) {
         setState(() {
           _error = error.toString();
-          _stage = _pendingDevice == null ? 'اتصال کامل نشد' : 'وسیله متصل شد؛ ذخیره کامل نشد';
+          _stage = _pendingDevice == null
+              ? 'اتصال کامل نشد'
+              : 'وسیله متصل شد؛ ذخیره کامل نشد';
         });
       }
     } finally {
@@ -1139,11 +1173,16 @@ final class _DirectMatterAddDeviceScreenState
 
   void _next() {
     if (_step == 0 && !_payload.text.trim().startsWith('MT:')) {
-      setState(() => _error = 'کد QR معتبر Matter را اسکن یا متن آن را وارد کن.');
+      setState(
+        () => _error = 'کد QR معتبر Matter را اسکن یا متن آن را وارد کن.',
+      );
       return;
     }
     FocusScope.of(context).unfocus();
-    setState(() { _step++; _error = null; });
+    setState(() {
+      _step++;
+      _error = null;
+    });
   }
 
   @override
@@ -1154,59 +1193,113 @@ final class _DirectMatterAddDeviceScreenState
       child: Scaffold(
         appBar: AppBar(
           title: const Text('افزودن وسیله'),
-          leading: BackButton(onPressed: () {
-            if (_adding || _pendingDevice != null) return;
-            if (_step > 0) {
-              setState(() { _step--; _error = null; });
-            } else {
-              Navigator.of(context).pop();
-            }
-          }),
+          leading: BackButton(
+            onPressed: () {
+              if (_adding || _pendingDevice != null) return;
+              if (_step > 0) {
+                setState(() {
+                  _step--;
+                  _error = null;
+                });
+              } else {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
         ),
         body: ListView(
           padding: const EdgeInsets.all(24),
           children: <Widget>[
-            Text('مرحلهٔ ${_step + 1} از ۳', style: Theme.of(context).textTheme.labelLarge),
+            Text(
+              'مرحلهٔ ${_step + 1} از ۳',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
             const SizedBox(height: 8),
-            Text(titles[_step], style: Theme.of(context).textTheme.headlineMedium),
+            Text(
+              titles[_step],
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
             const SizedBox(height: 24),
             if (_step == 0) ...<Widget>[
               const Icon(Icons.qr_code_2, size: 80),
               const SizedBox(height: 16),
-              const Text('کد QR روی وسیله یا جعبه را اسکن کن. برای این کار اجازهٔ دوربین لازم است.'),
+              const Text(
+                'کد QR روی وسیله یا جعبه را اسکن کن. برای این کار اجازهٔ دوربین لازم است.',
+              ),
               const SizedBox(height: 16),
-              FilledButton.icon(onPressed: _scan, icon: const Icon(Icons.qr_code_scanner), label: const Text('اسکن کد وسیله')),
+              FilledButton.icon(
+                onPressed: _scan,
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('اسکن کد وسیله'),
+              ),
               const SizedBox(height: 16),
-              TextField(controller: _payload, textDirection: TextDirection.ltr,
-                autocorrect: false, enableSuggestions: false,
-                decoration: const InputDecoration(labelText: 'متن کد QR', hintText: 'MT:…', helperText: 'اگر متن QR را داری، اینجا وارد کن.')),
+              TextField(
+                controller: _payload,
+                textDirection: TextDirection.ltr,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  labelText: 'متن کد QR',
+                  hintText: 'MT:…',
+                  helperText: 'اگر متن QR را داری، اینجا وارد کن.',
+                ),
+              ),
             ],
             if (_step == 1) ...<Widget>[
               const Icon(Icons.bluetooth_searching, size: 64),
               const SizedBox(height: 16),
               const Text('وسیله روشن باشد و گوشی نزدیک آن بماند.'),
               const SizedBox(height: 16),
-              const Text('طبق راهنمای وسیله، آن را در حالت اتصال قرار بده. بازنشانی کارخانه با حالت اتصال فرق دارد.'),
+              const Text(
+                'طبق راهنمای وسیله، آن را در حالت اتصال قرار بده. بازنشانی کارخانه با حالت اتصال فرق دارد.',
+              ),
               const SizedBox(height: 16),
-              const Text('بلوتوث و وای‌فای را روشن کن. هنگام درخواست دسترسی به دستگاه‌های نزدیک، اجازه بده؛ در نسخه‌های قدیمی Android ممکن است اجازهٔ موقعیت لازم باشد.'),
+              const Text(
+                'بلوتوث و وای‌فای را روشن کن. هنگام درخواست دسترسی به دستگاه‌های نزدیک، اجازه بده؛ در نسخه‌های قدیمی Android ممکن است اجازهٔ موقعیت لازم باشد.',
+              ),
             ],
             if (_step == 2) ...<Widget>[
-              const Text('نام و رمز شبکه‌ای را وارد کن که وسیله باید به آن وصل شود.'),
+              const Text(
+                'نام و رمز شبکه‌ای را وارد کن که وسیله باید به آن وصل شود.',
+              ),
               const SizedBox(height: 20),
-              TextField(controller: _ssid, enabled: !_adding && _pendingDevice == null,
-                textDirection: TextDirection.ltr, autocorrect: false, enableSuggestions: false,
-                decoration: const InputDecoration(labelText: 'نام وای‌فای')),
+              TextField(
+                controller: _ssid,
+                enabled: !_adding && _pendingDevice == null,
+                textDirection: TextDirection.ltr,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(labelText: 'نام وای‌فای'),
+              ),
               const SizedBox(height: 16),
-              TextField(controller: _password, enabled: !_adding && _pendingDevice == null,
-                textDirection: TextDirection.ltr, obscureText: !_showPassword,
-                autocorrect: false, enableSuggestions: false,
-                decoration: InputDecoration(labelText: 'رمز وای‌فای', suffixIcon: IconButton(
-                  tooltip: _showPassword ? 'پنهان‌کردن رمز' : 'نمایش رمز',
-                  onPressed: () => setState(() => _showPassword = !_showPassword),
-                  icon: Icon(_showPassword ? Icons.visibility_off : Icons.visibility)))),
+              TextField(
+                controller: _password,
+                enabled: !_adding && _pendingDevice == null,
+                textDirection: TextDirection.ltr,
+                obscureText: !_showPassword,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: 'رمز وای‌فای',
+                  suffixIcon: IconButton(
+                    tooltip: _showPassword ? 'پنهان‌کردن رمز' : 'نمایش رمز',
+                    onPressed: () =>
+                        setState(() => _showPassword = !_showPassword),
+                    icon: Icon(
+                      _showPassword ? Icons.visibility_off : Icons.visibility,
+                    ),
+                  ),
+                ),
+              ),
               const SizedBox(height: 20),
-              TextField(controller: _name, enabled: !_adding && _pendingDevice == null,
-                decoration: const InputDecoration(labelText: 'نام وسیله', helperText: 'مثلاً کلید پذیرایی')),
+              TextField(
+                controller: _name,
+                enabled: !_adding && _pendingDevice == null,
+                decoration: const InputDecoration(
+                  labelText: 'نام وسیله',
+                  helperText: 'مثلاً کلید پذیرایی',
+                ),
+              ),
               const SizedBox(height: 20),
               if (_adding) const LinearProgressIndicator(),
               const SizedBox(height: 12),
@@ -1218,13 +1311,25 @@ final class _DirectMatterAddDeviceScreenState
             ],
             const SizedBox(height: 24),
             if (_step < 2)
-              OutlinedButton(onPressed: _next, child: const Padding(
-                padding: EdgeInsets.all(14), child: Text('ادامه')))
+              OutlinedButton(
+                onPressed: _next,
+                child: const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: Text('ادامه'),
+                ),
+              )
             else
               FilledButton.icon(
                 onPressed: _adding ? null : _commission,
                 icon: const Icon(Icons.add_link),
-                label: Text(_adding ? 'در حال اتصال…' : _pendingDevice != null ? 'ذخیرهٔ دوباره' : 'اتصال وسیله')),
+                label: Text(
+                  _adding
+                      ? 'در حال اتصال…'
+                      : _pendingDevice != null
+                      ? 'ذخیرهٔ دوباره'
+                      : 'اتصال وسیله',
+                ),
+              ),
           ],
         ),
       ),
@@ -1237,13 +1342,22 @@ final class _MatterErrorNotice extends StatelessWidget {
   final String error;
 
   String get message {
-    if (error.contains('matter_ble_failed')) return 'وسیله پیدا نشد. نزدیک آن بمان و حالت اتصال و بلوتوث را بررسی کن.';
-    if (error.startsWith('Remove failed')) return 'حذف تأیید نشد. وسیله در فهرست باقی مانده؛ اتصال آن را بررسی کن و دوباره تلاش کن.';
-    if (error.startsWith('Command failed')) return 'تغییر وضعیت تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
-    if (error.startsWith('Could not save discovered channels')) return 'کنترل‌های تازه پیدا شدند، اما ذخیره نشدند. دوباره وضعیت را بررسی کن.';
-    if (error.startsWith('Could not refresh') || error.startsWith('Realtime')) return 'وضعیت تازه دریافت نشد. برق وسیله و اتصال به وای‌فای خانه را بررسی کن.';
-    if (error.contains('initialization') || error.contains('not available')) return 'ارتباط مانیسا راه‌اندازی نشد. اپ را ببند و دوباره باز کن.';
-    if (error.contains('PlatformException') || error.contains('Exception') || error.contains('Error')) return 'این مرحله کامل نشد. اتصال و دسترسی‌ها را بررسی کن و دوباره تلاش کن.';
+    if (error.contains('matter_ble_failed'))
+      return 'وسیله پیدا نشد. نزدیک آن بمان و حالت اتصال و بلوتوث را بررسی کن.';
+    if (error.startsWith('Remove failed'))
+      return 'حذف تأیید نشد. وسیله در فهرست باقی مانده؛ اتصال آن را بررسی کن و دوباره تلاش کن.';
+    if (error.startsWith('Command failed'))
+      return 'تغییر وضعیت تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
+    if (error.startsWith('Could not save discovered channels'))
+      return 'کنترل‌های تازه پیدا شدند، اما ذخیره نشدند. دوباره وضعیت را بررسی کن.';
+    if (error.startsWith('Could not refresh') || error.startsWith('Realtime'))
+      return 'وضعیت تازه دریافت نشد. برق وسیله و اتصال به وای‌فای خانه را بررسی کن.';
+    if (error.contains('initialization') || error.contains('not available'))
+      return 'ارتباط مانیسا راه‌اندازی نشد. اپ را ببند و دوباره باز کن.';
+    if (error.contains('PlatformException') ||
+        error.contains('Exception') ||
+        error.contains('Error'))
+      return 'این مرحله کامل نشد. اتصال و دسترسی‌ها را بررسی کن و دوباره تلاش کن.';
     return error;
   }
 
@@ -1251,17 +1365,23 @@ final class _MatterErrorNotice extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: <Widget>[
-      Text(message, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+      Text(
+        message,
+        style: TextStyle(color: Theme.of(context).colorScheme.error),
+      ),
       if (message != error)
         ExpansionTile(
           tilePadding: EdgeInsets.zero,
           title: const Text('جزئیات برای پشتیبانی'),
-          children: <Widget>[SelectableText(
-            // Native exception messages can contain setup data; expose only
-            // the error code, never Wi-Fi credentials or onboarding payloads.
-            RegExp(r'matter_[a-z_]+').firstMatch(error)?.group(0) ?? 'connection_failed',
-            textDirection: TextDirection.ltr,
-          )],
+          children: <Widget>[
+            SelectableText(
+              // Native exception messages can contain setup data; expose only
+              // the error code, never Wi-Fi credentials or onboarding payloads.
+              RegExp(r'matter_[a-z_]+').firstMatch(error)?.group(0) ??
+                  'connection_failed',
+              textDirection: TextDirection.ltr,
+            ),
+          ],
         ),
     ],
   );
@@ -1346,8 +1466,9 @@ final class _RoomNameDialog extends StatefulWidget {
 }
 
 final class _RoomNameDialogState extends State<_RoomNameDialog> {
-  late final TextEditingController _name =
-      TextEditingController(text: widget.initialName);
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initialName,
+  );
   String? _error;
 
   @override
@@ -1374,30 +1495,27 @@ final class _RoomNameDialogState extends State<_RoomNameDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.title),
-        content: TextField(
-          controller: _name,
-          autofocus: true,
-          maxLength: 40,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _submit(),
-          decoration: InputDecoration(
-            labelText: 'نام اتاق',
-            helperText: 'مثلاً پذیرایی یا اتاق خواب',
-            errorText: _error,
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('انصراف'),
-          ),
-          FilledButton(
-            onPressed: _submit,
-            child: Text(widget.actionLabel),
-          ),
-        ],
-      );
+    title: Text(widget.title),
+    content: TextField(
+      controller: _name,
+      autofocus: true,
+      maxLength: 40,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => _submit(),
+      decoration: InputDecoration(
+        labelText: 'نام اتاق',
+        helperText: 'مثلاً پذیرایی یا اتاق خواب',
+        errorText: _error,
+      ),
+    ),
+    actions: <Widget>[
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('انصراف'),
+      ),
+      FilledButton(onPressed: _submit, child: Text(widget.actionLabel)),
+    ],
+  );
 }
 
 final class _HomeNameDialog extends StatefulWidget {
@@ -1410,8 +1528,9 @@ final class _HomeNameDialog extends StatefulWidget {
 }
 
 final class _HomeNameDialogState extends State<_HomeNameDialog> {
-  late final TextEditingController _name =
-      TextEditingController(text: widget.initialName);
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initialName,
+  );
   String? _error;
 
   @override
@@ -1431,30 +1550,27 @@ final class _HomeNameDialogState extends State<_HomeNameDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: const Text('نام خانه'),
-        content: TextField(
-          controller: _name,
-          autofocus: true,
-          maxLength: 40,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _submit(),
-          decoration: InputDecoration(
-            labelText: 'نام خانه',
-            helperText: 'مثلاً خانهٔ ما',
-            errorText: _error,
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('انصراف'),
-          ),
-          FilledButton(
-            onPressed: _submit,
-            child: const Text('ذخیره'),
-          ),
-        ],
-      );
+    title: const Text('نام خانه'),
+    content: TextField(
+      controller: _name,
+      autofocus: true,
+      maxLength: 40,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => _submit(),
+      decoration: InputDecoration(
+        labelText: 'نام خانه',
+        helperText: 'مثلاً خانهٔ ما',
+        errorText: _error,
+      ),
+    ),
+    actions: <Widget>[
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('انصراف'),
+      ),
+      FilledButton(onPressed: _submit, child: const Text('ذخیره')),
+    ],
+  );
 }
 
 final class _RenameDeviceDialog extends StatefulWidget {
@@ -1467,7 +1583,9 @@ final class _RenameDeviceDialog extends StatefulWidget {
 }
 
 final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
-  late final TextEditingController _name = TextEditingController(text: widget.initialName);
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initialName,
+  );
   bool _saving = false;
   String? _error;
 
@@ -1484,17 +1602,21 @@ final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
       setState(() => _error = 'یک نام برای وسیله بنویس.');
       return;
     }
-    setState(() { _saving = true; _error = null; });
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     try {
       await widget.onSave(name);
       if (!mounted) return;
       setState(() => _saving = false);
       Navigator.of(context).pop();
     } catch (_) {
-      if (mounted) setState(() {
-        _saving = false;
-        _error = 'نام ذخیره نشد. دوباره تلاش کن.';
-      });
+      if (mounted)
+        setState(() {
+          _saving = false;
+          _error = 'نام ذخیره نشد. دوباره تلاش کن.';
+        });
     }
   }
 
@@ -1549,12 +1671,20 @@ final class _ChannelNamesDialog extends StatefulWidget {
 }
 
 final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
-  late final Map<int, TextEditingController> _names = <int, TextEditingController>{
-    for (var index = 0; index < widget.device.onOffEndpoints.length; index++)
-      widget.device.onOffEndpoints[index]: TextEditingController(
-        text: widget.device.channelName(widget.device.onOffEndpoints[index], index),
-      ),
-  };
+  late final Map<int, TextEditingController> _names =
+      <int, TextEditingController>{
+        for (
+          var index = 0;
+          index < widget.device.onOffEndpoints.length;
+          index++
+        )
+          widget.device.onOffEndpoints[index]: TextEditingController(
+            text: widget.device.channelName(
+              widget.device.onOffEndpoints[index],
+              index,
+            ),
+          ),
+      };
   bool _saving = false;
   int? _testing;
   String? _error;
@@ -1578,23 +1708,30 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
       }
       names[entry.key] = name;
     }
-    setState(() { _saving = true; _error = null; });
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     try {
       await widget.onSave(names);
       if (!mounted) return;
       setState(() => _saving = false);
       Navigator.of(context).pop();
     } catch (_) {
-      if (mounted) setState(() {
-        _saving = false;
-        _error = 'نام خروجی‌ها ذخیره نشد. دوباره تلاش کن.';
-      });
+      if (mounted)
+        setState(() {
+          _saving = false;
+          _error = 'نام خروجی‌ها ذخیره نشد. دوباره تلاش کن.';
+        });
     }
   }
 
   Future<void> _test(int endpoint) async {
     if (_saving || _testing != null || !widget.canTest(endpoint)) return;
-    setState(() { _testing = endpoint; _error = null; });
+    setState(() {
+      _testing = endpoint;
+      _error = null;
+    });
     await widget.onTest(endpoint);
     if (mounted) setState(() => _testing = null);
   }
@@ -1608,9 +1745,15 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const Text('هر نام به خروجی واقعی دستگاه متصل می‌ماند. برای شناسایی، خودت می‌توانی خروجی را امتحان کنی.'),
+            const Text(
+              'هر نام به خروجی واقعی دستگاه متصل می‌ماند. برای شناسایی، خودت می‌توانی خروجی را امتحان کنی.',
+            ),
             const SizedBox(height: 16),
-            for (var index = 0; index < widget.device.onOffEndpoints.length; index++) ...<Widget>[
+            for (
+              var index = 0;
+              index < widget.device.onOffEndpoints.length;
+              index++
+            ) ...<Widget>[
               TextField(
                 controller: _names[widget.device.onOffEndpoints[index]],
                 enabled: !_saving && _testing == null,
@@ -1620,8 +1763,10 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
               Align(
                 alignment: AlignmentDirectional.centerStart,
                 child: TextButton.icon(
-                  onPressed: widget.canTest(widget.device.onOffEndpoints[index]) &&
-                          !_saving && _testing == null
+                  onPressed:
+                      widget.canTest(widget.device.onOffEndpoints[index]) &&
+                          !_saving &&
+                          _testing == null
                       ? () => _test(widget.device.onOffEndpoints[index])
                       : null,
                   icon: _testing == widget.device.onOffEndpoints[index]
@@ -1630,21 +1775,28 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.power_settings_new),
-                  label: Text(_testing == widget.device.onOffEndpoints[index]
-                      ? 'در حال امتحان…'
-                      : 'امتحان این خروجی'),
+                  label: Text(
+                    _testing == widget.device.onOffEndpoints[index]
+                        ? 'در حال امتحان…'
+                        : 'امتحان این خروجی',
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
             ],
             if (_error != null)
-              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
           ],
         ),
       ),
       actions: <Widget>[
         TextButton(
-          onPressed: _saving || _testing != null ? null : () => Navigator.of(context).pop(),
+          onPressed: _saving || _testing != null
+              ? null
+              : () => Navigator.of(context).pop(),
           child: const Text('انصراف'),
         ),
         FilledButton(
