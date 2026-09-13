@@ -240,6 +240,6 @@
 - Runner برای هر benchmark، median، p95، max و success-rate می‌سازد و نمونه ناقص را قبولی اعلام نمی‌کند.
 - `timeline.jsonl` رخدادهای Runner را با UTC و elapsed monotonic ثبت می‌کند؛ `--device-log-file` فقط بخش افزوده‌شدهٔ لاگ فریمور در زمان run را برای تطبیق ذخیره می‌کند.
 - زمان‌گیری فعلی هدایت‌شده و شامل واکنش اپراتور است؛ latency داخلی Matter محسوب نمی‌شود.
-- M1-C16 — تأیید CI: compile، رابط CLI و ۱۱ تست واحد محاسبات، نمونه ناقص، redaction و log slicing در [اجرای 34746546289](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34746546289) موفق‌اند.
+- M1-C16 — تأیید CI: compile، رابط CLI و ۱۱ تست واحد محاسبات، نمونه ناقص، redaction و log slicing در [اجرای 34746610676](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34746610676) موفق‌اند.
 - تست‌های P01/P02/P03 هنوز روی گوشی و device واقعی اجرا نشده‌اند و در وضعیت «در انتظار تست» باقی می‌مانند.
 - گام بعدی ثبت‌شده: اجرای T09/T10/T11 و P01 روی سخت‌افزار؛ سپس رفع هر failure مشاهده‌شده و اجرای P02/P03.
