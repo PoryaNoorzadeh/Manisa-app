@@ -296,9 +296,9 @@ Do not commit real production pairing codes, Wi-Fi credentials, device setup cod
 
 ## Current status
 
-The project has moved beyond initial M0 scaffolding. The Go Core, storage, versioned API, capability model, Matter adapter boundary, realtime state path, local pairing, Flutter application foundation, QR onboarding, and Direct Matter Android validation build are now in place.
+M0 Foundation is complete. The M1 Direct Matter controller is integrated into the branded Persian Flutter app; real-hardware commissioning, app-to-device On/Off control, device removal/recommissioning and state recovery after reopening the app have been demonstrated. Automated coverage also protects startup recovery, retry behavior and per-device error isolation.
 
-The immediate engineering target is **M1 First Light on real hardware**: commission the prepared Matter-over-Wi-Fi touch switch from Android, identify its endpoint layout, and validate reliable per-gang On/Off control. After that, the same direct Matter-controller capability will be integrated into the branded Manisa mobile application so the phone can operate Matter-over-Wi-Fi devices without requiring a Hub when that product mode is desired.
+The immediate engineering target is **M1 stabilization and acceptance evidence**. The remaining gate is the versioned hardware test suite: physical-touch state propagation, every endpoint-to-relay mapping, Wi-Fi/power/restart recovery, offline behavior and the P01–P03 performance measurements. The canonical status and pending queue live in `docs/testing/M1-test-register.md`; M2 does not start until the essential M1 exit tests have evidence.
 
 ## License / development status
 
