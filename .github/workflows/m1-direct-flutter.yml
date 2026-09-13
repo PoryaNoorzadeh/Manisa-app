@@ -192,6 +192,8 @@ jobs:
           - Clear on, off, pending and unavailable states
           - Persistent device and per-output naming
           - Output names bound to stable Matter endpoints
+          - Local room creation, rename, delete and device assignment
+          - Backward-compatible migration of existing unassigned devices
           - Explicit output test action during naming
           - Supplied Manisa launcher icon
           Manual Matter hardware acceptance is tracked in docs/testing/M1-test-register.md.
