@@ -235,9 +235,9 @@ void main() {
     await tester.pumpAndSettle();
     final initialReads = controller.readCalls;
 
-    await tester.binding
+    tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.binding
+    tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
 
@@ -260,16 +260,16 @@ void main() {
     final initialReads = controller.readCalls;
     controller.pendingRead = Completer<bool>();
 
-    await tester.binding
+    tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.binding
+    tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(controller.readCalls, initialReads + 1);
 
-    await tester.binding
+    tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.binding
+    tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(controller.readCalls, initialReads + 1);
@@ -345,6 +345,8 @@ class _Controller implements DirectMatterController {
   final bool initializationFails;
   final discovery = Completer<List<int>>();
   final removal = Completer<void>();
+  // Test fixture stream lives for the duration of its widget test.
+  // ignore: close_sinks
   final events = StreamController<DirectMatterOnOffEvent>.broadcast();
 
   @override
