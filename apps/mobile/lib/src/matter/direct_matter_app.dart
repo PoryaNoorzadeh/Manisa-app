@@ -621,11 +621,9 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
             ),
             if (error != null) ...<Widget>[
               const SizedBox(height: 8),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
+              Material(
+                color: Theme.of(context).colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(12),
                 child: Padding(
                   padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 8, 8),
                   child: Row(
