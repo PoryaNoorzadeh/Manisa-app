@@ -13,14 +13,12 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import shutil
-import signal
 import subprocess
 import sys
-from typing import Callable, Iterable, Sequence
+from typing import Sequence
 
 RUNNER_VERSION = "0.1.0"
 PACKAGE_NAME = "com.manisa.manisa_mobile"
@@ -307,7 +305,7 @@ def write_report(path: Path, metadata: dict[str, object], results: list[dict[str
         f"- پایان: `{metadata.get('finished_at', 'در حال اجرا')}`",
         f"- APK: `{metadata['apk_filename']}`",
         f"- SHA-256: `{metadata['apk_sha256']}`",
-        f"- ADB serial: `{metadata['adb_serial']}`",
+        f"- شناسه گوشی: `{metadata['adb_device_id']}`,
         f"- گوشی: {metadata.get('manufacturer', '')} {metadata.get('model', '')}".rstrip(),
         f"- Android: `{metadata.get('android_version', '')}` (SDK {metadata.get('android_sdk', '')})",
         f"- نسخه نصب‌شده: `{metadata.get('installed_version', 'unknown')}`",
@@ -417,11 +415,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "runner_version": RUNNER_VERSION,
         "run_id": run_id,
         "started_at": iso_utc(started_at),
-        "apk_path": str(apk),
         "apk_filename": apk.name,
         "apk_size_bytes": apk.stat().st_size,
         "apk_sha256": sha256_file(apk),
-        "adb_serial": serial,
+        "adb_device_id": hashlib.sha256(serial.encode("utf-8")).hexdigest()[:12],
         "manufacturer": adb.property("ro.product.manufacturer"),
         "model": adb.property("ro.product.model"),
         "android_version": adb.property("ro.build.version.release"),
@@ -470,12 +467,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_json(output / "results.json", results)
             write_report(output / f"{run_id}-report.md", metadata, results)
     finally:
-        log_process.send_signal(signal.SIGINT)
-        try:
-            log_process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+        if log_process.poll() is None:
             log_process.terminate()
-            log_process.wait(timeout=5)
+            try:
+                log_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                log_process.kill()
+                log_process.wait(timeout=5)
         log_handle.close()
 
     metadata["finished_at"] = iso_utc(utc_now())
