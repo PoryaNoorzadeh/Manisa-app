@@ -61,7 +61,8 @@ final class DirectMatterHomeScreen extends StatefulWidget {
   State<DirectMatterHomeScreen> createState() => _DirectMatterHomeScreenState();
 }
 
-final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
+final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
+    with WidgetsBindingObserver {
   List<DirectMatterDevice> _devices = const <DirectMatterDevice>[];
   final Map<String, bool> _states = <String, bool>{};
   final Set<String> _busy = <String>{};
@@ -73,18 +74,36 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
   bool _loading = true;
   bool _editingMetadata = false;
   bool _retrying = false;
+  DateTime? _lastResumeRefresh;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initialize();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_events?.cancel());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || _loading || _devices.isEmpty) {
+      return;
+    }
+    final now = DateTime.now();
+    final previous = _lastResumeRefresh;
+    if (previous != null &&
+        now.difference(previous) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastResumeRefresh = now;
+    unawaited(_refreshAllStates());
   }
 
   String _stateKey(int nodeId, int endpoint) => '$nodeId:$endpoint';
@@ -231,6 +250,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
         ..._devices.where((item) => item.nodeId != device.nodeId),
         device,
       ];
+      _unavailableNodes.remove(device.nodeId);
     });
     await _refreshAllStates();
   }
@@ -293,6 +313,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
             await _setOnOff(device, endpoint, !state);
           },
           canTest: (endpoint) =>
+              !_unavailableNodes.contains(device.nodeId) &&
               _states[_stateKey(device.nodeId, endpoint)] != null &&
               !_busy.contains(_stateKey(device.nodeId, endpoint)),
           onSave: (names) async {
@@ -379,6 +400,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
           _devices = _devices
               .where((item) => item.nodeId != device.nodeId)
               .toList(growable: false);
+          _unavailableNodes.remove(device.nodeId);
           for (final endpoint in device.onOffEndpoints) {
             _states.remove(_stateKey(device.nodeId, endpoint));
           }
