@@ -225,15 +225,127 @@ void main() {
   });
 
 
+  testWidgets('resuming the app refreshes saved Matter state', (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+    ));
+    await tester.pumpAndSettle();
+    final initialReads = controller.readCalls;
+
+    await tester.binding
+        .handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.binding
+        .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(controller.readCalls, initialReads + 1);
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      isTrue,
+    );
+  });
+
+  testWidgets('rapid resume events do not start concurrent node refreshes',
+      (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+    ));
+    await tester.pumpAndSettle();
+    final initialReads = controller.readCalls;
+    controller.pendingRead = Completer<bool>();
+
+    await tester.binding
+        .handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.binding
+        .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(controller.readCalls, initialReads + 1);
+
+    await tester.binding
+        .handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.binding
+        .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(controller.readCalls, initialReads + 1);
+
+    controller.pendingRead!.complete(true);
+    controller.pendingRead = null;
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('late event from a removed device is ignored', (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('حذف وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'حذف وسیله'));
+    await tester.pump();
+    controller.removal.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Saved switch'), findsNothing);
+
+    controller.events.add(const DirectMatterOnOffEvent(
+      nodeId: 7,
+      endpoint: 1,
+      value: false,
+    ));
+    await tester.pump();
+
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('failed command never shows an unconfirmed state', (tester) async {
+    final controller = _Controller()..commandFails = true;
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+    ));
+    await tester.pumpAndSettle();
+
+    final control =
+        tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    expect(control.value, isTrue);
+    control.onChanged!(false);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('تغییر وضعیت تأیید نشد'), findsOneWidget);
+    final afterFailure =
+        tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    expect(afterFailure.value, isTrue);
+    expect(afterFailure.onChanged, isNull);
+  });
+
+
 }
 
 class _Controller implements DirectMatterController {
   _Controller({this.initializationFails = false, this.readFails = false});
   bool readFails;
+  bool commandFails = false;
+  Completer<bool>? pendingRead;
+  int readCalls = 0;
 
   final bool initializationFails;
   final discovery = Completer<List<int>>();
   final removal = Completer<void>();
+  final events = StreamController<DirectMatterOnOffEvent>.broadcast();
 
   @override
   Future<void> removeDevice(int nodeId) => removal.future;
@@ -251,7 +363,7 @@ class _Controller implements DirectMatterController {
   }
 
   @override
-  Stream<DirectMatterOnOffEvent> watchOnOff() => const Stream.empty();
+  Stream<DirectMatterOnOffEvent> watchOnOff() => events.stream;
 
   @override
   Future<List<int>> discoverOnOffEndpoints(int nodeId) {
@@ -261,8 +373,22 @@ class _Controller implements DirectMatterController {
 
   @override
   Future<bool> readOnOff({required int nodeId, required int endpoint}) async {
+    readCalls++;
+    final pending = pendingRead;
+    if (pending != null) return pending.future;
     if (readFails) throw PlatformException(code: 'matter_read_failed');
     return true;
+  }
+
+  @override
+  Future<void> setOnOff({
+    required int nodeId,
+    required int endpoint,
+    required bool value,
+  }) async {
+    if (commandFails) {
+      throw PlatformException(code: 'matter_command_failed');
+    }
   }
 
   @override
