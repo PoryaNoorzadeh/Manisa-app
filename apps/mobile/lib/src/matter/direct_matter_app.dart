@@ -70,6 +70,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   final Set<int> _refreshingNodes = <int>{};
   final Set<int> _removingNodes = <int>{};
   final Set<int> _unavailableNodes = <int>{};
+  final Map<int, String> _deviceErrors = <int, String>{};
   static const _readTimeout = Duration(seconds: 15);
   bool _loading = true;
   bool _editingMetadata = false;
@@ -123,9 +124,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           setState(() {
             _states[_stateKey(event.nodeId, event.endpoint)] = event.value;
             _unavailableNodes.remove(event.nodeId);
-            if (_error?.startsWith('Could not refresh') ?? false) {
-              _error = null;
-            }
+            _deviceErrors.remove(event.nodeId);
           });
         },
         onError: (Object error, StackTrace stackTrace) {
@@ -151,68 +150,84 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       _devices.any((device) => device.nodeId == nodeId);
 
   Future<void> _refreshAllStates() async {
-    for (final device in List<DirectMatterDevice>.of(_devices)) {
-      if (!_canUpdate(device.nodeId) || !_refreshingNodes.add(device.nodeId)) {
-        continue;
+    await Future.wait(
+      List<DirectMatterDevice>.of(_devices).map(_refreshDevice),
+    );
+  }
+
+  Future<void> _refreshDevice(DirectMatterDevice device) async {
+    if (!_canUpdate(device.nodeId) || !_refreshingNodes.add(device.nodeId)) {
+      return;
+    }
+    try {
+      // Known endpoints are read before discovery so a discovery failure never
+      // hides values that were already confirmed.
+      for (final endpoint in device.onOffEndpoints) {
+        final value = await widget.controller
+            .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
+            .timeout(_readTimeout);
+        if (!_canUpdate(device.nodeId)) return;
+        setState(() {
+          _states[_stateKey(device.nodeId, endpoint)] = value;
+        });
       }
-      try {
-        // Read known channels first: a subscription/discovery failure must not
-        // hide a successfully retrieved switch state.
-        for (final endpoint in device.onOffEndpoints) {
-          final value = await widget.controller.readOnOff(
-            nodeId: device.nodeId,
-            endpoint: endpoint,
-          ).timeout(_readTimeout);
-          if (!_canUpdate(device.nodeId)) break;
-          setState(() => _states[_stateKey(device.nodeId, endpoint)] = value);
-        }
-        if (!_canUpdate(device.nodeId)) continue;
-        final discovered = await widget.controller
-            .discoverOnOffEndpoints(device.nodeId).timeout(_readTimeout);
-        if (!_canUpdate(device.nodeId)) continue;
-        if (discovered.isNotEmpty &&
-            !_sameEndpoints(discovered, device.onOffEndpoints)) {
-          final index = _devices.indexWhere((item) => item.nodeId == device.nodeId);
-          setState(() {
-            final updated = List<DirectMatterDevice>.of(_devices);
-            updated[index] = updated[index].copyWith(onOffEndpoints: discovered);
-            _devices = updated;
-          });
-          try {
-            await widget.deviceStore.save(_devices[index]);
-          } catch (error) {
-            if (_canUpdate(device.nodeId)) {
-              setState(() => _error = 'Could not save discovered channels: $error');
-            }
-          }
-          for (final endpoint in discovered.where((e) => !device.onOffEndpoints.contains(e))) {
-            final value = await widget.controller.readOnOff(
-              nodeId: device.nodeId, endpoint: endpoint,
-            ).timeout(_readTimeout);
-            if (!_canUpdate(device.nodeId)) break;
-            setState(() => _states[_stateKey(device.nodeId, endpoint)] = value);
+      if (!_canUpdate(device.nodeId)) return;
+      final discovered = await widget.controller
+          .discoverOnOffEndpoints(device.nodeId)
+          .timeout(_readTimeout);
+      if (!_canUpdate(device.nodeId)) return;
+      if (discovered.isNotEmpty &&
+          !_sameEndpoints(discovered, device.onOffEndpoints)) {
+        final index =
+            _devices.indexWhere((item) => item.nodeId == device.nodeId);
+        if (index < 0) return;
+        setState(() {
+          final updated = List<DirectMatterDevice>.of(_devices);
+          updated[index] =
+              updated[index].copyWith(onOffEndpoints: discovered);
+          _devices = updated;
+        });
+        try {
+          await widget.deviceStore.save(_devices[index]);
+        } catch (error) {
+          if (_canUpdate(device.nodeId)) {
+            setState(() {
+              _deviceErrors[device.nodeId] =
+                  'Could not save discovered channels: $error';
+            });
           }
         }
-        if (_canUpdate(device.nodeId)) {
+        for (final endpoint
+            in discovered.where((e) => !device.onOffEndpoints.contains(e))) {
+          final value = await widget.controller
+              .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
+              .timeout(_readTimeout);
+          if (!_canUpdate(device.nodeId)) return;
           setState(() {
-            _unavailableNodes.remove(device.nodeId);
-            if (_error?.startsWith('Could not refresh ${device.name}:') ?? false) {
-              _error = null;
-            }
+            _states[_stateKey(device.nodeId, endpoint)] = value;
           });
         }
-      } catch (error) {
-        if (_canUpdate(device.nodeId)) {
-          setState(() {
-            // Keep the last confirmed values visible for context, but mark the
-            // node unavailable so stale values cannot be controlled as live.
-            _unavailableNodes.add(device.nodeId);
-            _error = 'Could not refresh ${device.name}: $error';
-          });
-        }
-      } finally {
-        _refreshingNodes.remove(device.nodeId);
       }
+      if (_canUpdate(device.nodeId)) {
+        setState(() {
+          _unavailableNodes.remove(device.nodeId);
+          if (!(_deviceErrors[device.nodeId]
+                  ?.startsWith('Could not save discovered channels') ??
+              false)) {
+            _deviceErrors.remove(device.nodeId);
+          }
+        });
+      }
+    } catch (error) {
+      if (_canUpdate(device.nodeId)) {
+        setState(() {
+          _unavailableNodes.add(device.nodeId);
+          _deviceErrors[device.nodeId] =
+              'Could not refresh ${device.name}: $error';
+        });
+      }
+    } finally {
+      _refreshingNodes.remove(device.nodeId);
     }
   }
 
@@ -251,6 +266,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         device,
       ];
       _unavailableNodes.remove(device.nodeId);
+      _deviceErrors.remove(device.nodeId);
     });
     await _refreshAllStates();
   }
@@ -264,7 +280,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     if (_busy.contains(key) || !_canUpdate(device.nodeId)) return;
     setState(() {
       _busy.add(key);
-      _error = null;
+      _deviceErrors.remove(device.nodeId);
     });
     try {
       await widget.controller.setOnOff(
@@ -280,13 +296,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         setState(() {
           _states[key] = confirmed;
           _unavailableNodes.remove(device.nodeId);
+          _deviceErrors.remove(device.nodeId);
         });
       }
     } catch (error) {
       if (mounted) {
         setState(() {
           _unavailableNodes.add(device.nodeId);
-          _error = 'Command failed: $error';
+          _deviceErrors[device.nodeId] = 'Command failed: $error';
         });
       }
     } finally {
@@ -383,7 +400,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     if (confirmed != true || !mounted || _removingNodes.contains(device.nodeId)) return;
     setState(() {
       _removingNodes.add(device.nodeId);
-      _error = null;
+      _deviceErrors.remove(device.nodeId);
       for (final endpoint in device.onOffEndpoints) {
         _busy.add(_stateKey(device.nodeId, endpoint));
       }
@@ -401,6 +418,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               .where((item) => item.nodeId != device.nodeId)
               .toList(growable: false);
           _unavailableNodes.remove(device.nodeId);
+          _deviceErrors.remove(device.nodeId);
           for (final endpoint in device.onOffEndpoints) {
             _states.remove(_stateKey(device.nodeId, endpoint));
           }
@@ -408,7 +426,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _error = 'Remove failed: $error');
+        setState(() {
+          _deviceErrors[device.nodeId] = 'Remove failed: $error';
+        });
       }
     } finally {
       if (mounted) {
@@ -485,6 +505,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                           device: device,
                           states: _states,
                           busy: _busy,
+                          error: _deviceErrors[device.nodeId],
                           unavailable:
                               _unavailableNodes.contains(device.nodeId),
                           onChanged: (endpoint, value) =>
@@ -492,7 +513,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                           onRemove: () => _removeDevice(device),
                           onRename: () => _renameDevice(device),
                           onManageChannels: () => _manageChannels(device),
-                          onRefresh: _refreshAllStates,
+                          onRefresh: () => _refreshDevice(device),
                         ),
                       ),
                 ],
@@ -535,6 +556,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.device,
     required this.states,
     required this.busy,
+    required this.error,
     required this.unavailable,
     required this.onChanged,
     required this.onRemove,
@@ -546,6 +568,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final DirectMatterDevice device;
   final Map<String, bool> states;
   final Set<String> busy;
+  final String? error;
   final bool unavailable;
   final void Function(int endpoint, bool value) onChanged;
   final VoidCallback onRemove;
@@ -596,6 +619,27 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (error != null) ...<Widget>[
+              const SizedBox(height: 8),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 8, 8),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(child: _MatterErrorNotice(error: error!)),
+                      TextButton(
+                        onPressed: onRefresh,
+                        child: const Text('تلاش دوباره'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             if (device.onOffEndpoints.isEmpty)
               TextButton(onPressed: onRefresh, child: const Text('دریافت کنترل‌های وسیله')),
