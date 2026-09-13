@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_app.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
+import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
@@ -452,6 +453,87 @@ void main() {
     expect(find.text('Saved switch'), findsOneWidget);
   });
 
+  testWidgets('renames the home and restores it after reopen', (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    final homeStore = _MemoryHomeStore();
+
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+      homeStore: homeStore,
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('خانهٔ من'), findsOneWidget);
+    await tester.tap(find.byTooltip('تغییر نام خانه'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'خانهٔ پوریا');
+    await tester.tap(find.widgetWithText(FilledButton, 'ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('خانهٔ پوریا'), findsOneWidget);
+    expect(homeStore.profile.name, 'خانهٔ پوریا');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _Store(),
+      homeStore: homeStore,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('خانهٔ پوریا'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('moves a room down and keeps the order after reopen',
+      (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    final roomStore = _MemoryRoomStore(
+      catalog: const RoomCatalog(
+        rooms: <ManisaRoom>[
+          ManisaRoom(id: 'living', name: 'پذیرایی'),
+          ManisaRoom(id: 'bedroom', name: 'اتاق خواب'),
+        ],
+      ),
+    );
+
+    Future<void> showApp() => tester.pumpWidget(ManisaDirectApp(
+          controller: controller,
+          deviceStore: _Store(),
+          roomStore: roomStore,
+        ));
+
+    await showApp();
+    await tester.pumpAndSettle();
+    var titles = tester
+        .widgetList<Text>(find.textContaining(RegExp('پذیرایی|اتاق خواب')))
+        .map((text) => text.data)
+        .whereType<String>()
+        .toList();
+    expect(titles.indexOf('پذیرایی'), lessThan(titles.indexOf('اتاق خواب')));
+
+    await tester.tap(find.byTooltip('تنظیمات اتاق').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('انتقال به پایین'));
+    await tester.pumpAndSettle();
+    expect(roomStore.catalog.rooms.map((room) => room.id),
+        <String>['bedroom', 'living']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await showApp();
+    await tester.pumpAndSettle();
+    titles = tester
+        .widgetList<Text>(find.textContaining(RegExp('پذیرایی|اتاق خواب')))
+        .map((text) => text.data)
+        .whereType<String>()
+        .toList();
+    expect(titles.indexOf('اتاق خواب'), lessThan(titles.indexOf('پذیرایی')));
+    expect(tester.takeException(), isNull);
+  });
+
 
 }
 
@@ -593,5 +675,17 @@ class _MemoryRoomStore implements RoomStore {
   @override
   Future<void> save(RoomCatalog value) async {
     catalog = value;
+  }
+}
+
+class _MemoryHomeStore implements HomeProfileStore {
+  ManisaHomeProfile profile = const ManisaHomeProfile();
+
+  @override
+  Future<ManisaHomeProfile> load() async => profile;
+
+  @override
+  Future<void> save(ManisaHomeProfile value) async {
+    profile = value;
   }
 }
