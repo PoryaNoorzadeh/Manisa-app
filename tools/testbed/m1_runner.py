@@ -305,7 +305,7 @@ def write_report(path: Path, metadata: dict[str, object], results: list[dict[str
         f"- پایان: `{metadata.get('finished_at', 'در حال اجرا')}`",
         f"- APK: `{metadata['apk_filename']}`",
         f"- SHA-256: `{metadata['apk_sha256']}`",
-        f"- شناسه گوشی: `{metadata['adb_device_id']}`,
+        f"- شناسه گوشی: `{metadata['adb_device_id']}`",
         f"- گوشی: {metadata.get('manufacturer', '')} {metadata.get('model', '')}".rstrip(),
         f"- Android: `{metadata.get('android_version', '')}` (SDK {metadata.get('android_sdk', '')})",
         f"- نسخه نصب‌شده: `{metadata.get('installed_version', 'unknown')}`",
