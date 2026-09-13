@@ -6,18 +6,21 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
+import 'home_profile_store.dart';
 import 'room_store.dart';
 
 final class ManisaDirectApp extends StatelessWidget {
   const ManisaDirectApp({
     required this.controller,
     required this.deviceStore,
+    this.homeStore = const EmptyHomeProfileStore(),
     this.roomStore = const EmptyRoomStore(),
     super.key,
   });
 
   final DirectMatterController controller;
   final DirectDeviceStore deviceStore;
+  final HomeProfileStore homeStore;
   final RoomStore roomStore;
 
   @override
@@ -45,6 +48,7 @@ final class ManisaDirectApp extends StatelessWidget {
       home: DirectMatterHomeScreen(
         controller: controller,
         deviceStore: deviceStore,
+        homeStore: homeStore,
         roomStore: roomStore,
       ),
     );
@@ -55,12 +59,14 @@ final class DirectMatterHomeScreen extends StatefulWidget {
   const DirectMatterHomeScreen({
     required this.controller,
     required this.deviceStore,
+    required this.homeStore,
     required this.roomStore,
     super.key,
   });
 
   final DirectMatterController controller;
   final DirectDeviceStore deviceStore;
+  final HomeProfileStore homeStore;
   final RoomStore roomStore;
 
   @override
@@ -71,6 +77,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     with WidgetsBindingObserver {
   List<DirectMatterDevice> _devices = const <DirectMatterDevice>[];
   RoomCatalog _roomCatalog = const RoomCatalog();
+  ManisaHomeProfile _homeProfile = const ManisaHomeProfile();
   final Map<String, bool> _states = <String, bool>{};
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
@@ -125,13 +132,16 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       final loaded = await Future.wait<Object>(<Future<Object>>[
         widget.deviceStore.load(),
         widget.roomStore.load(),
+        widget.homeStore.load(),
       ]);
       final devices = loaded[0] as List<DirectMatterDevice>;
       final roomCatalog = loaded[1] as RoomCatalog;
+      final homeProfile = loaded[2] as ManisaHomeProfile;
       if (!mounted) return;
       setState(() {
         _devices = devices;
         _roomCatalog = roomCatalog;
+        _homeProfile = homeProfile;
       });
       _events = widget.controller.watchOnOff().listen(
         (event) {
@@ -399,6 +409,40 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     );
   }
 
+  Future<void> _renameHome() async {
+    if (_editingMetadata) return;
+    setState(() => _editingMetadata = true);
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (_) => _HomeNameDialog(initialName: _homeProfile.name),
+      );
+      if (name == null || !mounted) return;
+      final next = _homeProfile.rename(name);
+      await widget.homeStore.save(next);
+      if (mounted) setState(() => _homeProfile = next);
+    } catch (_) {
+      _showMetadataError();
+    } finally {
+      if (mounted) setState(() => _editingMetadata = false);
+    }
+  }
+
+  Future<void> _moveRoom(ManisaRoom room, int offset) async {
+    if (_editingMetadata) return;
+    final next = _roomCatalog.moveRoom(room.id, offset);
+    if (identical(next, _roomCatalog)) return;
+    setState(() => _editingMetadata = true);
+    try {
+      await widget.roomStore.save(next);
+      if (mounted) setState(() => _roomCatalog = next);
+    } catch (_) {
+      _showMetadataError();
+    } finally {
+      if (mounted) setState(() => _editingMetadata = false);
+    }
+  }
+
   Future<ManisaRoom?> _createRoom() async {
     if (_editingMetadata) return null;
     setState(() => _editingMetadata = true);
@@ -645,6 +689,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     String? title,
     required List<DirectMatterDevice> devices,
   }) {
+    final roomIndex = room == null ? -1 : _roomCatalog.rooms.indexOf(room);
     return <Widget>[
       Padding(
         padding: const EdgeInsetsDirectional.fromSTEB(4, 16, 4, 8),
@@ -664,14 +709,28 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                 tooltip: 'تنظیمات اتاق',
                 onSelected: (value) {
                   if (value == 'rename') _renameRoom(room);
+                  if (value == 'up') _moveRoom(room, -1);
+                  if (value == 'down') _moveRoom(room, 1);
                   if (value == 'delete') _deleteRoom(room);
                 },
-                itemBuilder: (_) => const <PopupMenuEntry<String>>[
-                  PopupMenuItem(
+                itemBuilder: (_) => <PopupMenuEntry<String>>[
+                  const PopupMenuItem(
                     value: 'rename',
                     child: Text('تغییر نام اتاق'),
                   ),
                   PopupMenuItem(
+                    value: 'up',
+                    enabled: roomIndex > 0,
+                    child: const Text('انتقال به بالا'),
+                  ),
+                  PopupMenuItem(
+                    value: 'down',
+                    enabled: roomIndex >= 0 &&
+                        roomIndex < _roomCatalog.rooms.length - 1,
+                    child: const Text('انتقال به پایین'),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
                     value: 'delete',
                     child: Text('حذف اتاق'),
                   ),
@@ -739,9 +798,23 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                 children: <Widget>[
-                  Text(
-                    'خانهٔ من',
-                    style: Theme.of(context).textTheme.headlineMedium,
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          _homeProfile.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.headlineMedium,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'تغییر نام خانه',
+                        onPressed:
+                            _editingMetadata ? null : _renameHome,
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -1322,6 +1395,63 @@ final class _RoomNameDialogState extends State<_RoomNameDialog> {
           FilledButton(
             onPressed: _submit,
             child: Text(widget.actionLabel),
+          ),
+        ],
+      );
+}
+
+final class _HomeNameDialog extends StatefulWidget {
+  const _HomeNameDialog({required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<_HomeNameDialog> createState() => _HomeNameDialogState();
+}
+
+final class _HomeNameDialogState extends State<_HomeNameDialog> {
+  late final TextEditingController _name =
+      TextEditingController(text: widget.initialName);
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'یک نام برای خانه بنویس.');
+      return;
+    }
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('نام خانه'),
+        content: TextField(
+          controller: _name,
+          autofocus: true,
+          maxLength: 40,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _submit(),
+          decoration: InputDecoration(
+            labelText: 'نام خانه',
+            helperText: 'مثلاً خانهٔ ما',
+            errorText: _error,
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('انصراف'),
+          ),
+          FilledButton(
+            onPressed: _submit,
+            child: const Text('ذخیره'),
           ),
         ],
       );
