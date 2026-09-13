@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
+import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
   group('DirectMatterCommissionResult', () {
@@ -77,6 +78,49 @@ void main() {
       final reordered = device.copyWith(onOffEndpoints: <int>[2, 1]);
       expect(reordered.channelName(2, 0), 'چپ');
       expect(reordered.channelName(1, 1), 'راست');
+    });
+  });
+
+  group('RoomCatalog', () {
+    test('round trips rooms and device assignments', () {
+      final catalog = const RoomCatalog().addRoom(
+        const ManisaRoom(id: 'living', name: 'پذیرایی'),
+      ).assignDevice(7, 'living');
+
+      final decoded = RoomCatalog.fromJson(catalog.toJson());
+
+      expect(decoded.rooms.single.name, 'پذیرایی');
+      expect(decoded.roomIdForDevice(7), 'living');
+    });
+
+    test('migrates stale assignments to unassigned', () {
+      final decoded = RoomCatalog.fromJson(<String, Object?>{
+        'version': 1,
+        'rooms': <Object?>[
+          <String, Object?>{'id': 'living', 'name': 'پذیرایی'},
+        ],
+        'deviceRooms': <String, Object?>{
+          '7': 'deleted-room',
+          '8': 'living',
+        },
+      });
+
+      expect(decoded.roomIdForDevice(7), isNull);
+      expect(decoded.roomIdForDevice(8), 'living');
+    });
+
+    test('removing a room atomically clears its assignments', () {
+      final catalog = const RoomCatalog()
+          .addRoom(const ManisaRoom(id: 'living', name: 'پذیرایی'))
+          .assignDevice(7, 'living')
+          .removeRoom('living');
+
+      expect(catalog.rooms, isEmpty);
+      expect(catalog.roomIdForDevice(7), isNull);
+      expect(
+        () => catalog.assignDevice(7, 'missing'),
+        throwsArgumentError,
+      );
     });
   });
 }
