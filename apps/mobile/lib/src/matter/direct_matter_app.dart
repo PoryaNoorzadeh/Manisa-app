@@ -68,9 +68,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
   StreamSubscription<DirectMatterOnOffEvent>? _events;
   final Set<int> _refreshingNodes = <int>{};
   final Set<int> _removingNodes = <int>{};
+  final Set<int> _unavailableNodes = <int>{};
   static const _readTimeout = Duration(seconds: 15);
   bool _loading = true;
   bool _editingMetadata = false;
+  bool _retrying = false;
   String? _error;
 
   @override
@@ -101,6 +103,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
           if (!_canUpdate(event.nodeId)) return;
           setState(() {
             _states[_stateKey(event.nodeId, event.endpoint)] = event.value;
+            _unavailableNodes.remove(event.nodeId);
+            if (_error?.startsWith('Could not refresh') ?? false) {
+              _error = null;
+            }
           });
         },
         onError: (Object error, StackTrace stackTrace) {
@@ -168,22 +174,36 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
             setState(() => _states[_stateKey(device.nodeId, endpoint)] = value);
           }
         }
-        if (_canUpdate(device.nodeId) &&
-            (_error?.startsWith('Could not refresh ${device.name}:') ?? false)) {
-          setState(() => _error = null);
+        if (_canUpdate(device.nodeId)) {
+          setState(() {
+            _unavailableNodes.remove(device.nodeId);
+            if (_error?.startsWith('Could not refresh ${device.name}:') ?? false) {
+              _error = null;
+            }
+          });
         }
       } catch (error) {
         if (_canUpdate(device.nodeId)) {
           setState(() {
-            for (final endpoint in device.onOffEndpoints) {
-              _states.remove(_stateKey(device.nodeId, endpoint));
-            }
+            // Keep the last confirmed values visible for context, but mark the
+            // node unavailable so stale values cannot be controlled as live.
+            _unavailableNodes.add(device.nodeId);
             _error = 'Could not refresh ${device.name}: $error';
           });
         }
       } finally {
         _refreshingNodes.remove(device.nodeId);
       }
+    }
+  }
+
+  Future<void> _retryConnections() async {
+    if (_retrying) return;
+    setState(() => _retrying = true);
+    try {
+      await _refreshAllStates();
+    } finally {
+      if (mounted) setState(() => _retrying = false);
     }
   }
 
@@ -237,12 +257,15 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
         endpoint: endpoint,
       ).timeout(_readTimeout);
       if (_canUpdate(device.nodeId)) {
-        setState(() => _states[key] = confirmed);
+        setState(() {
+          _states[key] = confirmed;
+          _unavailableNodes.remove(device.nodeId);
+        });
       }
     } catch (error) {
       if (mounted) {
         setState(() {
-          _states.remove(key);
+          _unavailableNodes.add(device.nodeId);
           _error = 'Command failed: $error';
         });
       }
@@ -417,7 +440,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
                       content: _MatterErrorNotice(error: _error!),
                       actions: <Widget>[
                         TextButton(
-                          onPressed: () => setState(() => _error = null),
+                          onPressed: _retrying ? null : _retryConnections,
+                          child: Text(_retrying ? 'در حال بررسی…' : 'تلاش دوباره'),
+                        ),
+                        TextButton(
+                          onPressed: _retrying
+                              ? null
+                              : () => setState(() => _error = null),
                           child: const Text('بستن'),
                         ),
                       ],
@@ -434,6 +463,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen> {
                           device: device,
                           states: _states,
                           busy: _busy,
+                          unavailable:
+                              _unavailableNodes.contains(device.nodeId),
                           onChanged: (endpoint, value) =>
                               _setOnOff(device, endpoint, value),
                           onRemove: () => _removeDevice(device),
@@ -482,6 +513,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.device,
     required this.states,
     required this.busy,
+    required this.unavailable,
     required this.onChanged,
     required this.onRemove,
     required this.onRename,
@@ -492,6 +524,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final DirectMatterDevice device;
   final Map<String, bool> states;
   final Set<String> busy;
+  final bool unavailable;
   final void Function(int endpoint, bool value) onChanged;
   final VoidCallback onRemove;
   final VoidCallback onRename;
@@ -576,9 +609,19 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                    subtitle: Text(isBusy ? 'در حال انجام…' : state ? 'روشن' : 'خاموش'),
+                    subtitle: Text(
+                      unavailable
+                          ? 'در دسترس نیست · آخرین وضعیت: ${state ? 'روشن' : 'خاموش'}'
+                          : isBusy
+                              ? 'در حال انجام…'
+                              : state
+                                  ? 'روشن'
+                                  : 'خاموش',
+                    ),
                     value: state,
-                    onChanged: isBusy ? null : (next) => onChanged(endpoint, next),
+                    onChanged: isBusy || unavailable
+                        ? null
+                        : (next) => onChanged(endpoint, next),
                     secondary: isBusy
                         ? const SizedBox.square(
                             dimension: 22,
