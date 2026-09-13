@@ -10,19 +10,22 @@ import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
-  testWidgets('restores live state without blocking onboarding on discovery',
-      (tester) async {
+  testWidgets('restores live state without blocking onboarding on discovery', (
+    tester,
+  ) async {
     final controller = _Controller();
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Saved switch'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(controller.discoveryCalls, 1);
-    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isTrue);
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      isTrue,
+    );
 
     // A manual refresh may hang on an offline node, but onboarding stays usable.
     await tester.tap(find.byTooltip('بررسی وضعیت'));
@@ -39,11 +42,15 @@ void main() {
   });
 
   for (final succeeds in <bool>[true, false]) {
-    testWidgets('removal waits for remote confirmation: $succeeds', (tester) async {
+    testWidgets('removal waits for remote confirmation: $succeeds', (
+      tester,
+    ) async {
       final controller = _Controller();
       controller.discovery.complete(<int>[1]);
       final store = _Store();
-      await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+      await tester.pumpWidget(
+        ManisaDirectApp(controller: controller, deviceStore: store),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byType(PopupMenuButton<String>));
       await tester.pumpAndSettle();
@@ -56,18 +63,26 @@ void main() {
       if (succeeds) {
         controller.removal.complete();
       } else {
-        controller.removal.completeError(PlatformException(code: 'matter_remove_failed'));
+        controller.removal.completeError(
+          PlatformException(code: 'matter_remove_failed'),
+        );
       }
       await tester.pumpAndSettle();
       expect(store.removed, succeeds);
-      expect(find.text('Saved switch'), succeeds ? findsNothing : findsOneWidget);
-      if (!succeeds) expect(find.textContaining('حذف تأیید نشد'), findsOneWidget);
+      expect(
+        find.text('Saved switch'),
+        succeeds ? findsNothing : findsOneWidget,
+      );
+      if (!succeeds)
+        expect(find.textContaining('حذف تأیید نشد'), findsOneWidget);
     });
   }
 
   testWidgets('discovery timeout is visible and permits retry', (tester) async {
     final controller = _Controller();
-    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 16));
     await tester.pumpAndSettle();
@@ -78,23 +93,37 @@ void main() {
     expect(controller.discoveryCalls, 2);
   });
 
-  testWidgets('native initialization error is shown instead of endless loading',
-      (tester) async {
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: _Controller(initializationFails: true),
-      deviceStore: _Store(),
-    ));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('ارتباط مانیسا راه‌اندازی نشد'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-  testWidgets('Persian onboarding validates QR before asking for Wi-Fi', (tester) async {
+  testWidgets(
+    'native initialization error is shown instead of endless loading',
+    (tester) async {
+      await tester.pumpWidget(
+        ManisaDirectApp(
+          controller: _Controller(initializationFails: true),
+          deviceStore: _Store(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('ارتباط مانیسا راه‌اندازی نشد'),
+        findsOneWidget,
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets('Persian onboarding validates QR before asking for Wi-Fi', (
+    tester,
+  ) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
-    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
-    expect(Directionality.of(tester.element(find.text('خانهٔ من'))), TextDirection.rtl);
+    expect(
+      Directionality.of(tester.element(find.text('خانهٔ من'))),
+      TextDirection.rtl,
+    );
     await tester.tap(find.text('افزودن وسیله'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('ادامه'));
@@ -115,52 +144,63 @@ void main() {
   testWidgets('unknown state has no off switch', (tester) async {
     final controller = _Controller(readFails: true);
     controller.discovery.complete(<int>[1]);
-    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
     expect(find.byType(SwitchListTile), findsNothing);
     expect(find.text('وضعیت دریافت نشده'), findsOneWidget);
     expect(find.text('بررسی'), findsOneWidget);
   });
 
-  testWidgets('rename validates, preserves old name on failure and survives reload', (tester) async {
-    final controller = _Controller();
-    controller.discovery.complete(<int>[1]);
-    final store = _RenameStore();
-    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('تغییر نام وسیله'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), '   ');
-    await tester.tap(find.text('ذخیره'));
-    await tester.pumpAndSettle();
-    expect(find.text('یک نام برای وسیله بنویس.'), findsOneWidget);
-    expect(store.saves, 0);
-    await tester.enterText(find.byType(TextField), 'کلید پذیرایی');
-    await tester.tap(find.text('ذخیره'));
-    await tester.pumpAndSettle();
-    expect(find.text('نام ذخیره نشد. دوباره تلاش کن.'), findsOneWidget);
-    expect(store.device.name, 'Saved switch');
-    store.fail = false;
-    await tester.tap(find.text('ذخیره'));
-    await tester.pumpAndSettle();
-    expect(find.text('کلید پذیرایی'), findsOneWidget);
-    expect(store.device.nodeId, 7);
-    expect(store.device.onOffEndpoints, <int>[1]);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pumpAndSettle();
-    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
-    await tester.pumpAndSettle();
-    expect(find.text('کلید پذیرایی'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'rename validates, preserves old name on failure and survives reload',
+    (tester) async {
+      final controller = _Controller();
+      controller.discovery.complete(<int>[1]);
+      final store = _RenameStore();
+      await tester.pumpWidget(
+        ManisaDirectApp(controller: controller, deviceStore: store),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('تغییر نام وسیله'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '   ');
+      await tester.tap(find.text('ذخیره'));
+      await tester.pumpAndSettle();
+      expect(find.text('یک نام برای وسیله بنویس.'), findsOneWidget);
+      expect(store.saves, 0);
+      await tester.enterText(find.byType(TextField), 'کلید پذیرایی');
+      await tester.tap(find.text('ذخیره'));
+      await tester.pumpAndSettle();
+      expect(find.text('نام ذخیره نشد. دوباره تلاش کن.'), findsOneWidget);
+      expect(store.device.name, 'Saved switch');
+      store.fail = false;
+      await tester.tap(find.text('ذخیره'));
+      await tester.pumpAndSettle();
+      expect(find.text('کلید پذیرایی'), findsOneWidget);
+      expect(store.device.nodeId, 7);
+      expect(store.device.onOffEndpoints, <int>[1]);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        ManisaDirectApp(controller: controller, deviceStore: store),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('کلید پذیرایی'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('output names validate and persist by endpoint', (tester) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     final store = _RenameStore()..fail = false;
-    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: store),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
@@ -180,24 +220,25 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
-    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: store),
+    );
     await tester.pumpAndSettle();
     expect(find.text('لوستر پذیرایی'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('offline refresh preserves context and retry restores control',
-      (tester) async {
+  testWidgets('offline refresh preserves context and retry restores control', (
+    tester,
+  ) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
 
-    var control =
-        tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    var control = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
     expect(control.value, isTrue);
     expect(control.onChanged, isNotNull);
 
@@ -205,10 +246,7 @@ void main() {
     await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('در دسترس نیست · آخرین وضعیت: روشن'),
-      findsOneWidget,
-    );
+    expect(find.text('در دسترس نیست · آخرین وضعیت: روشن'), findsOneWidget);
     expect(find.text('تلاش دوباره'), findsOneWidget);
     control = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
     expect(control.value, isTrue);
@@ -226,21 +264,17 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-
   testWidgets('resuming the app refreshes saved Matter state', (tester) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
     final initialReads = controller.readCalls;
 
-    tester.binding
-        .handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    tester.binding
-        .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
 
     expect(controller.readCalls, initialReads + 1);
@@ -250,29 +284,25 @@ void main() {
     );
   });
 
-  testWidgets('rapid resume events do not start concurrent node refreshes',
-      (tester) async {
+  testWidgets('rapid resume events do not start concurrent node refreshes', (
+    tester,
+  ) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
     final initialReads = controller.readCalls;
     controller.pendingRead = Completer<bool>();
 
-    tester.binding
-        .handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    tester.binding
-        .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(controller.readCalls, initialReads + 1);
 
-    tester.binding
-        .handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    tester.binding
-        .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(controller.readCalls, initialReads + 1);
 
@@ -285,10 +315,9 @@ void main() {
   testWidgets('late event from a removed device is ignored', (tester) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byType(PopupMenuButton<String>));
@@ -301,50 +330,49 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Saved switch'), findsNothing);
 
-    controller.events.add(const DirectMatterOnOffEvent(
-      nodeId: 7,
-      endpoint: 1,
-      value: false,
-    ));
+    controller.events.add(
+      const DirectMatterOnOffEvent(nodeId: 7, endpoint: 1, value: false),
+    );
     await tester.pump();
 
     expect(find.byType(SwitchListTile), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('failed command never shows an unconfirmed state', (tester) async {
+  testWidgets('failed command never shows an unconfirmed state', (
+    tester,
+  ) async {
     final controller = _Controller()..commandFails = true;
     controller.discovery.complete(<int>[1]);
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
     await tester.pumpAndSettle();
 
-    final control =
-        tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    final control = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
     expect(control.value, isTrue);
     control.onChanged!(false);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('تغییر وضعیت تأیید نشد'), findsOneWidget);
-    final afterFailure =
-        tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    final afterFailure = tester.widget<SwitchListTile>(
+      find.byType(SwitchListTile),
+    );
     expect(afterFailure.value, isTrue);
     expect(afterFailure.onChanged, isNull);
   });
 
-
-  testWidgets('one offline device does not block another device', (tester) async {
+  testWidgets('one offline device does not block another device', (
+    tester,
+  ) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     controller.failingReadNodes.add(7);
     controller.nodeValues[8] = false;
 
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _MultiDeviceStore(),
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _MultiDeviceStore()),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Offline switch'), findsOneWidget);
@@ -372,17 +400,20 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('creates a room, assigns a device and restores grouping',
-      (tester) async {
+  testWidgets('creates a room, assigns a device and restores grouping', (
+    tester,
+  ) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     final roomStore = _MemoryRoomStore();
 
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-      roomStore: roomStore,
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(
+        controller: controller,
+        deviceStore: _Store(),
+        roomStore: roomStore,
+      ),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('افزودن اتاق'));
@@ -397,9 +428,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('تغییر اتاق'));
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.widgetWithText(SimpleDialogOption, 'پذیرایی'),
-    );
+    await tester.tap(find.widgetWithText(SimpleDialogOption, 'پذیرایی'));
     await tester.pumpAndSettle();
 
     expect(roomStore.catalog.roomIdForDevice(7), isNotNull);
@@ -408,11 +437,13 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-      roomStore: roomStore,
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(
+        controller: controller,
+        deviceStore: _Store(),
+        roomStore: roomStore,
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('پذیرایی'), findsOneWidget);
@@ -420,30 +451,34 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('deleting a room moves its devices to unassigned',
-      (tester) async {
+  testWidgets('deleting a room moves its devices to unassigned', (
+    tester,
+  ) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     final roomStore = _MemoryRoomStore(
       catalog: const RoomCatalog(
-        rooms: <ManisaRoom>[
-          ManisaRoom(id: 'living', name: 'پذیرایی'),
-        ],
+        rooms: <ManisaRoom>[ManisaRoom(id: 'living', name: 'پذیرایی')],
         deviceRooms: <int, String>{7: 'living'},
       ),
     );
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-      roomStore: roomStore,
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(
+        controller: controller,
+        deviceStore: _Store(),
+        roomStore: roomStore,
+      ),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('تنظیمات اتاق'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('حذف اتاق'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('به بخش «بدون اتاق» منتقل می‌شود'), findsOneWidget);
+    expect(
+      find.textContaining('به بخش «بدون اتاق» منتقل می‌شود'),
+      findsOneWidget,
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'حذف اتاق'));
     await tester.pumpAndSettle();
 
@@ -458,11 +493,13 @@ void main() {
     controller.discovery.complete(<int>[1]);
     final homeStore = _MemoryHomeStore();
 
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-      homeStore: homeStore,
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(
+        controller: controller,
+        deviceStore: _Store(),
+        homeStore: homeStore,
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('خانهٔ من'), findsOneWidget);
@@ -476,18 +513,21 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
-    await tester.pumpWidget(ManisaDirectApp(
-      controller: controller,
-      deviceStore: _Store(),
-      homeStore: homeStore,
-    ));
+    await tester.pumpWidget(
+      ManisaDirectApp(
+        controller: controller,
+        deviceStore: _Store(),
+        homeStore: homeStore,
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('خانهٔ پوریا'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('moves a room down and keeps the order after reopen',
-      (tester) async {
+  testWidgets('moves a room down and keeps the order after reopen', (
+    tester,
+  ) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     final roomStore = _MemoryRoomStore(
@@ -499,11 +539,13 @@ void main() {
       ),
     );
 
-    Future<void> showApp() => tester.pumpWidget(ManisaDirectApp(
-          controller: controller,
-          deviceStore: _Store(),
-          roomStore: roomStore,
-        ));
+    Future<void> showApp() => tester.pumpWidget(
+      ManisaDirectApp(
+        controller: controller,
+        deviceStore: _Store(),
+        roomStore: roomStore,
+      ),
+    );
 
     await showApp();
     await tester.pumpAndSettle();
@@ -518,8 +560,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('انتقال به پایین'));
     await tester.pumpAndSettle();
-    expect(roomStore.catalog.rooms.map((room) => room.id),
-        <String>['bedroom', 'living']);
+    expect(roomStore.catalog.rooms.map((room) => room.id), <String>[
+      'bedroom',
+      'living',
+    ]);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
@@ -533,8 +577,6 @@ void main() {
     expect(titles.indexOf('اتاق خواب'), lessThan(titles.indexOf('پذیرایی')));
     expect(tester.takeException(), isNull);
   });
-
-
 }
 
 class _Controller implements DirectMatterController {
@@ -609,36 +651,36 @@ class _Store implements DirectDeviceStore {
   bool removed = false;
   @override
   Future<List<DirectMatterDevice>> load() async => const <DirectMatterDevice>[
-        DirectMatterDevice(
-          nodeId: 7,
-          name: 'Saved switch',
-          onOffEndpoints: <int>[1],
-        ),
-      ];
+    DirectMatterDevice(
+      nodeId: 7,
+      name: 'Saved switch',
+      onOffEndpoints: <int>[1],
+    ),
+  ];
 
   @override
   Future<void> save(DirectMatterDevice device) async {}
 
   @override
-  Future<void> remove(int nodeId) async { removed = true; }
+  Future<void> remove(int nodeId) async {
+    removed = true;
+  }
 }
-
 
 class _MultiDeviceStore implements DirectDeviceStore {
   @override
-  Future<List<DirectMatterDevice>> load() async =>
-      const <DirectMatterDevice>[
-        DirectMatterDevice(
-          nodeId: 7,
-          name: 'Offline switch',
-          onOffEndpoints: <int>[1],
-        ),
-        DirectMatterDevice(
-          nodeId: 8,
-          name: 'Online switch',
-          onOffEndpoints: <int>[1],
-        ),
-      ];
+  Future<List<DirectMatterDevice>> load() async => const <DirectMatterDevice>[
+    DirectMatterDevice(
+      nodeId: 7,
+      name: 'Offline switch',
+      onOffEndpoints: <int>[1],
+    ),
+    DirectMatterDevice(
+      nodeId: 8,
+      name: 'Online switch',
+      onOffEndpoints: <int>[1],
+    ),
+  ];
 
   @override
   Future<void> save(DirectMatterDevice device) async {}
@@ -649,7 +691,10 @@ class _MultiDeviceStore implements DirectDeviceStore {
 
 class _RenameStore implements DirectDeviceStore {
   DirectMatterDevice device = const DirectMatterDevice(
-    nodeId: 7, name: 'Saved switch', onOffEndpoints: <int>[1]);
+    nodeId: 7,
+    name: 'Saved switch',
+    onOffEndpoints: <int>[1],
+  );
   bool fail = true;
   int saves = 0;
   @override
@@ -660,6 +705,7 @@ class _RenameStore implements DirectDeviceStore {
     if (fail) throw StateError('storage unavailable');
     device = value;
   }
+
   @override
   Future<void> remove(int nodeId) async {}
 }
