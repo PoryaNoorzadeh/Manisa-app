@@ -127,6 +127,8 @@
 
 | 2026-09-13 | 9b68040 / 0.7.0+10 | جداسازی خطا و Retry هر device، refresh چنددستگاهی و تأیید شبیه‌سازی یک node آنلاین و یک node آفلاین. |
 
+| 2026-09-13 | Test Bed Runner 0.1.0 | ایجاد Runner هدایت‌شده ADB، گزارش نسخه‌دار، redaction اطلاعات حساس و هفت تست واحد موفق؛ تست واقعی هنوز اجرا نشده است. |
+
 ## نام‌گذاری وسایل — 0.3.1+4
 
 - تغییر: گزینهٔ «تغییر نام» در منوی وسیله، اعتبارسنجی نام خالی، ذخیرهٔ پایدار نام و حفظ نام قبلی در صورت شکست ذخیره.
@@ -211,3 +213,16 @@
 - SHA-256 artifact ثبت‌شده توسط GitHub: `6fcce97dfe47771abb86827c03de002053227ce9204a3c830d99d1bfa256a98a`.
 - کنترل مستقل بسته: پنج فایل نسخه‌دار موجود و `sha256sum -c` پس از استخراج برابر `OK`.
 - M1-T20 فقط در سطح شبیه‌سازی نرم‌افزاری تأیید شده است؛ اجرای دو node واقعی همچنان در صف دائمی معوق می‌ماند.
+
+
+## Test Bed Runner — 0.1.0
+
+- کد Runner: [m1_runner.py](https://github.com/PoryaNoorzadeh/Manisa-app/blob/codex/m1-persian-onboarding/tools/testbed/m1_runner.py)، راهنما: [M1-testbed-runner.md](https://github.com/PoryaNoorzadeh/Manisa-app/blob/codex/m1-persian-onboarding/docs/testing/M1-testbed-runner.md)، ادامهٔ [PR #5](https://github.com/PoryaNoorzadeh/Manisa-app/pull/5).
+- نام خروجی هر اجرا: `manisa-m1-testbed-v0.1.0-run-YYYYMMDDTHHMMSSZ`.
+- Runner نام و SHA-256 APK، نسخه نصب‌شده، مشخصات Android، logcat، package dump و نتایج `PASS / FAIL / BLOCKED / NOT_RUN` را ذخیره می‌کند.
+- نصب APK فقط با فلگ صریح `--install` انجام می‌شود. تغییر Wi-Fi، برق device و لمس فیزیکی خودکار نیستند.
+- اطلاعات حساس شناخته‌شده redacted می‌شوند؛ serial خام گوشی و مسیر کامل APK روی لپ‌تاپ در گزارش ذخیره نمی‌شود.
+- M1-C15 — تأیید CI: کامپایل Runner، هفت تست واحد و رابط `--help` در [اجرای 34745935131](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34745935131) موفق‌اند.
+- پوشش تست واحد: نام run نسخه‌دار، SHA-256 واقعی APK، تشخیص device مجاز ADB، انتخاب و ترتیب تست، ردکردن شناسه ناشناخته، حذف رمز/QR، استخراج نسخه نصب‌شده و گزارش انسانی/ماشینی.
+- هیچ‌یک از تست‌های سخت‌افزاری صف معوق صرفاً با سبزشدن Runner تأیید نشده‌اند. اولین اجرای واقعی باید روی APK `0.7.0+10` انجام و نتایج آن جداگانه ثبت شود.
+- گام بعدی ثبت‌شده: اجرای هدایت‌شدهٔ M1-T09، M1-T10 و M1-T11 روی گوشی و device واقعی؛ سپس توسعه latency collector در Runner 0.2.0.
