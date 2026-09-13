@@ -8,15 +8,10 @@ final class ManisaRoom {
   final String id;
   final String name;
 
-  ManisaRoom copyWith({String? name}) => ManisaRoom(
-        id: id,
-        name: name ?? this.name,
-      );
+  ManisaRoom copyWith({String? name}) =>
+      ManisaRoom(id: id, name: name ?? this.name);
 
-  Map<String, Object?> toJson() => <String, Object?>{
-        'id': id,
-        'name': name,
-      };
+  Map<String, Object?> toJson() => <String, Object?>{'id': id, 'name': name};
 
   factory ManisaRoom.fromJson(Map<String, Object?> json) {
     final id = json['id'];
@@ -43,28 +38,28 @@ final class RoomCatalog {
   String? roomIdForDevice(int nodeId) => deviceRooms[nodeId];
 
   RoomCatalog addRoom(ManisaRoom room) => RoomCatalog(
-        rooms: List<ManisaRoom>.unmodifiable(<ManisaRoom>[...rooms, room]),
-        deviceRooms: deviceRooms,
-      );
+    rooms: List<ManisaRoom>.unmodifiable(<ManisaRoom>[...rooms, room]),
+    deviceRooms: deviceRooms,
+  );
 
   RoomCatalog renameRoom(String roomId, String name) => RoomCatalog(
-        rooms: List<ManisaRoom>.unmodifiable(
-          rooms
-              .map((room) => room.id == roomId ? room.copyWith(name: name) : room)
-              .toList(growable: false),
-        ),
-        deviceRooms: deviceRooms,
-      );
+    rooms: List<ManisaRoom>.unmodifiable(
+      rooms
+          .map((room) => room.id == roomId ? room.copyWith(name: name) : room)
+          .toList(growable: false),
+    ),
+    deviceRooms: deviceRooms,
+  );
 
   RoomCatalog removeRoom(String roomId) => RoomCatalog(
-        rooms: List<ManisaRoom>.unmodifiable(
-          rooms.where((room) => room.id != roomId),
-        ),
-        deviceRooms: Map<int, String>.unmodifiable(
-          Map<int, String>.of(deviceRooms)
-            ..removeWhere((_, assignedRoomId) => assignedRoomId == roomId),
-        ),
-      );
+    rooms: List<ManisaRoom>.unmodifiable(
+      rooms.where((room) => room.id != roomId),
+    ),
+    deviceRooms: Map<int, String>.unmodifiable(
+      Map<int, String>.of(deviceRooms)
+        ..removeWhere((_, assignedRoomId) => assignedRoomId == roomId),
+    ),
+  );
 
   RoomCatalog assignDevice(int nodeId, String? roomId) {
     if (roomId != null && !rooms.any((room) => room.id == roomId)) {
@@ -83,12 +78,12 @@ final class RoomCatalog {
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'version': 1,
-        'rooms': rooms.map((room) => room.toJson()).toList(growable: false),
-        'deviceRooms': deviceRooms.map(
-          (nodeId, roomId) => MapEntry(nodeId.toString(), roomId),
-        ),
-      };
+    'version': 1,
+    'rooms': rooms.map((room) => room.toJson()).toList(growable: false),
+    'deviceRooms': deviceRooms.map(
+      (nodeId, roomId) => MapEntry(nodeId.toString(), roomId),
+    ),
+  };
 
   factory RoomCatalog.fromJson(Map<String, Object?> json) {
     final rawRooms = json['rooms'];
@@ -97,12 +92,14 @@ final class RoomCatalog {
         (rawAssignments != null && rawAssignments is! Map<String, Object?>)) {
       throw const FormatException('invalid room catalog');
     }
-    final rooms = rawRooms.map((value) {
-      if (value is! Map<String, Object?>) {
-        throw const FormatException('invalid room entry');
-      }
-      return ManisaRoom.fromJson(value);
-    }).toList(growable: false);
+    final rooms = rawRooms
+        .map((value) {
+          if (value is! Map<String, Object?>) {
+            throw const FormatException('invalid room entry');
+          }
+          return ManisaRoom.fromJson(value);
+        })
+        .toList(growable: false);
     if (rooms.map((room) => room.id).toSet().length != rooms.length) {
       throw const FormatException('duplicate room id');
     }
@@ -142,7 +139,7 @@ final class EmptyRoomStore implements RoomStore {
 
 final class PreferencesRoomStore implements RoomStore {
   PreferencesRoomStore({SharedPreferencesAsync? preferences})
-      : _preferences = preferences ?? SharedPreferencesAsync();
+    : _preferences = preferences ?? SharedPreferencesAsync();
 
   static const String _key = 'manisa_room_catalog_v1';
   final SharedPreferencesAsync _preferences;
