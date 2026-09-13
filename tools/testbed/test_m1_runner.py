@@ -64,7 +64,7 @@ UNAUTHORIZED unauthorized transport_id:3
             "finished_at": "2026-09-13T07:35:00Z",
             "apk_filename": "manisa-m1-v0.7.0-build10-arm64-release.apk",
             "apk_sha256": "abc",
-            "adb_serial": "ABC123",
+            "adb_device_id": "e0bebd228199",
             "manufacturer": "Google",
             "model": "Pixel",
             "android_version": "16",
@@ -95,6 +95,8 @@ UNAUTHORIZED unauthorized transport_id:3
         self.assertIn("M1-T09", text)
         self.assertIn("M1-T10", text)
         self.assertIn("adb-logcat.txt", text)
+        self.assertNotIn("ABC123", text)
+        self.assertIn("e0bebd228199", text)
 
 
 if __name__ == "__main__":
