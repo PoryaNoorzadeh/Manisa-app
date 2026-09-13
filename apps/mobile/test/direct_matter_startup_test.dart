@@ -333,6 +333,44 @@ void main() {
   });
 
 
+  testWidgets('one offline device does not block another device', (tester) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    controller.failingReadNodes.add(7);
+    controller.nodeValues[8] = false;
+
+    await tester.pumpWidget(ManisaDirectApp(
+      controller: controller,
+      deviceStore: _MultiDeviceStore(),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Offline switch'), findsOneWidget);
+    expect(find.text('Online switch'), findsOneWidget);
+    expect(find.textContaining('وضعیت تازه دریافت نشد'), findsOneWidget);
+    expect(controller.readCallsByNode[7], 1);
+    expect(controller.readCallsByNode[8], 1);
+
+    var controls = tester.widgetList<SwitchListTile>(
+      find.byType(SwitchListTile),
+    );
+    expect(controls, hasLength(1));
+    expect(controls.single.value, isFalse);
+    expect(controls.single.onChanged, isNotNull);
+
+    controller.failingReadNodes.clear();
+    await tester.tap(find.text('تلاش دوباره'));
+    await tester.pumpAndSettle();
+
+    expect(controller.readCallsByNode[7], 2);
+    expect(controller.readCallsByNode[8], 1);
+    controls = tester.widgetList<SwitchListTile>(find.byType(SwitchListTile));
+    expect(controls, hasLength(2));
+    expect(controls.every((control) => control.onChanged != null), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+
 }
 
 class _Controller implements DirectMatterController {
@@ -341,6 +379,9 @@ class _Controller implements DirectMatterController {
   bool commandFails = false;
   Completer<bool>? pendingRead;
   int readCalls = 0;
+  final Set<int> failingReadNodes = <int>{};
+  final Map<int, bool> nodeValues = <int, bool>{};
+  final Map<int, int> readCallsByNode = <int, int>{};
 
   final bool initializationFails;
   final discovery = Completer<List<int>>();
@@ -376,10 +417,13 @@ class _Controller implements DirectMatterController {
   @override
   Future<bool> readOnOff({required int nodeId, required int endpoint}) async {
     readCalls++;
+    readCallsByNode.update(nodeId, (value) => value + 1, ifAbsent: () => 1);
     final pending = pendingRead;
     if (pending != null) return pending.future;
-    if (readFails) throw PlatformException(code: 'matter_read_failed');
-    return true;
+    if (readFails || failingReadNodes.contains(nodeId)) {
+      throw PlatformException(code: 'matter_read_failed');
+    }
+    return nodeValues[nodeId] ?? true;
   }
 
   @override
@@ -413,6 +457,30 @@ class _Store implements DirectDeviceStore {
 
   @override
   Future<void> remove(int nodeId) async { removed = true; }
+}
+
+
+class _MultiDeviceStore implements DirectDeviceStore {
+  @override
+  Future<List<DirectMatterDevice>> load() async =>
+      const <DirectMatterDevice>[
+        DirectMatterDevice(
+          nodeId: 7,
+          name: 'Offline switch',
+          onOffEndpoints: <int>[1],
+        ),
+        DirectMatterDevice(
+          nodeId: 8,
+          name: 'Online switch',
+          onOffEndpoints: <int>[1],
+        ),
+      ];
+
+  @override
+  Future<void> save(DirectMatterDevice device) async {}
+
+  @override
+  Future<void> remove(int nodeId) async {}
 }
 
 class _RenameStore implements DirectDeviceStore {
