@@ -61,6 +61,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         private const val TAG = "ManisaMatter"
         private const val METHODS = "com.manisa/matter/methods"
         private const val EVENTS = "com.manisa/matter/events"
+        private const val LEVEL_EVENTS = "com.manisa/matter/level_events"
         private const val VENDOR_ID = 0xFFF4
         private const val STATUS_OK = 0L
         private const val PERMISSION_REQUEST_MATTER = 9101
@@ -79,6 +80,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var initializationError: Throwable? = null
     private var bleCommissioner: ManisaBleCommissioner? = null
     private var eventSink: EventChannel.EventSink? = null
+    private var levelEventSink: EventChannel.EventSink? = null
+    private val levelSubscriptionEndpoints = mutableMapOf<Long, List<Int>>()
     private var pendingCommission: MethodChannel.Result? = null
     private var pendingCommissionNodeId: Long = 0
     private var pendingPermissionCommission: CommissionRequest? = null
@@ -89,6 +92,16 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             .setMethodCallHandler(this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENTS)
             .setStreamHandler(this)
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, LEVEL_EVENTS)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    levelEventSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    levelEventSink = null
+                }
+            })
         try {
             Log.i(TAG, "Initializing Matter runtime")
             initializeMatter()
@@ -627,7 +640,17 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                                     reader.getUByte(AnonymousTag).toInt()
                                 }
                             }
+                            val endpoints = levels.keys.map(String::toInt).sorted()
                             result.success(levels)
+                            if (endpoints.isNotEmpty() &&
+                                levelSubscriptionEndpoints[nodeId] != endpoints) {
+                                try {
+                                    subscribeLevels(nodeId, devicePointer, endpoints)
+                                    levelSubscriptionEndpoints[nodeId] = endpoints
+                                } catch (error: Exception) {
+                                    Log.e(TAG, "LevelControl subscription setup failed", error)
+                                }
+                            }
                         } catch (error: Exception) {
                             result.error("matter_level_read_failed", error.message, null)
                         }
@@ -755,6 +778,63 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                                     "value" to value,
                                 ),
                             )
+                        }
+                    }
+                }
+            },
+            devicePointer,
+            paths,
+            null,
+            1,
+            60,
+            false,
+            false,
+            0,
+        )
+    }
+
+    private fun subscribeLevels(nodeId: Long, devicePointer: Long, endpoints: List<Int>) {
+        val paths = endpoints.map { endpoint ->
+            ChipAttributePath.newInstance(endpoint, 0x0008L, 0L)
+        }
+        controller.subscribeToPath(
+            SubscriptionEstablishedCallback { subscriptionId ->
+                Log.i(TAG, "LevelControl subscription established: $subscriptionId")
+            },
+            ResubscriptionAttemptCallback { cause, delayMs ->
+                Log.w(TAG, "LevelControl resubscribe cause=$cause delayMs=$delayMs")
+            },
+            object : ReportCallback {
+                override fun onError(
+                    attributePath: ChipAttributePath?,
+                    eventPath: ChipEventPath?,
+                    ex: Exception,
+                ) {
+                    Log.e(TAG, "LevelControl subscription failed", ex)
+                }
+
+                override fun onReport(nodeState: NodeState) {
+                    for (endpoint in endpoints) {
+                        val tlv = nodeState.getEndpointState(endpoint)
+                            ?.getClusterState(0x0008L)
+                            ?.getAttributeState(0L)?.tlv ?: continue
+                        try {
+                            val reader = TlvReader(tlv)
+                            val level = if (reader.isNull()) {
+                                reader.getNull(AnonymousTag)
+                                null
+                            } else {
+                                reader.getUByte(AnonymousTag).toInt()
+                            }
+                            runOnUiThread {
+                                levelEventSink?.success(mapOf(
+                                    "nodeId" to nodeId,
+                                    "endpoint" to endpoint,
+                                    "level" to level,
+                                ))
+                            }
+                        } catch (error: Exception) {
+                            Log.e(TAG, "Invalid LevelControl report", error)
                         }
                     }
                 }
