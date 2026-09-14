@@ -24,22 +24,21 @@ final class DirectMatterDevice {
     String? name,
     List<int>? onOffEndpoints,
     Map<int, String>? channelNames,
-  }) =>
-      DirectMatterDevice(
-        nodeId: nodeId,
-        name: name ?? this.name,
-        onOffEndpoints: onOffEndpoints ?? this.onOffEndpoints,
-        channelNames: channelNames ?? this.channelNames,
-      );
+  }) => DirectMatterDevice(
+    nodeId: nodeId,
+    name: name ?? this.name,
+    onOffEndpoints: onOffEndpoints ?? this.onOffEndpoints,
+    channelNames: channelNames ?? this.channelNames,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'nodeId': nodeId,
-        'name': name,
-        'onOffEndpoints': onOffEndpoints,
-        'channelNames': channelNames.map(
-          (endpoint, name) => MapEntry(endpoint.toString(), name),
-        ),
-      };
+    'nodeId': nodeId,
+    'name': name,
+    'onOffEndpoints': onOffEndpoints,
+    'channelNames': channelNames.map(
+      (endpoint, name) => MapEntry(endpoint.toString(), name),
+    ),
+  };
 
   factory DirectMatterDevice.fromJson(Map<String, Object?> json) {
     final nodeId = json['nodeId'];
@@ -66,12 +65,14 @@ final class DirectMatterDevice {
     return DirectMatterDevice(
       nodeId: nodeId,
       name: name,
-      onOffEndpoints: endpoints.map((value) {
-        if (value is! int) {
-          throw const FormatException('invalid direct Matter endpoint');
-        }
-        return value;
-      }).toList(growable: false),
+      onOffEndpoints: endpoints
+          .map((value) {
+            if (value is! int) {
+              throw const FormatException('invalid direct Matter endpoint');
+            }
+            return value;
+          })
+          .toList(growable: false),
       channelNames: Map<int, String>.unmodifiable(channelNames),
     );
   }
@@ -85,7 +86,7 @@ abstract interface class DirectDeviceStore {
 
 final class PreferencesDirectDeviceStore implements DirectDeviceStore {
   PreferencesDirectDeviceStore({SharedPreferencesAsync? preferences})
-      : _preferences = preferences ?? SharedPreferencesAsync();
+    : _preferences = preferences ?? SharedPreferencesAsync();
 
   static const String _key = 'manisa_direct_matter_devices_v1';
   final SharedPreferencesAsync _preferences;
