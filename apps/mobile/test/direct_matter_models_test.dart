@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:manisa_mobile/src/core/persian_digits.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
+import 'package:manisa_mobile/src/matter/favorite_store.dart';
 import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
@@ -57,7 +59,7 @@ void main() {
       expect(decoded.onOffEndpoints, device.onOffEndpoints);
       expect(decoded.channelNames, device.channelNames);
       expect(decoded.channelName(1, 0), 'لوستر');
-      expect(decoded.channelName(3, 2), 'خروجی 3');
+      expect(decoded.channelName(3, 2), 'خروجی ۳');
     });
     test('loads legacy JSON without output names', () {
       final decoded = DirectMatterDevice.fromJson(<String, Object?>{
@@ -66,7 +68,7 @@ void main() {
         'onOffEndpoints': <Object?>[11, 12],
       });
       expect(decoded.channelNames, isEmpty);
-      expect(decoded.channelName(12, 1), 'خروجی 2');
+      expect(decoded.channelName(12, 1), 'خروجی ۲');
     });
 
     test('keeps names bound to endpoint when discovery order changes', () {
@@ -153,5 +155,37 @@ void main() {
         throwsFormatException,
       );
     });
+  });
+
+  group('FavoriteCatalog', () {
+    test('toggles and round trips stable node and endpoint references', () {
+      final catalog = const FavoriteCatalog().toggle(7, 1).toggle(7, 2);
+      final decoded = FavoriteCatalog.fromJson(catalog.toJson());
+
+      expect(decoded.contains(7, 1), isTrue);
+      expect(decoded.contains(7, 2), isTrue);
+      expect(decoded.toggle(7, 1).contains(7, 1), isFalse);
+    });
+
+    test('removes stale device and endpoint references safely', () {
+      final catalog = const FavoriteCatalog(
+        outputs: <FavoriteOutput>[
+          FavoriteOutput(nodeId: 7, endpoint: 1),
+          FavoriteOutput(nodeId: 7, endpoint: 2),
+          FavoriteOutput(nodeId: 8, endpoint: 1),
+        ],
+      );
+
+      final retained = catalog.retain(
+        (output) => output.nodeId == 7 && output.endpoint == 1,
+      );
+      expect(retained.outputs, hasLength(1));
+      expect(retained.contains(7, 1), isTrue);
+      expect(catalog.removeDevice(7).outputs.single.nodeId, 8);
+    });
+  });
+
+  test('converts generated western digits to Persian digits', () {
+    expect(toPersianDigits('مرحله 1 از 3؛ 2026'), 'مرحله ۱ از ۳؛ ۲۰۲۶');
   });
 }
