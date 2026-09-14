@@ -460,6 +460,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 override fun onSuccess(remoteDeviceId: Long) {
                     runOnUiThread {
                         pendingRemovals.remove(nodeId)
+                        levelSubscriptionEndpoints.remove(nodeId)
                         Log.i(TAG, "Device confirmed fabric removal nodeId=$remoteDeviceId")
                         result.success(null)
                     }
