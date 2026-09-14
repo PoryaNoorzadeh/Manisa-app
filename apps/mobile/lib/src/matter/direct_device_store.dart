@@ -10,12 +10,27 @@ final class DirectMatterDevice {
     required this.name,
     required this.onOffEndpoints,
     this.channelNames = const <int, String>{},
+    this.deviceTypes = const <int, List<int>>{},
   });
 
   final int nodeId;
   final String name;
   final List<int> onOffEndpoints;
   final Map<int, String> channelNames;
+  final Map<int, List<int>> deviceTypes;
+
+  bool isSocket(int endpoint) =>
+      (deviceTypes[endpoint] ?? const <int>[]).any((id) => id == 0x010a || id == 0x010b);
+
+  String get productLabel {
+    if (onOffEndpoints.isEmpty) return 'در انتظار شناسایی خروجی‌ها';
+    if (onOffEndpoints.every(isSocket)) return 'پریز هوشمند';
+    if (onOffEndpoints.any(isSocket)) return 'وسیلهٔ ترکیبی';
+    // The number of OnOff endpoints does not prove physical switch gangs.
+    return onOffEndpoints.length == 1
+        ? 'کنترل تک‌خروجی'
+        : 'کنترل ${toPersianDigits(onOffEndpoints.length)} خروجی مستقل';
+  }
 
   String channelName(int endpoint, int index) =>
       channelNames[endpoint] ?? 'خروجی ${toPersianDigits(index + 1)}';
@@ -24,17 +39,20 @@ final class DirectMatterDevice {
     String? name,
     List<int>? onOffEndpoints,
     Map<int, String>? channelNames,
+    Map<int, List<int>>? deviceTypes,
   }) => DirectMatterDevice(
     nodeId: nodeId,
     name: name ?? this.name,
     onOffEndpoints: onOffEndpoints ?? this.onOffEndpoints,
     channelNames: channelNames ?? this.channelNames,
+    deviceTypes: deviceTypes ?? this.deviceTypes,
   );
 
   Map<String, Object?> toJson() => <String, Object?>{
     'nodeId': nodeId,
     'name': name,
     'onOffEndpoints': onOffEndpoints,
+    'deviceTypes': deviceTypes.map((endpoint, types) => MapEntry(endpoint.toString(), types)),
     'channelNames': channelNames.map(
       (endpoint, name) => MapEntry(endpoint.toString(), name),
     ),
@@ -45,6 +63,20 @@ final class DirectMatterDevice {
     final name = json['name'];
     final endpoints = json['onOffEndpoints'];
     final rawNames = json['channelNames'];
+    final rawTypes = json['deviceTypes'];
+    final types = <int, List<int>>{};
+    if (rawTypes != null) {
+      if (rawTypes is! Map<String, Object?>) throw const FormatException('invalid device types');
+      for (final entry in rawTypes.entries) {
+        final endpoint = int.tryParse(entry.key);
+        final values = entry.value;
+        if (endpoint == null || endpoint < 0 || values is! List ||
+            values.any((value) => value is! int || value < 0)) {
+          throw const FormatException('invalid device type entry');
+        }
+        types[endpoint] = List<int>.unmodifiable(values.cast<int>());
+      }
+    }
     if (nodeId is! int || name is! String || endpoints is! List<Object?>) {
       throw const FormatException('invalid direct Matter device');
     }
@@ -65,6 +97,7 @@ final class DirectMatterDevice {
     return DirectMatterDevice(
       nodeId: nodeId,
       name: name,
+      deviceTypes: Map<int, List<int>>.unmodifiable(types),
       onOffEndpoints: endpoints
           .map((value) {
             if (value is! int) {
