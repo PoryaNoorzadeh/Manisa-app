@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/persian_digits.dart';
+
 final class DirectMatterDevice {
   const DirectMatterDevice({
     required this.nodeId,
@@ -16,7 +18,7 @@ final class DirectMatterDevice {
   final Map<int, String> channelNames;
 
   String channelName(int endpoint, int index) =>
-      channelNames[endpoint] ?? 'خروجی ${index + 1}';
+      channelNames[endpoint] ?? 'خروجی ${toPersianDigits(index + 1)}';
 
   DirectMatterDevice copyWith({
     String? name,
