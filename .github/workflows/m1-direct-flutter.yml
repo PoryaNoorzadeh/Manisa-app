@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m2-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m3-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -179,7 +179,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M2"
+            echo "milestone=M3"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -188,7 +188,12 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M2.3 favorites candidate
+          Manisa M3.1 capability-based controls candidate
+          - Optional Matter Descriptor device type discovery
+          - Socket labels only for device-declared plug-in units
+          - Single/multiple output controls without guessing physical gangs
+          - Cached product metadata with legacy-compatible migration
+          - Descriptor failures do not disable existing OnOff controls
           - Persian RTL guided onboarding
           - Clear on, off, pending and unavailable states
           - Persistent device and per-output naming
