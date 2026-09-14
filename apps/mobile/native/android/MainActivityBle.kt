@@ -161,6 +161,17 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "readDeviceTypes" -> withNodeId(call, result) { nodeId ->
                     readDeviceTypes(nodeId, result)
                 }
+                "readLevels" -> withNodeId(call, result) { nodeId ->
+                    readLevels(nodeId, result)
+                }
+                "setLevel" -> withNodeAndEndpoint(call, result) { nodeId, endpoint ->
+                    val level = call.argument<Number>("level")?.toInt()
+                    if (level == null || level !in 1..254) {
+                        result.error("invalid_args", "level must be between 1 and 254", null)
+                    } else {
+                        invokeLevel(nodeId, endpoint, level, result)
+                    }
+                }
                 "readOnOff" -> withNodeAndEndpoint(call, result) { nodeId, endpoint ->
                     readOnOff(nodeId, endpoint, result)
                 }
@@ -589,6 +600,69 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 null,
                 false,
                 0,
+            )
+        }
+    }
+
+    private fun readLevels(nodeId: Long, result: MethodChannel.Result) {
+        withConnectedDevice(nodeId, result) { devicePointer ->
+            controller.readPath(
+                object : ReportCallback {
+                    override fun onError(attributePath: ChipAttributePath?, eventPath: ChipEventPath?, ex: Exception) {
+                        result.error("matter_level_read_failed", ex.message, null)
+                    }
+
+                    override fun onReport(nodeState: NodeState) {
+                        try {
+                            val levels = mutableMapOf<String, Int?>()
+                            for ((endpoint, state) in nodeState.endpointStates) {
+                                if (endpoint <= 0) continue
+                                val tlv = state.getClusterState(0x0008L)
+                                    ?.getAttributeState(0L)?.tlv ?: continue
+                                val reader = TlvReader(tlv)
+                                levels[endpoint.toString()] = if (reader.isNull()) {
+                                    reader.getNull(AnonymousTag)
+                                    null
+                                } else {
+                                    reader.getUByte(AnonymousTag).toInt()
+                                }
+                            }
+                            result.success(levels)
+                        } catch (error: Exception) {
+                            result.error("matter_level_read_failed", error.message, null)
+                        }
+                    }
+                },
+                devicePointer,
+                listOf(ChipAttributePath.newInstance(
+                    ChipPathId.forWildcard(), ChipPathId.forId(0x0008L), ChipPathId.forId(0L),
+                )), null, false, 0,
+            )
+        }
+    }
+
+    private fun invokeLevel(nodeId: Long, endpoint: Int, level: Int, result: MethodChannel.Result) {
+        withConnectedDevice(nodeId, result) { devicePointer ->
+            val writer = TlvWriter()
+            writer.startStructure(AnonymousTag)
+            writer.put(ContextSpecificTag(0), level.toUByte())
+            writer.put(ContextSpecificTag(2), 0.toUByte())
+            writer.put(ContextSpecificTag(3), 0.toUByte())
+            writer.endStructure()
+            val invoke = InvokeElement.newInstance(
+                endpoint, 0x0008L, 0x04L, writer.getEncoded(), null,
+            )
+            controller.invoke(
+                object : InvokeCallback {
+                    override fun onError(ex: Exception?) {
+                        result.error("matter_level_invoke_failed", ex?.message ?: "Level command failed", null)
+                    }
+
+                    override fun onResponse(invokeElement: InvokeElement?, successCode: Long) {
+                        if (successCode == STATUS_OK) result.success(null)
+                        else result.error("matter_level_invoke_failed", "Level command returned error", successCode)
+                    }
+                }, devicePointer, invoke, 0, 0,
             )
         }
     }
