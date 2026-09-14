@@ -11,6 +11,7 @@ final class DirectMatterDevice {
     required this.onOffEndpoints,
     this.channelNames = const <int, String>{},
     this.deviceTypes = const <int, List<int>>{},
+    this.levelEndpoints = const <int>[],
   });
 
   final int nodeId;
@@ -18,6 +19,7 @@ final class DirectMatterDevice {
   final List<int> onOffEndpoints;
   final Map<int, String> channelNames;
   final Map<int, List<int>> deviceTypes;
+  final List<int> levelEndpoints;
 
   bool isSocket(int endpoint) =>
       (deviceTypes[endpoint] ?? const <int>[]).any((id) => id == 0x010a || id == 0x010b);
@@ -40,12 +42,14 @@ final class DirectMatterDevice {
     List<int>? onOffEndpoints,
     Map<int, String>? channelNames,
     Map<int, List<int>>? deviceTypes,
+    List<int>? levelEndpoints,
   }) => DirectMatterDevice(
     nodeId: nodeId,
     name: name ?? this.name,
     onOffEndpoints: onOffEndpoints ?? this.onOffEndpoints,
     channelNames: channelNames ?? this.channelNames,
     deviceTypes: deviceTypes ?? this.deviceTypes,
+    levelEndpoints: levelEndpoints ?? this.levelEndpoints,
   );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -53,6 +57,7 @@ final class DirectMatterDevice {
     'name': name,
     'onOffEndpoints': onOffEndpoints,
     'deviceTypes': deviceTypes.map((endpoint, types) => MapEntry(endpoint.toString(), types)),
+    'levelEndpoints': levelEndpoints,
     'channelNames': channelNames.map(
       (endpoint, name) => MapEntry(endpoint.toString(), name),
     ),
@@ -64,6 +69,7 @@ final class DirectMatterDevice {
     final endpoints = json['onOffEndpoints'];
     final rawNames = json['channelNames'];
     final rawTypes = json['deviceTypes'];
+    final rawLevelEndpoints = json['levelEndpoints'];
     final types = <int, List<int>>{};
     if (rawTypes != null) {
       if (rawTypes is! Map<String, Object?>) throw const FormatException('invalid device types');
@@ -77,7 +83,8 @@ final class DirectMatterDevice {
         types[endpoint] = List<int>.unmodifiable(values.cast<int>());
       }
     }
-    if (nodeId is! int || name is! String || endpoints is! List<Object?>) {
+    if (nodeId is! int || name is! String || endpoints is! List<Object?> ||
+        (rawLevelEndpoints != null && rawLevelEndpoints is! List<Object?>)) {
       throw const FormatException('invalid direct Matter device');
     }
     final channelNames = <int, String>{};
@@ -98,6 +105,14 @@ final class DirectMatterDevice {
       nodeId: nodeId,
       name: name,
       deviceTypes: Map<int, List<int>>.unmodifiable(types),
+      levelEndpoints: (rawLevelEndpoints as List<Object?>? ?? const <Object?>[])
+          .map((value) {
+            if (value is! int || value <= 0) {
+              throw const FormatException('invalid LevelControl endpoint');
+            }
+            return value;
+          })
+          .toList(growable: false),
       onOffEndpoints: endpoints
           .map((value) {
             if (value is! int) {
