@@ -9,6 +9,7 @@ import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
 import 'favorite_store.dart';
 import 'home_profile_store.dart';
+import 'level_control.dart';
 import 'room_store.dart';
 
 final class ManisaDirectApp extends StatelessWidget {
@@ -87,10 +88,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   ManisaHomeProfile _homeProfile = const ManisaHomeProfile();
   FavoriteCatalog _favorites = const FavoriteCatalog();
   final Map<String, bool> _states = <String, bool>{};
+  final Map<String, int> _levels = <String, int>{};
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
   final Set<int> _refreshingNodes = <int>{};
-  final Set<int> _readingTypes = <int>{};
+  final Set<int> _readingCapabilities = <int>{};
   final Set<int> _removingNodes = <int>{};
   final Set<int> _unavailableNodes = <int>{};
   final Map<int, String> _deviceErrors = <int, String>{};
@@ -263,7 +265,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             _deviceErrors.remove(device.nodeId);
           }
         });
-        unawaited(_refreshDeviceTypes(device.nodeId));
+        unawaited(_refreshDeviceCapabilities(device.nodeId));
       }
     } catch (error) {
       if (_canUpdate(device.nodeId)) {
@@ -278,22 +280,52 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-  Future<void> _refreshDeviceTypes(int nodeId) async {
-    final reader = widget.controller;
-    if (reader is! DeviceTypeReader || !_readingTypes.add(nodeId)) return;
+  Future<void> _refreshDeviceCapabilities(int nodeId) async {
+    final controller = widget.controller;
+    if (!_readingCapabilities.add(nodeId)) return;
     try {
-      final types = await (reader as DeviceTypeReader)
-          .readDeviceTypes(nodeId).timeout(_readTimeout);
-      if (types.isEmpty || !_canUpdate(nodeId) || _editingMetadata) return;
+      Map<int, List<int>>? types;
+      Map<int, int?>? levels;
+      if (controller is DeviceTypeReader) {
+        try {
+          types = await controller.readDeviceTypes(nodeId).timeout(_readTimeout);
+        } catch (_) {
+          // Type labels are optional and do not gate controls.
+        }
+      }
+      if (controller is LevelControlController) {
+        try {
+          levels = await controller.readLevels(nodeId).timeout(_readTimeout);
+        } catch (_) {
+          // Preserve cached capability and existing state on an optional read failure.
+        }
+      }
+      if ((types == null || types.isEmpty) && levels == null) return;
+      if (!_canUpdate(nodeId) || _editingMetadata) return;
       // Product metadata failures must never disable a working OnOff control.
       setState(() => _editingMetadata = true);
       try {
         final current = _devices.firstWhere((device) => device.nodeId == nodeId);
-        await widget.deviceStore.save(current.copyWith(deviceTypes: types));
+        final updated = current.copyWith(
+          deviceTypes: types == null || types.isEmpty ? null : types,
+          levelEndpoints: levels?.keys.toList(growable: false),
+        );
+        await widget.deviceStore.save(updated);
         if (!_canUpdate(nodeId)) return;
         setState(() {
-          _devices = _devices.map((device) => device.nodeId == nodeId
-              ? device.copyWith(deviceTypes: types) : device).toList();
+          _devices = _devices
+              .map((device) => device.nodeId == nodeId ? updated : device)
+              .toList();
+          if (levels != null) {
+            for (final entry in levels.entries) {
+              final key = _stateKey(nodeId, entry.key);
+              if (entry.value == null) {
+                _levels.remove(key);
+              } else {
+                _levels[key] = entry.value!;
+              }
+            }
+          }
         });
       } finally {
         if (mounted) setState(() => _editingMetadata = false);
@@ -301,7 +333,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     } catch (_) {
       // Preserve previously read metadata; the next successful refresh retries.
     } finally {
-      _readingTypes.remove(nodeId);
+      _readingCapabilities.remove(nodeId);
     }
   }
 
@@ -381,6 +413,43 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (mounted) {
         setState(() => _busy.remove(key));
       }
+    }
+  }
+
+  Future<void> _setLevel(DirectMatterDevice device, int endpoint, int level) async {
+    final controller = widget.controller;
+    final key = _stateKey(device.nodeId, endpoint);
+    if (controller is! LevelControlController ||
+        _busy.contains(key) || !_canUpdate(device.nodeId)) return;
+    final requested = level.clamp(1, 254);
+    setState(() {
+      _busy.add(key);
+      _deviceErrors.remove(device.nodeId);
+    });
+    try {
+      await controller
+          .setLevel(nodeId: device.nodeId, endpoint: endpoint, level: requested)
+          .timeout(_readTimeout);
+      final levels = await controller.readLevels(device.nodeId).timeout(_readTimeout);
+      final confirmed = levels[endpoint];
+      if (confirmed == null) {
+        throw const FormatException('LevelControl state was not returned');
+      }
+      if (_canUpdate(device.nodeId)) {
+        setState(() {
+          _levels[key] = confirmed;
+          _unavailableNodes.remove(device.nodeId);
+          _deviceErrors.remove(device.nodeId);
+        });
+      }
+    } catch (error) {
+      if (_canUpdate(device.nodeId)) {
+        setState(() {
+          _deviceErrors[device.nodeId] = 'Level command failed: $error';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy.remove(key));
     }
   }
 
@@ -902,11 +971,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             device: device,
             roomName: room?.name,
             states: _states,
+            levels: _levels,
             busy: _busy,
             error: _deviceErrors[device.nodeId],
             unavailable: _unavailableNodes.contains(device.nodeId),
             favorites: _favorites,
             onChanged: (endpoint, value) => _setOnOff(device, endpoint, value),
+            onLevelChanged: (endpoint, level) => _setLevel(device, endpoint, level),
             onRemove: () => _removeDevice(device),
             onRename: () => _renameDevice(device),
             onAssignRoom: () => _assignRoom(device),
@@ -1037,11 +1108,13 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.device,
     required this.roomName,
     required this.states,
+    required this.levels,
     required this.busy,
     required this.error,
     required this.unavailable,
     required this.favorites,
     required this.onChanged,
+    required this.onLevelChanged,
     required this.onRemove,
     required this.onRename,
     required this.onAssignRoom,
@@ -1053,11 +1126,13 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final DirectMatterDevice device;
   final String? roomName;
   final Map<String, bool> states;
+  final Map<String, int> levels;
   final Set<String> busy;
   final String? error;
   final bool unavailable;
   final FavoriteCatalog favorites;
   final void Function(int endpoint, bool value) onChanged;
+  final void Function(int endpoint, int level) onLevelChanged;
   final VoidCallback onRemove;
   final VoidCallback onRename;
   final VoidCallback onAssignRoom;
@@ -1150,71 +1225,172 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   final endpoint = device.onOffEndpoints[index];
                   final key = _key(endpoint);
                   final state = states[key];
+                  final level = levels[key];
                   final isBusy = busy.contains(key);
                   final favorite = favorites.contains(device.nodeId, endpoint);
                   if (state == null) {
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        device.channelName(endpoint, index),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: const Text('وضعیت دریافت نشده'),
-                      leading: IconButton(
-                        tooltip: favorite
-                            ? 'حذف از علاقه‌مندی‌ها'
-                            : 'افزودن به علاقه‌مندی‌ها',
-                        onPressed: () => onToggleFavorite(endpoint),
-                        icon: Icon(
-                          favorite ? Icons.star_rounded : Icons.star_border,
-                        ),
-                      ),
-                      trailing: TextButton(
-                        onPressed: isBusy ? null : onRefresh,
-                        child: const Text('بررسی'),
-                      ),
-                    );
-                  }
-                  return SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(
-                      device.channelName(endpoint, index),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      unavailable
-                          ? 'در دسترس نیست · آخرین وضعیت: ${state ? 'روشن' : 'خاموش'}'
-                          : isBusy
-                          ? 'در حال انجام…'
-                          : state
-                          ? (device.isSocket(endpoint) ? 'برق وصل است' : 'روشن')
-                          : (device.isSocket(endpoint) ? 'برق قطع است' : 'خاموش'),
-                    ),
-                    value: state,
-                    onChanged: isBusy || unavailable
-                        ? null
-                        : (next) => onChanged(endpoint, next),
-                    secondary: IconButton(
-                      tooltip: favorite
-                          ? 'حذف از علاقه‌مندی‌ها'
-                          : 'افزودن به علاقه‌مندی‌ها',
-                      onPressed: () => onToggleFavorite(endpoint),
-                      icon: isBusy
-                          ? const SizedBox.square(
-                              dimension: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(
+                    return Column(
+                      children: <Widget>[
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            device.channelName(endpoint, index),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: const Text('وضعیت دریافت نشده'),
+                          leading: IconButton(
+                            tooltip: favorite
+                                ? 'حذف از علاقه‌مندی‌ها'
+                                : 'افزودن به علاقه‌مندی‌ها',
+                            onPressed: () => onToggleFavorite(endpoint),
+                            icon: Icon(
                               favorite ? Icons.star_rounded : Icons.star_border,
                             ),
-                    ),
+                          ),
+                          trailing: TextButton(
+                            onPressed: isBusy ? null : onRefresh,
+                            child: const Text('بررسی'),
+                          ),
+                        ),
+                        if (device.levelEndpoints.contains(endpoint))
+                          _LevelControl(
+                            level: level,
+                            enabled: false,
+                            onChanged: (value) => onLevelChanged(endpoint, value),
+                          ),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: <Widget>[
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          device.channelName(endpoint, index),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          unavailable
+                              ? 'در دسترس نیست · آخرین وضعیت: ${state ? 'روشن' : 'خاموش'}'
+                              : isBusy
+                              ? 'در حال انجام…'
+                              : state
+                              ? (device.isSocket(endpoint) ? 'برق وصل است' : 'روشن')
+                              : (device.isSocket(endpoint) ? 'برق قطع است' : 'خاموش'),
+                        ),
+                        value: state,
+                        onChanged: isBusy || unavailable
+                            ? null
+                            : (next) => onChanged(endpoint, next),
+                        secondary: IconButton(
+                          tooltip: favorite
+                              ? 'حذف از علاقه‌مندی‌ها'
+                              : 'افزودن به علاقه‌مندی‌ها',
+                          onPressed: () => onToggleFavorite(endpoint),
+                          icon: isBusy
+                              ? const SizedBox.square(
+                                  dimension: 22,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : Icon(
+                                  favorite ? Icons.star_rounded : Icons.star_border,
+                                ),
+                            ),
+                        ),
+                      ),
+                      if (device.levelEndpoints.contains(endpoint))
+                        _LevelControl(
+                          level: level,
+                          enabled: !isBusy && !unavailable && level != null,
+                          onChanged: (value) => onLevelChanged(endpoint, value),
+                        ),
+                    ],
                   );
                 },
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+final class _LevelControl extends StatefulWidget {
+  const _LevelControl({
+    required this.level,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final int? level;
+  final bool enabled;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_LevelControl> createState() => _LevelControlState();
+}
+
+final class _LevelControlState extends State<_LevelControl> {
+  double? _preview;
+
+  @override
+  void didUpdateWidget(_LevelControl oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.level != widget.level || !widget.enabled) _preview = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final level = widget.level;
+    if (level == null) {
+      return const Padding(
+        padding: EdgeInsetsDirectional.only(start: 16, end: 16, bottom: 8),
+        child: Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Text('شدت نور دریافت نشده'),
+        ),
+      );
+    }
+    final confirmed = matterLevelToPercent(level).toDouble();
+    final value = (_preview ?? confirmed).clamp(1, 100);
+    final label = '${toPersianDigits(value.round())}٪';
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(start: 8, end: 8, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsetsDirectional.only(start: 8, end: 8),
+            child: Row(
+              children: <Widget>[
+                const Expanded(child: Text('شدت نور')),
+                Text(label),
+              ],
+            ),
+          ),
+          Slider(
+            value: value,
+            min: 1,
+            max: 100,
+            divisions: 99,
+            label: label,
+            semanticFormatterCallback: (sliderValue) =>
+                '${toPersianDigits(sliderValue.round())} درصد',
+            onChanged: widget.enabled
+                ? (next) => setState(() => _preview = next)
+                : null,
+            // One Matter command is sent when the gesture ends, rather than
+            // flooding a constrained device for every rendered slider frame.
+            onChangeEnd: widget.enabled
+                ? (next) {
+                    setState(() => _preview = null);
+                    widget.onChanged(percentToMatterLevel(next.round()));
+                  }
+                : null,
+          ),
+        ],
       ),
     );
   }
