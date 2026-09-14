@@ -11,6 +11,41 @@ import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  for (final fails in <bool>[false, true]) {
+    testWidgets('optional product discovery preserves controls: failure=$fails', (tester) async {
+      final controller = _DescriptorController(fails: fails);
+      controller.discovery.complete(<int>[1]);
+      final store = _RenameStore()..fail = false;
+      await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+      await tester.pumpAndSettle();
+      expect(find.text(fails ? 'کنترل تک‌خروجی' : 'پریز هوشمند'), findsOneWidget);
+      final toggle = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+      expect(toggle.value, isTrue);
+      expect(toggle.onChanged, isNotNull);
+      toggle.onChanged!(false);
+      await tester.pumpAndSettle();
+      expect(controller.lastCommand, <Object>[7, 1, false]);
+      expect(store.device.isSocket(1), !fails);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await controller.events.close();
+    });
+  }
+
+  testWidgets('slow descriptor does not block controls and late result is safe after dispose', (tester) async {
+    final controller = _DescriptorController();
+    controller.pendingTypes = Completer<Map<int, List<int>>>();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    expect(find.text('کنترل تک‌خروجی'), findsOneWidget);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNotNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.pendingTypes!.complete(<int, List<int>>{1: <int>[0x010a]});
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await controller.events.close();
+  });
+
   testWidgets('restores live state without blocking onboarding on discovery', (
     tester,
   ) async {
@@ -638,6 +673,25 @@ void main() {
     expect(find.textContaining('وضعیت دریافت نشده'), findsNWidgets(2));
     expect(find.byType(SwitchListTile), findsNothing);
   });
+}
+
+class _DescriptorController extends _Controller implements DeviceTypeReader {
+  _DescriptorController({this.fails = false});
+  final bool fails;
+  Completer<Map<int, List<int>>>? pendingTypes;
+  List<Object>? lastCommand;
+
+  @override
+  Future<Map<int, List<int>>> readDeviceTypes(int nodeId) async {
+    if (fails) throw PlatformException(code: 'matter_descriptor_failed');
+    return pendingTypes?.future ?? Future.value(<int, List<int>>{1: <int>[0x010a]});
+  }
+
+  @override
+  Future<void> setOnOff({required int nodeId, required int endpoint, required bool value}) async {
+    lastCommand = <Object>[nodeId, endpoint, value];
+    nodeValues[nodeId] = value;
+  }
 }
 
 class _Controller implements DirectMatterController {
