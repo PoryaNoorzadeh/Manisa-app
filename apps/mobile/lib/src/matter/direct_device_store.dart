@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/persian_digits.dart';
+import 'electrical_measurement.dart';
 
 final class DirectMatterDevice {
   const DirectMatterDevice({
@@ -12,6 +13,7 @@ final class DirectMatterDevice {
     this.channelNames = const <int, String>{},
     this.deviceTypes = const <int, List<int>>{},
     this.levelEndpoints = const <int>[],
+    this.measurementCapabilities = const <int, Set<ElectricalMetric>>{},
   });
 
   final int nodeId;
@@ -20,6 +22,7 @@ final class DirectMatterDevice {
   final Map<int, String> channelNames;
   final Map<int, List<int>> deviceTypes;
   final List<int> levelEndpoints;
+  final Map<int, Set<ElectricalMetric>> measurementCapabilities;
 
   bool isSocket(int endpoint) =>
       (deviceTypes[endpoint] ?? const <int>[]).any((id) => id == 0x010a || id == 0x010b);
@@ -43,6 +46,7 @@ final class DirectMatterDevice {
     Map<int, String>? channelNames,
     Map<int, List<int>>? deviceTypes,
     List<int>? levelEndpoints,
+    Map<int, Set<ElectricalMetric>>? measurementCapabilities,
   }) => DirectMatterDevice(
     nodeId: nodeId,
     name: name ?? this.name,
@@ -50,6 +54,8 @@ final class DirectMatterDevice {
     channelNames: channelNames ?? this.channelNames,
     deviceTypes: deviceTypes ?? this.deviceTypes,
     levelEndpoints: levelEndpoints ?? this.levelEndpoints,
+    measurementCapabilities:
+        measurementCapabilities ?? this.measurementCapabilities,
   );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -58,6 +64,12 @@ final class DirectMatterDevice {
     'onOffEndpoints': onOffEndpoints,
     'deviceTypes': deviceTypes.map((endpoint, types) => MapEntry(endpoint.toString(), types)),
     'levelEndpoints': levelEndpoints,
+    'measurementCapabilities': measurementCapabilities.map(
+      (endpoint, metrics) => MapEntry(
+        endpoint.toString(),
+        metrics.map((metric) => metric.name).toList(growable: false),
+      ),
+    ),
     'channelNames': channelNames.map(
       (endpoint, name) => MapEntry(endpoint.toString(), name),
     ),
@@ -70,6 +82,7 @@ final class DirectMatterDevice {
     final rawNames = json['channelNames'];
     final rawTypes = json['deviceTypes'];
     final rawLevelEndpoints = json['levelEndpoints'];
+    final rawMeasurementCapabilities = json['measurementCapabilities'];
     final types = <int, List<int>>{};
     if (rawTypes != null) {
       if (rawTypes is! Map<String, Object?>) throw const FormatException('invalid device types');
@@ -84,8 +97,38 @@ final class DirectMatterDevice {
       }
     }
     if (nodeId is! int || name is! String || endpoints is! List<Object?> ||
-        (rawLevelEndpoints != null && rawLevelEndpoints is! List<Object?>)) {
+        (rawLevelEndpoints != null && rawLevelEndpoints is! List<Object?>) ||
+        (rawMeasurementCapabilities != null &&
+            rawMeasurementCapabilities is! Map<String, Object?>)) {
       throw const FormatException('invalid direct Matter device');
+    }
+    final measurementCapabilities = <int, Set<ElectricalMetric>>{};
+    if (rawMeasurementCapabilities is Map<String, Object?>) {
+      for (final entry in rawMeasurementCapabilities.entries) {
+        final endpoint = int.tryParse(entry.key);
+        final rawMetrics = entry.value;
+        if (endpoint == null || endpoint <= 0 || rawMetrics is! List<Object?>) {
+          throw const FormatException('invalid measurement capabilities');
+        }
+        final metrics = <ElectricalMetric>{};
+        for (final rawMetric in rawMetrics) {
+          if (rawMetric is! String) {
+            throw const FormatException('invalid measurement capability');
+          }
+          ElectricalMetric? metric;
+          for (final candidate in ElectricalMetric.values) {
+            if (candidate.name == rawMetric) {
+              metric = candidate;
+              break;
+            }
+          }
+          if (metric != null) metrics.add(metric);
+        }
+        if (metrics.isNotEmpty) {
+          measurementCapabilities[endpoint] =
+              Set<ElectricalMetric>.unmodifiable(metrics);
+        }
+      }
     }
     final channelNames = <int, String>{};
     if (rawNames != null) {
@@ -113,6 +156,10 @@ final class DirectMatterDevice {
             return value;
           })
           .toList(growable: false),
+      measurementCapabilities:
+          Map<int, Set<ElectricalMetric>>.unmodifiable(
+            measurementCapabilities,
+          ),
       onOffEndpoints: endpoints
           .map((value) {
             if (value is! int) {
