@@ -50,6 +50,7 @@ void main() {
         name: 'Living Room Switch',
         onOffEndpoints: <int>[1, 2, 3],
         channelNames: <int, String>{1: 'لوستر', 2: 'دیوار'},
+        levelEndpoints: <int>[1],
       );
 
       final decoded = DirectMatterDevice.fromJson(device.toJson());
@@ -58,6 +59,7 @@ void main() {
       expect(decoded.name, device.name);
       expect(decoded.onOffEndpoints, device.onOffEndpoints);
       expect(decoded.channelNames, device.channelNames);
+      expect(decoded.levelEndpoints, <int>[1]);
       expect(decoded.channelName(1, 0), 'لوستر');
       expect(decoded.channelName(3, 2), 'خروجی ۳');
     });
@@ -68,6 +70,7 @@ void main() {
         'onOffEndpoints': <Object?>[11, 12],
       });
       expect(decoded.channelNames, isEmpty);
+      expect(decoded.levelEndpoints, isEmpty);
       expect(decoded.channelName(12, 1), 'خروجی ۲');
     });
 
