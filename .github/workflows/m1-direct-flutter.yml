@@ -188,7 +188,11 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M3.1 capability-based controls candidate
+          Manisa M3.2 capability-based dimmer candidate
+          - LevelControl UI appears only for endpoints returning CurrentLevel
+          - Persian percentage with explicit unknown/unavailable states
+          - One bounded Matter command per completed slider gesture
+          - Command confirmation re-reads the device level
           - Optional Matter Descriptor device type discovery
           - Socket labels only for device-declared plug-in units
           - Single/multiple output controls without guessing physical gangs
