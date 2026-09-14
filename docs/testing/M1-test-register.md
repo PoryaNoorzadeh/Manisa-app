@@ -400,3 +400,16 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 | M3-T08 | فونت بزرگ، TalkBack و لمس اسلایدر توسط کاربر ناآشنا | معوق — UX دستی |
 
 گام بعدی پس از سبزشدن این نامزد: M3.3، کشف اختیاری Electrical Power Measurement / Electrical Energy Measurement و نمایش read-only با واحد و وضعیت stale؛ اگر سخت‌افزار هدف این کلاسترها را نداشته باشد، ابتدا قرارداد capability ثبت و UI پنهان می‌ماند.
+
+
+## تکمیل ساخت M3.1/M3.2 و سامان‌دهی شاخه‌ها — 2026-09-14
+
+- M3-C04 تأیید CI: ساخت 34805197840 برای 0.11.0+15 موفق است.
+- M3-C05 تا M3-C07 تأیید CI: Flutter Analyze و تست‌ها در اجرای 34807457695 برای commit 5f7470564c9044c7e4c468d0786737193603a960 موفق‌اند؛ Go و Runner 34807457725 نیز موفق‌اند. این تأیید شامل تست سخت‌افزاری یا subscription دیمر نیست.
+- M3-C08 تأیید CI: ساخت یکپارچه Android/Matter در [34807457773](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34807457773) موفق است.
+- خروجی: [manisa-m3-v0.12.0-build16-arm64-release-bundle](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34807457773/artifacts/10334291127)، انقضا 2026-09-28؛ checksum مستقل APK برابر OK.
+- SHA-256 APK: ccae535d8d12c1dcb9882fe2d2b64be69190e7757148831b6db3043248faf9f7.
+- دو اجرای اولیه در parse/analyze شکست خوردند؛ در commit نهایی بالا اصلاح و مجموعه تست‌ها دوباره موفق شد.
+- مسیر فعال توسعه اکنون develop است؛ [PR #6](https://github.com/PoryaNoorzadeh/Manisa-app/pull/6) جایگزین زنجیره PRهای #2، #4 و #5 است. PR #3 تلاش کنارگذاشته‌شده بود و بدون ادغام بسته شد. هیچ شاخه‌ای حذف یا force-push نشده است.
+- دفتر مرجع همچنان همین فایل روی main است؛ نسخهٔ develop صرفاً همگام‌سازی سند است.
+- M3-T01 تا M3-T08 و موارد معوق M1/M2 همچنان معوق‌اند. گام بعدی: تکمیل کاستی‌های دیمر (به‌ویژه تأیید وضعیت OnOff پس از فرمان و اشتراک LevelControl)، سپس M3.3 توان/انرژی با کشف قابلیت.
