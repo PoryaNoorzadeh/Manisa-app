@@ -413,3 +413,42 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 - مسیر فعال توسعه اکنون develop است؛ [PR #6](https://github.com/PoryaNoorzadeh/Manisa-app/pull/6) جایگزین زنجیره PRهای #2، #4 و #5 است. PR #3 تلاش کنارگذاشته‌شده بود و بدون ادغام بسته شد. هیچ شاخه‌ای حذف یا force-push نشده است.
 - دفتر مرجع همچنان همین فایل روی main است؛ نسخهٔ develop صرفاً همگام‌سازی سند است.
 - M3-T01 تا M3-T08 و موارد معوق M1/M2 همچنان معوق‌اند. گام بعدی: تکمیل کاستی‌های دیمر (به‌ویژه تأیید وضعیت OnOff پس از فرمان و اشتراک LevelControl)، سپس M3.3 توان/انرژی با کشف قابلیت.
+
+## M3.2.1 — همگام‌سازی زنده دیمر؛ نامزد 0.12.1+17
+
+- کد نامزد: [247cdc7](https://github.com/PoryaNoorzadeh/Manisa-app/commit/247cdc7890c268d16dad425331b99ae1c080cd35)، [PR #7](https://github.com/PoryaNoorzadeh/Manisa-app/pull/7)؛ ادغام squash در `develop`: [c2d43fc](https://github.com/PoryaNoorzadeh/Manisa-app/commit/c2d43fc29637e06af0c34e0e7bb5c5272d274776).
+- CurrentLevel برای endpointهایی که قبلاً LevelControl آن‌ها تأیید شده، از EventChannel مستقل دریافت می‌شود؛ event دستگاه حذف‌شده یا endpoint تأییدنشده نادیده گرفته می‌شود.
+- پس از MoveToLevelWithOnOff، هم CurrentLevel و هم OnOff دوباره خوانده می‌شوند تا اثر فرمان روی وضعیت روشن/خاموش نیز با مقدار واقعی device تأیید شود.
+- حذف موفق device، cache اشتراک LevelControl همان node را پاک می‌کند تا commissioning مجدد در همان اجرای اپ بتواند subscription تازه بسازد.
+
+| شناسه | معیار | وضعیت / شاهد |
+|---|---|---|
+| M3-C09 | decode رویداد level زنده و nullable، endpoint دقیق و نادیده‌گرفتن event دیرهنگام | تأیید CI؛ Flutter Analyze و همه تست‌ها در [34826087315](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34826087315) موفق |
+| M3-C10 | تأیید هم‌زمان CurrentLevel و OnOff پس از فرمان دیمر | تأیید CI در همان اجرا؛ کنترلر شبیه‌سازی‌شده، نه device واقعی |
+| M3-C11 | کامپایل Android/Matter، ساخت و بسته‌بندی ARM64 نسخه‌دار | تأیید CI در [34826087216](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34826087216) |
+| M3-T09 | تغییر فیزیکی شدت نور و مشاهده بدون Refresh | معوق — نیازمند دیمر واقعی؛ subscription نرم‌افزاری آماده است |
+| M3-T10 | فرمان ۱٪/۵۰٪/۱۰۰٪ و تطبیق شدت و وضعیت OnOff واقعی | معوق — نیازمند دیمر و مشاهده خروجی |
+| M3-T11 | حذف، Pairing و commissioning مجدد در همان اجرای اپ؛ دریافت دوباره event زنده | معوق — نیازمند چرخه سخت‌افزاری |
+
+- artifact: [manisa-m3-v0.12.1-build17-arm64-release-bundle](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34826087216/artifacts/10340846494)، انقضا 2026-09-28.
+- APK: `manisa-m3-v0.12.1-build17-arm64-release.apk`، اندازه 64,041,518 بایت؛ SHA-256: `af5bbbabda7115baecad6d9d0e0866c49eb08a9fea97c90a2deeb4ecc87d96b5`.
+- کنترل مستقل بسته پس از دانلود: `sha256sum -c` برابر `OK`.
+- هیچ تست سخت‌افزاری تازه‌ای با این ثبت تأیید نشده است.
+
+## M3.3 — اندازه‌گیری توان و انرژی؛ در حال توسعه
+
+- شاخه فعال: `feature/m3-power-measurement`، [PR #8](https://github.com/PoryaNoorzadeh/Manisa-app/pull/8)، نسخه کاندید `0.13.0+18`.
+- دامنه: کشف واقعی ActivePower، Voltage و ActiveCurrent از cluster `0x0090` و CumulativeEnergyImported از cluster `0x0091`؛ UI فقط برای attribute موجود نشان داده می‌شود.
+- مقدار صفر، supported-null، unsupported و stale چهار وضعیت جدا هستند. capability ذخیره می‌شود ولی مقدار اندازه‌گیری به‌عنوان حقیقت پایدار ذخیره نمی‌شود.
+- ارقام و جداکننده اعشار UI فارسی‌اند؛ QR، SSID و credential تبدیل نمی‌شوند.
+
+| شناسه | تست باقی‌مانده | وضعیت / معیار |
+|---|---|---|
+| M3-C12 | واحدها و scaleهای mW/mV/mA/mWh، صفر/null/unsupported و ارقام فارسی | تست نوشته شده؛ اجرای نهایی CI شاخه develop-based در جریان |
+| M3-C13 | مهاجرت metadata، نمایش widget و حفظ آخرین مقدار با برچسب stale هنگام خطای read | تست نوشته شده؛ اجرای نهایی CI در جریان |
+| M3-C14 | کامپایل TLV bridge با connectedhomeip v1.5.1.0 و APK نسخه‌دار | در انتظار ساخت native |
+| M3-T12 | مقایسه توان/ولتاژ/جریان/انرژی اپ با meter مرجع | معوق — سخت‌افزار اندازه‌گیری و بار معلوم |
+| M3-T13 | قطع بار، صفر واقعی، قطع شبکه و بازیابی refresh | معوق — پریز اندازه‌گیر و شبکه واقعی |
+| M3-T14 | خوانایی کارت مصرف با فونت بزرگ و کاربر ناآشنا | معوق — تست UX روی گوشی |
+
+گام بعدی: سبزکردن native build و artifact نسخه `0.13.0+18`، سپس subscription زنده اندازه‌گیری و آزمون دقت روی سخت‌افزار. موارد معوق M1، M2 و M3 بدون شاهد متناظر تأیید نمی‌شوند و مانع ادامه توسعه نرم‌افزار نیستند.
