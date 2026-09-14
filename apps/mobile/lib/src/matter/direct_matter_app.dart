@@ -623,10 +623,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-  Future<void> _toggleFavorite(
-    DirectMatterDevice device,
-    int endpoint,
-  ) async {
+  Future<void> _toggleFavorite(DirectMatterDevice device, int endpoint) async {
     if (_editingMetadata || !_canUpdate(device.nodeId)) return;
     setState(() => _editingMetadata = true);
     try {
@@ -886,8 +883,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             onAssignRoom: () => _assignRoom(device),
             onManageChannels: () => _manageChannels(device),
             onRefresh: () => _refreshDevice(device),
-            onToggleFavorite: (endpoint) =>
-                _toggleFavorite(device, endpoint),
+            onToggleFavorite: (endpoint) => _toggleFavorite(device, endpoint),
           ),
         ),
     ];
