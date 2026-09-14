@@ -91,6 +91,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   final Map<String, int> _levels = <String, int>{};
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
+  StreamSubscription<DirectMatterLevelEvent>? _levelEvents;
   final Set<int> _refreshingNodes = <int>{};
   final Set<int> _readingCapabilities = <int>{};
   final Set<int> _removingNodes = <int>{};
@@ -114,6 +115,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_events?.cancel());
+    unawaited(_levelEvents?.cancel());
     super.dispose();
   }
 
@@ -177,6 +179,32 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           setState(() => _error = 'Realtime Matter update failed: $error');
         },
       );
+      final controller = widget.controller;
+      if (controller is LevelEventController) {
+        _levelEvents = (controller as LevelEventController).watchLevels().listen(
+          (event) {
+            if (!_canUpdate(event.nodeId)) return;
+            final device = _devices.firstWhere(
+              (item) => item.nodeId == event.nodeId,
+            );
+            if (!device.levelEndpoints.contains(event.endpoint)) return;
+            setState(() {
+              final key = _stateKey(event.nodeId, event.endpoint);
+              if (event.level == null) {
+                _levels.remove(key);
+              } else {
+                _levels[key] = event.level!;
+              }
+              _unavailableNodes.remove(event.nodeId);
+              _deviceErrors.remove(event.nodeId);
+            });
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            if (!mounted) return;
+            setState(() => _error = 'Realtime dimmer update failed: $error');
+          },
+        );
+      }
       // Restore live state without blocking the home screen or onboarding.
       unawaited(_refreshAllStates());
     } catch (error) {
@@ -440,9 +468,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (confirmed == null) {
         throw const FormatException('LevelControl state was not returned');
       }
+      final confirmedOnOff = await widget.controller
+          .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
+          .timeout(_readTimeout);
       if (_canUpdate(device.nodeId)) {
         setState(() {
           _levels[key] = confirmed;
+          _states[key] = confirmedOnOff;
           _unavailableNodes.remove(device.nodeId);
           _deviceErrors.remove(device.nodeId);
         });
@@ -1748,6 +1780,8 @@ final class _MatterErrorNotice extends StatelessWidget {
       return 'حذف تأیید نشد. وسیله در فهرست باقی مانده؛ اتصال آن را بررسی کن و دوباره تلاش کن.';
     if (error.startsWith('Command failed'))
       return 'تغییر وضعیت تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
+    if (error.startsWith('Level command failed'))
+      return 'تغییر شدت نور تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
     if (error.startsWith('Could not save discovered channels'))
       return 'کنترل‌های تازه پیدا شدند، اما ذخیره نشدند. دوباره وضعیت را بررسی کن.';
     if (error.startsWith('Could not refresh') || error.startsWith('Realtime'))
