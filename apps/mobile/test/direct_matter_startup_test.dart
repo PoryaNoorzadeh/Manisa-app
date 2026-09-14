@@ -36,13 +36,13 @@ void main() {
     controller.levelEvents.add(
       const DirectMatterLevelEvent(nodeId: 7, endpoint: 1, level: 64),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('۲۵٪'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     controller.levelEvents.add(
       const DirectMatterLevelEvent(nodeId: 7, endpoint: 1, level: 254),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     await controller.events.close();
     await controller.levelEvents.close();
