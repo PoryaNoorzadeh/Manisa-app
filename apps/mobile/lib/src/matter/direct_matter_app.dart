@@ -90,6 +90,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
   final Set<int> _refreshingNodes = <int>{};
+  final Set<int> _readingTypes = <int>{};
   final Set<int> _removingNodes = <int>{};
   final Set<int> _unavailableNodes = <int>{};
   final Map<int, String> _deviceErrors = <int, String>{};
@@ -262,6 +263,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             _deviceErrors.remove(device.nodeId);
           }
         });
+        unawaited(_refreshDeviceTypes(device.nodeId));
       }
     } catch (error) {
       if (_canUpdate(device.nodeId)) {
@@ -273,6 +275,33 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
     } finally {
       _refreshingNodes.remove(device.nodeId);
+    }
+  }
+
+  Future<void> _refreshDeviceTypes(int nodeId) async {
+    final reader = widget.controller;
+    if (reader is! DeviceTypeReader || !_readingTypes.add(nodeId)) return;
+    try {
+      final types = await (reader as DeviceTypeReader)
+          .readDeviceTypes(nodeId).timeout(_readTimeout);
+      if (types.isEmpty || !_canUpdate(nodeId) || _editingMetadata) return;
+      // Product metadata failures must never disable a working OnOff control.
+      setState(() => _editingMetadata = true);
+      try {
+        final current = _devices.firstWhere((device) => device.nodeId == nodeId);
+        await widget.deviceStore.save(current.copyWith(deviceTypes: types));
+        if (!_canUpdate(nodeId)) return;
+        setState(() {
+          _devices = _devices.map((device) => device.nodeId == nodeId
+              ? device.copyWith(deviceTypes: types) : device).toList();
+        });
+      } finally {
+        if (mounted) setState(() => _editingMetadata = false);
+      }
+    } catch (_) {
+      // Preserve previously read metadata; the next successful refresh retries.
+    } finally {
+      _readingTypes.remove(nodeId);
     }
   }
 
@@ -1058,6 +1087,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
+                      Text(device.productLabel),
                       Text(
                         roomName == null
                             ? '${toPersianDigits(device.onOffEndpoints.length)} خروجی'
@@ -1159,8 +1189,8 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                           : isBusy
                           ? 'در حال انجام…'
                           : state
-                          ? 'روشن'
-                          : 'خاموش',
+                          ? (device.isSocket(endpoint) ? 'برق وصل است' : 'روشن')
+                          : (device.isSocket(endpoint) ? 'برق قطع است' : 'خاموش'),
                     ),
                     value: state,
                     onChanged: isBusy || unavailable
