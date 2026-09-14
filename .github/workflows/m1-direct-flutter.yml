@@ -188,7 +188,10 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M3.2 live dimmer synchronization candidate
+          Manisa M3.3 electrical measurement candidate
+          - Actual Matter electrical attributes determine visible measurements
+          - Read-only power, energy, voltage and current with Persian digits
+          - Real zero, supported-null and stale values remain distinct
           - Realtime CurrentLevel subscription on confirmed dimmer endpoints
           - Level and OnOff readback after every completed dimmer command
           - Late or unrelated LevelControl reports are ignored safely
