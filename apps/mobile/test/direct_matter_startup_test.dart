@@ -13,6 +13,7 @@ import 'package:manisa_mobile/src/matter/room_store.dart';
 void main() {
   testWidgets('shows a Persian dimmer only for a confirmed LevelControl endpoint', (tester) async {
     final controller = _LevelController(initialLevel: 127);
+    controller.nodeValues[7] = false;
     controller.discovery.complete(<int>[1]);
     final store = _RenameStore()..fail = false;
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
@@ -28,8 +29,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(controller.levelCommands, <int>[191]);
     expect(controller.lastLevelEndpoint, 1);
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      isTrue,
+    );
+    controller.levelEvents.add(
+      const DirectMatterLevelEvent(nodeId: 7, endpoint: 1, level: 64),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('۲۵٪'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
+    controller.levelEvents.add(
+      const DirectMatterLevelEvent(nodeId: 7, endpoint: 1, level: 254),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
     await controller.events.close();
+    await controller.levelEvents.close();
   });
 
   testWidgets('nullable dimmer level is explicit and cannot send a guessed value', (tester) async {
@@ -42,6 +58,7 @@ void main() {
     expect(controller.levelCommands, isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
     await controller.events.close();
+    await controller.levelEvents.close();
   });
 
   for (final fails in <bool>[false, true]) {
@@ -728,11 +745,14 @@ class _DescriptorController extends _Controller implements DeviceTypeReader {
 }
 
 class _LevelController extends _Controller
-    implements DeviceTypeReader, LevelControlController {
+    implements DeviceTypeReader, LevelControlController, LevelEventController {
   _LevelController({required this.initialLevel});
   int? initialLevel;
   final List<int> levelCommands = <int>[];
   int? lastLevelEndpoint;
+  // Each test that creates this fixture closes the stream explicitly.
+  // ignore: close_sinks
+  final levelEvents = StreamController<DirectMatterLevelEvent>.broadcast();
 
   @override
   Future<Map<int, List<int>>> readDeviceTypes(int nodeId) async => const <int, List<int>>{};
@@ -745,7 +765,11 @@ class _LevelController extends _Controller
     levelCommands.add(level);
     lastLevelEndpoint = endpoint;
     initialLevel = level;
+    nodeValues[nodeId] = true;
   }
+
+  @override
+  Stream<DirectMatterLevelEvent> watchLevels() => levelEvents.stream;
 }
 
 class _Controller implements DirectMatterController {
