@@ -750,6 +750,8 @@ class _LevelController extends _Controller
   int? initialLevel;
   final List<int> levelCommands = <int>[];
   int? lastLevelEndpoint;
+  // Each test that creates this fixture closes the stream explicitly.
+  // ignore: close_sinks
   final levelEvents = StreamController<DirectMatterLevelEvent>.broadcast();
 
   @override
