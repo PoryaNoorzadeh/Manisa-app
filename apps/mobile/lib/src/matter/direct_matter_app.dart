@@ -1299,7 +1299,6 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                                 ),
                             ),
                         ),
-                      ),
                       if (device.levelEndpoints.contains(endpoint))
                         _LevelControl(
                           level: level,
