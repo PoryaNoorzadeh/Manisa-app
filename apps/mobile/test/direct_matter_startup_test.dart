@@ -621,9 +621,7 @@ void main() {
     controller.discovery.complete(<int>[1]);
     final favoriteStore = _MemoryFavoriteStore(
       catalog: const FavoriteCatalog(
-        outputs: <FavoriteOutput>[
-          FavoriteOutput(nodeId: 7, endpoint: 1),
-        ],
+        outputs: <FavoriteOutput>[FavoriteOutput(nodeId: 7, endpoint: 1)],
       ),
     );
 
