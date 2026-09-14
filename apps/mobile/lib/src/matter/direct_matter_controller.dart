@@ -86,7 +86,18 @@ abstract interface class DeviceTypeReader {
   Future<Map<int, List<int>>> readDeviceTypes(int nodeId);
 }
 
-final class PlatformDirectMatterController implements DirectMatterController, DeviceTypeReader {
+abstract interface class LevelControlController {
+  Future<Map<int, int?>> readLevels(int nodeId);
+
+  Future<void> setLevel({
+    required int nodeId,
+    required int endpoint,
+    required int level,
+  });
+}
+
+final class PlatformDirectMatterController
+    implements DirectMatterController, DeviceTypeReader, LevelControlController {
   const PlatformDirectMatterController({
     MethodChannel methods = const MethodChannel(_methodChannelName),
     EventChannel events = const EventChannel(_eventChannelName),
@@ -116,6 +127,35 @@ final class PlatformDirectMatterController implements DirectMatterController, De
       result[endpoint] = List<int>.unmodifiable(values.cast<int>());
     }
     return result;
+  }
+
+  @override
+  Future<Map<int, int?>> readLevels(int nodeId) async {
+    final raw = await _methods.invokeMapMethod<Object?, Object?>(
+      'readLevels', <String, Object?>{'nodeId': nodeId},
+    );
+    if (raw == null) throw const FormatException('missing LevelControl response');
+    final result = <int, int?>{};
+    for (final entry in raw.entries) {
+      final endpoint = int.tryParse(entry.key.toString());
+      final level = entry.value;
+      if (endpoint == null || endpoint <= 0 ||
+          (level != null && (level is! int || level < 1 || level > 254))) {
+        throw const FormatException('invalid LevelControl response');
+      }
+      result[endpoint] = level as int?;
+    }
+    return result;
+  }
+
+  @override
+  Future<void> setLevel({required int nodeId, required int endpoint, required int level}) {
+    if (level < 1 || level > 254) {
+      throw RangeError.range(level, 1, 254, 'level');
+    }
+    return _methods.invokeMethod<void>('setLevel', <String, Object?>{
+      'nodeId': nodeId, 'endpoint': endpoint, 'level': level,
+    });
   }
 
   @override
