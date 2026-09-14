@@ -43,6 +43,36 @@ void main() {
     });
   });
 
+  group('DirectMatterLevelEvent', () {
+    test('decodes live and nullable level reports', () {
+      final live = DirectMatterLevelEvent.fromMap(<Object?, Object?>{
+        'nodeId': 9,
+        'endpoint': 2,
+        'level': 127,
+      });
+      final unknown = DirectMatterLevelEvent.fromMap(<Object?, Object?>{
+        'nodeId': 9,
+        'endpoint': 2,
+        'level': null,
+      });
+      expect(live.level, 127);
+      expect(unknown.level, isNull);
+    });
+
+    test('rejects out-of-range or malformed reports', () {
+      for (final level in <Object?>[0, 255, '127']) {
+        expect(
+          () => DirectMatterLevelEvent.fromMap(<Object?, Object?>{
+            'nodeId': 9,
+            'endpoint': 2,
+            'level': level,
+          }),
+          throwsFormatException,
+        );
+      }
+    });
+  });
+
   group('DirectMatterDevice', () {
     test('round trips JSON metadata', () {
       const device = DirectMatterDevice(
