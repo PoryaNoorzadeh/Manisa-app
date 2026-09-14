@@ -288,14 +288,18 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       Map<int, int?>? levels;
       if (controller is DeviceTypeReader) {
         try {
-          types = await controller.readDeviceTypes(nodeId).timeout(_readTimeout);
+          types = await (controller as DeviceTypeReader)
+              .readDeviceTypes(nodeId)
+              .timeout(_readTimeout);
         } catch (_) {
           // Type labels are optional and do not gate controls.
         }
       }
       if (controller is LevelControlController) {
         try {
-          levels = await controller.readLevels(nodeId).timeout(_readTimeout);
+          levels = await (controller as LevelControlController)
+              .readLevels(nodeId)
+              .timeout(_readTimeout);
         } catch (_) {
           // Preserve cached capability and existing state on an optional read failure.
         }
@@ -421,16 +425,17 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     final key = _stateKey(device.nodeId, endpoint);
     if (controller is! LevelControlController ||
         _busy.contains(key) || !_canUpdate(device.nodeId)) return;
+    final levelController = controller as LevelControlController;
     final requested = level.clamp(1, 254);
     setState(() {
       _busy.add(key);
       _deviceErrors.remove(device.nodeId);
     });
     try {
-      await controller
+      await levelController
           .setLevel(nodeId: device.nodeId, endpoint: endpoint, level: requested)
           .timeout(_readTimeout);
-      final levels = await controller.readLevels(device.nodeId).timeout(_readTimeout);
+      final levels = await levelController.readLevels(device.nodeId).timeout(_readTimeout);
       final confirmed = levels[endpoint];
       if (confirmed == null) {
         throw const FormatException('LevelControl state was not returned');
@@ -1353,7 +1358,7 @@ final class _LevelControlState extends State<_LevelControl> {
       );
     }
     final confirmed = matterLevelToPercent(level).toDouble();
-    final value = (_preview ?? confirmed).clamp(1, 100);
+    final value = (_preview ?? confirmed).clamp(1, 100).toDouble();
     final label = '${toPersianDigits(value.round())}٪';
     return Padding(
       padding: const EdgeInsetsDirectional.only(start: 8, end: 8, bottom: 8),
