@@ -56,6 +56,34 @@ final class DirectMatterOnOffEvent {
   }
 }
 
+final class DirectMatterLevelEvent {
+  const DirectMatterLevelEvent({
+    required this.nodeId,
+    required this.endpoint,
+    required this.level,
+  });
+
+  final int nodeId;
+  final int endpoint;
+  final int? level;
+
+  factory DirectMatterLevelEvent.fromMap(Map<Object?, Object?> value) {
+    final nodeId = value['nodeId'];
+    final endpoint = value['endpoint'];
+    final level = value['level'];
+    if (nodeId is! int ||
+        endpoint is! int ||
+        (level != null && (level is! int || level < 1 || level > 254))) {
+      throw const FormatException('invalid Matter LevelControl event');
+    }
+    return DirectMatterLevelEvent(
+      nodeId: nodeId,
+      endpoint: endpoint,
+      level: level as int?,
+    );
+  }
+}
+
 abstract interface class DirectMatterController {
   Future<bool> isSupported();
 
@@ -96,19 +124,31 @@ abstract interface class LevelControlController {
   });
 }
 
+abstract interface class LevelEventController {
+  Stream<DirectMatterLevelEvent> watchLevels();
+}
+
 final class PlatformDirectMatterController
-    implements DirectMatterController, DeviceTypeReader, LevelControlController {
+    implements
+        DirectMatterController,
+        DeviceTypeReader,
+        LevelControlController,
+        LevelEventController {
   const PlatformDirectMatterController({
     MethodChannel methods = const MethodChannel(_methodChannelName),
     EventChannel events = const EventChannel(_eventChannelName),
+    EventChannel levelEvents = const EventChannel(_levelEventChannelName),
   })  : _methods = methods,
-        _events = events;
+        _events = events,
+        _levelEvents = levelEvents;
 
   static const String _methodChannelName = 'com.manisa/matter/methods';
   static const String _eventChannelName = 'com.manisa/matter/events';
+  static const String _levelEventChannelName = 'com.manisa/matter/level_events';
 
   final MethodChannel _methods;
   final EventChannel _events;
+  final EventChannel _levelEvents;
 
   @override
   Future<Map<int, List<int>>> readDeviceTypes(int nodeId) async {
@@ -254,6 +294,13 @@ final class PlatformDirectMatterController
       .where((event) => event is Map<Object?, Object?>)
       .cast<Map<Object?, Object?>>()
       .map(DirectMatterOnOffEvent.fromMap);
+
+  @override
+  Stream<DirectMatterLevelEvent> watchLevels() => _levelEvents
+      .receiveBroadcastStream()
+      .where((event) => event is Map<Object?, Object?>)
+      .cast<Map<Object?, Object?>>()
+      .map(DirectMatterLevelEvent.fromMap);
 
   @override
   Future<void> removeDevice(int nodeId) => _methods.invokeMethod<void>(
