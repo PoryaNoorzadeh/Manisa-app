@@ -11,6 +11,39 @@ import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  testWidgets('shows a Persian dimmer only for a confirmed LevelControl endpoint', (tester) async {
+    final controller = _LevelController(initialLevel: 127);
+    controller.discovery.complete(<int>[1]);
+    final store = _RenameStore()..fail = false;
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    expect(find.text('شدت نور'), findsOneWidget);
+    expect(find.text('۵۰٪'), findsOneWidget);
+    expect(store.device.levelEndpoints, <int>[1]);
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    slider.onChanged!(75);
+    await tester.pump();
+    expect(find.text('۷۵٪'), findsOneWidget);
+    slider.onChangeEnd!(75);
+    await tester.pumpAndSettle();
+    expect(controller.levelCommands, <int>[191]);
+    expect(controller.lastLevelEndpoint, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('nullable dimmer level is explicit and cannot send a guessed value', (tester) async {
+    final controller = _LevelController(initialLevel: null);
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    expect(find.text('شدت نور دریافت نشده'), findsOneWidget);
+    expect(find.byType(Slider), findsNothing);
+    expect(controller.levelCommands, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
   for (final fails in <bool>[false, true]) {
     testWidgets('optional product discovery preserves controls: failure=$fails', (tester) async {
       final controller = _DescriptorController(fails: fails);
@@ -691,6 +724,27 @@ class _DescriptorController extends _Controller implements DeviceTypeReader {
   Future<void> setOnOff({required int nodeId, required int endpoint, required bool value}) async {
     lastCommand = <Object>[nodeId, endpoint, value];
     nodeValues[nodeId] = value;
+  }
+}
+
+class _LevelController extends _Controller
+    implements DeviceTypeReader, LevelControlController {
+  _LevelController({required this.initialLevel});
+  int? initialLevel;
+  final List<int> levelCommands = <int>[];
+  int? lastLevelEndpoint;
+
+  @override
+  Future<Map<int, List<int>>> readDeviceTypes(int nodeId) async => const <int, List<int>>{};
+
+  @override
+  Future<Map<int, int?>> readLevels(int nodeId) async => <int, int?>{1: initialLevel};
+
+  @override
+  Future<void> setLevel({required int nodeId, required int endpoint, required int level}) async {
+    levelCommands.add(level);
+    lastLevelEndpoint = endpoint;
+    initialLevel = level;
   }
 }
 
