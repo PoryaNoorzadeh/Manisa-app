@@ -188,7 +188,7 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M2.2 home organization candidate
+          Manisa M2.3 favorites candidate
           - Persian RTL guided onboarding
           - Clear on, off, pending and unavailable states
           - Persistent device and per-output naming
@@ -197,6 +197,8 @@ jobs:
           - Backward-compatible migration of existing unassigned devices
           - Persistent editable home name with a safe legacy default
           - Explicit up/down room ordering without hidden gestures
+          - Persistent one-tap favorites bound to stable device outputs
+          - Persian digits in generated user-facing numbers
           - Explicit output test action during naming
           - Supplied Manisa launcher icon
           Manual Matter hardware acceptance is tracked in docs/testing/M1-test-register.md.
