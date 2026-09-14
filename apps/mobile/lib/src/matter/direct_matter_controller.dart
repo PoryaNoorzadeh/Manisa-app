@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'electrical_measurement.dart';
+
 final class DirectMatterCommissionResult {
   const DirectMatterCommissionResult({
     required this.nodeId,
@@ -128,12 +130,19 @@ abstract interface class LevelEventController {
   Stream<DirectMatterLevelEvent> watchLevels();
 }
 
+abstract interface class ElectricalMeasurementController {
+  Future<Map<int, DirectElectricalMeasurement>> readElectricalMeasurements(
+    int nodeId,
+  );
+}
+
 final class PlatformDirectMatterController
     implements
         DirectMatterController,
         DeviceTypeReader,
         LevelControlController,
-        LevelEventController {
+        LevelEventController,
+        ElectricalMeasurementController {
   const PlatformDirectMatterController({
     MethodChannel methods = const MethodChannel(_methodChannelName),
     EventChannel events = const EventChannel(_eventChannelName),
@@ -149,6 +158,31 @@ final class PlatformDirectMatterController
   final MethodChannel _methods;
   final EventChannel _events;
   final EventChannel _levelEvents;
+
+  @override
+  Future<Map<int, DirectElectricalMeasurement>> readElectricalMeasurements(
+    int nodeId,
+  ) async {
+    final raw = await _methods.invokeMapMethod<Object?, Object?>(
+      'readElectricalMeasurements',
+      <String, Object?>{'nodeId': nodeId},
+    );
+    if (raw == null) {
+      throw const FormatException('missing electrical measurement response');
+    }
+    final result = <int, DirectElectricalMeasurement>{};
+    for (final entry in raw.entries) {
+      final endpoint = int.tryParse(entry.key.toString());
+      final measurement = entry.value;
+      if (endpoint == null ||
+          endpoint <= 0 ||
+          measurement is! Map<Object?, Object?>) {
+        throw const FormatException('invalid electrical measurement response');
+      }
+      result[endpoint] = DirectElectricalMeasurement.fromMap(measurement);
+    }
+    return result;
+  }
 
   @override
   Future<Map<int, List<int>>> readDeviceTypes(int nodeId) async {
