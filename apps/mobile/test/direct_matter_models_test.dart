@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/core/persian_digits.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
+import 'package:manisa_mobile/src/matter/electrical_measurement.dart';
 import 'package:manisa_mobile/src/matter/favorite_store.dart';
 import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
@@ -81,6 +82,12 @@ void main() {
         onOffEndpoints: <int>[1, 2, 3],
         channelNames: <int, String>{1: 'لوستر', 2: 'دیوار'},
         levelEndpoints: <int>[1],
+        measurementCapabilities: <int, Set<ElectricalMetric>>{
+          1: <ElectricalMetric>{
+            ElectricalMetric.activePower,
+            ElectricalMetric.cumulativeEnergyImported,
+          },
+        },
       );
 
       final decoded = DirectMatterDevice.fromJson(device.toJson());
@@ -90,6 +97,13 @@ void main() {
       expect(decoded.onOffEndpoints, device.onOffEndpoints);
       expect(decoded.channelNames, device.channelNames);
       expect(decoded.levelEndpoints, <int>[1]);
+      expect(
+        decoded.measurementCapabilities[1],
+        <ElectricalMetric>{
+          ElectricalMetric.activePower,
+          ElectricalMetric.cumulativeEnergyImported,
+        },
+      );
       expect(decoded.channelName(1, 0), 'لوستر');
       expect(decoded.channelName(3, 2), 'خروجی ۳');
     });
@@ -101,6 +115,7 @@ void main() {
       });
       expect(decoded.channelNames, isEmpty);
       expect(decoded.levelEndpoints, isEmpty);
+      expect(decoded.measurementCapabilities, isEmpty);
       expect(decoded.channelName(12, 1), 'خروجی ۲');
     });
 

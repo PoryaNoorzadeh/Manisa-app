@@ -177,6 +177,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "readLevels" -> withNodeId(call, result) { nodeId ->
                     readLevels(nodeId, result)
                 }
+                "readElectricalMeasurements" -> withNodeId(call, result) { nodeId ->
+                    readElectricalMeasurements(nodeId, result)
+                }
                 "setLevel" -> withNodeAndEndpoint(call, result) { nodeId, endpoint ->
                     val level = call.argument<Number>("level")?.toInt()
                     if (level == null || level !in 1..254) {
@@ -687,6 +690,103 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         else result.error("matter_level_invoke_failed", "Level command returned error", successCode)
                     }
                 }, devicePointer, invoke, 0, 0,
+            )
+        }
+    }
+
+    private fun readElectricalMeasurements(nodeId: Long, result: MethodChannel.Result) {
+        withConnectedDevice(nodeId, result) { devicePointer ->
+            controller.readPath(
+                object : ReportCallback {
+                    override fun onError(
+                        attributePath: ChipAttributePath?,
+                        eventPath: ChipEventPath?,
+                        ex: Exception,
+                    ) {
+                        result.error("matter_electrical_read_failed", ex.message, null)
+                    }
+
+                    override fun onReport(nodeState: NodeState) {
+                        try {
+                            fun nullableLong(tlv: ByteArray): Long? {
+                                val reader = TlvReader(tlv)
+                                return if (reader.isNull()) {
+                                    reader.getNull(AnonymousTag)
+                                    null
+                                } else {
+                                    reader.getLong(AnonymousTag)
+                                }
+                            }
+
+                            fun nullableEnergy(tlv: ByteArray): Long? {
+                                val reader = TlvReader(tlv)
+                                if (reader.isNull()) {
+                                    reader.getNull(AnonymousTag)
+                                    return null
+                                }
+                                reader.enterStructure(AnonymousTag)
+                                return reader.getLong(ContextSpecificTag(0))
+                            }
+
+                            val measurements = mutableMapOf<String, Map<String, Long?>>()
+                            for ((endpoint, state) in nodeState.endpointStates) {
+                                if (endpoint <= 0) continue
+                                val values = mutableMapOf<String, Long?>()
+                                val power = state.getClusterState(0x0090L)
+                                power?.getAttributeState(4L)?.tlv?.let {
+                                    values["voltageMillivolts"] = nullableLong(it)
+                                }
+                                power?.getAttributeState(5L)?.tlv?.let {
+                                    values["activeCurrentMilliamps"] = nullableLong(it)
+                                }
+                                power?.getAttributeState(8L)?.tlv?.let {
+                                    values["activePowerMilliwatts"] = nullableLong(it)
+                                }
+                                state.getClusterState(0x0091L)
+                                    ?.getAttributeState(1L)?.tlv?.let {
+                                        values["cumulativeEnergyImportedMilliwattHours"] =
+                                            nullableEnergy(it)
+                                    }
+                                if (values.isNotEmpty()) {
+                                    measurements[endpoint.toString()] = values
+                                }
+                            }
+                            result.success(measurements)
+                        } catch (error: Exception) {
+                            result.error(
+                                "matter_electrical_read_failed",
+                                error.message ?: "Invalid electrical measurement",
+                                null,
+                            )
+                        }
+                    }
+                },
+                devicePointer,
+                listOf(
+                    ChipAttributePath.newInstance(
+                        ChipPathId.forWildcard(),
+                        ChipPathId.forId(0x0090L),
+                        ChipPathId.forId(4L),
+                    ),
+                    ChipAttributePath.newInstance(
+                        ChipPathId.forWildcard(),
+                        ChipPathId.forId(0x0090L),
+                        ChipPathId.forId(5L),
+                    ),
+                    ChipAttributePath.newInstance(
+                        ChipPathId.forWildcard(),
+                        ChipPathId.forId(0x0090L),
+                        ChipPathId.forId(8L),
+                    ),
+                    ChipAttributePath.newInstance(
+                        ChipPathId.forWildcard(),
+                        ChipPathId.forId(0x0091L),
+                        ChipPathId.forId(1L),
+                    ),
+                ),
+                null,
+                false,
+                0,
             )
         }
     }
