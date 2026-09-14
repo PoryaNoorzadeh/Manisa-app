@@ -4,12 +4,32 @@ import 'src/app.dart';
 import 'src/core/config/app_config.dart';
 import 'src/data/manisa_api.dart';
 import 'src/discovery/hub_discovery.dart';
+import 'src/matter/direct_device_store.dart';
+import 'src/matter/direct_matter_app.dart';
+import 'src/matter/direct_matter_controller.dart';
+import 'src/matter/favorite_store.dart';
+import 'src/matter/home_profile_store.dart';
+import 'src/matter/room_store.dart';
 import 'src/realtime/manisa_realtime.dart';
 import 'src/security/token_store.dart';
 import 'src/state/app_controller.dart';
 
 void main() {
   final config = AppConfig.fromEnvironment();
+
+  if (config.mode == ManisaOperatingMode.directMatter) {
+    runApp(
+      ManisaDirectApp(
+        controller: const PlatformDirectMatterController(),
+        deviceStore: PreferencesDirectDeviceStore(),
+        favoriteStore: PreferencesFavoriteStore(),
+        homeStore: PreferencesHomeProfileStore(),
+        roomStore: PreferencesRoomStore(),
+      ),
+    );
+    return;
+  }
+
   final discovery = MdnsHubDiscovery(fallback: config.hubUri);
   final tokenStore = SecureTokenStore();
   final api = HttpManisaApi(discovery, tokenStore: tokenStore);
