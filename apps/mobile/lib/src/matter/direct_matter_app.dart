@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../core/persian_digits.dart';
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
+import 'favorite_store.dart';
 import 'home_profile_store.dart';
 import 'room_store.dart';
 
@@ -13,6 +15,7 @@ final class ManisaDirectApp extends StatelessWidget {
   const ManisaDirectApp({
     required this.controller,
     required this.deviceStore,
+    this.favoriteStore = const EmptyFavoriteStore(),
     this.homeStore = const EmptyHomeProfileStore(),
     this.roomStore = const EmptyRoomStore(),
     super.key,
@@ -20,6 +23,7 @@ final class ManisaDirectApp extends StatelessWidget {
 
   final DirectMatterController controller;
   final DirectDeviceStore deviceStore;
+  final FavoriteStore favoriteStore;
   final HomeProfileStore homeStore;
   final RoomStore roomStore;
 
@@ -48,6 +52,7 @@ final class ManisaDirectApp extends StatelessWidget {
       home: DirectMatterHomeScreen(
         controller: controller,
         deviceStore: deviceStore,
+        favoriteStore: favoriteStore,
         homeStore: homeStore,
         roomStore: roomStore,
       ),
@@ -59,6 +64,7 @@ final class DirectMatterHomeScreen extends StatefulWidget {
   const DirectMatterHomeScreen({
     required this.controller,
     required this.deviceStore,
+    required this.favoriteStore,
     required this.homeStore,
     required this.roomStore,
     super.key,
@@ -66,6 +72,7 @@ final class DirectMatterHomeScreen extends StatefulWidget {
 
   final DirectMatterController controller;
   final DirectDeviceStore deviceStore;
+  final FavoriteStore favoriteStore;
   final HomeProfileStore homeStore;
   final RoomStore roomStore;
 
@@ -78,6 +85,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   List<DirectMatterDevice> _devices = const <DirectMatterDevice>[];
   RoomCatalog _roomCatalog = const RoomCatalog();
   ManisaHomeProfile _homeProfile = const ManisaHomeProfile();
+  FavoriteCatalog _favorites = const FavoriteCatalog();
   final Map<String, bool> _states = <String, bool>{};
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
@@ -133,15 +141,24 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         widget.deviceStore.load(),
         widget.roomStore.load(),
         widget.homeStore.load(),
+        widget.favoriteStore.load(),
       ]);
       final devices = loaded[0] as List<DirectMatterDevice>;
       final roomCatalog = loaded[1] as RoomCatalog;
       final homeProfile = loaded[2] as ManisaHomeProfile;
+      final favorites = loaded[3] as FavoriteCatalog;
       if (!mounted) return;
       setState(() {
         _devices = devices;
         _roomCatalog = roomCatalog;
         _homeProfile = homeProfile;
+        _favorites = favorites.retain(
+          (favorite) => devices.any(
+            (device) =>
+                device.nodeId == favorite.nodeId &&
+                device.onOffEndpoints.contains(favorite.endpoint),
+          ),
+        );
       });
       _events = widget.controller.watchOnOff().listen(
         (event) {
@@ -527,7 +544,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         content: Text(
           assignedCount == 0
               ? 'اتاق «${room.name}» حذف شود؟'
-              : 'اتاق «${room.name}» حذف شود؟ $assignedCount وسیله به بخش «بدون اتاق» منتقل می‌شود.',
+              : 'اتاق «${room.name}» حذف شود؟ ${toPersianDigits(assignedCount)} وسیله به بخش «بدون اتاق» منتقل می‌شود.',
         ),
         actions: <Widget>[
           TextButton(
@@ -606,6 +623,23 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
+  Future<void> _toggleFavorite(
+    DirectMatterDevice device,
+    int endpoint,
+  ) async {
+    if (_editingMetadata || !_canUpdate(device.nodeId)) return;
+    setState(() => _editingMetadata = true);
+    try {
+      final next = _favorites.toggle(device.nodeId, endpoint);
+      await widget.favoriteStore.save(next);
+      if (mounted) setState(() => _favorites = next);
+    } catch (_) {
+      _showMetadataError();
+    } finally {
+      if (mounted) setState(() => _editingMetadata = false);
+    }
+  }
+
   Future<void> _removeDevice(DirectMatterDevice device) async {
     if (_editingMetadata) return;
     if (_removingNodes.contains(device.nodeId)) return;
@@ -650,9 +684,17 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       final nextRoomCatalog = _roomCatalog.assignDevice(device.nodeId, null);
       await widget.roomStore.save(nextRoomCatalog);
       await widget.deviceStore.remove(device.nodeId);
+      final nextFavorites = _favorites.removeDevice(device.nodeId);
+      try {
+        await widget.favoriteStore.save(nextFavorites);
+      } catch (_) {
+        // A stale favorite is filtered on the next load and must not turn a
+        // confirmed Matter removal into a false failure.
+      }
       if (mounted) {
         setState(() {
           _roomCatalog = nextRoomCatalog;
+          _favorites = nextFavorites;
           _devices = _devices
               .where((item) => item.nodeId != device.nodeId)
               .toList(growable: false);
@@ -702,6 +744,70 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     return sections;
   }
 
+  List<Widget> _favoriteSection(BuildContext context) {
+    final resolved = <(FavoriteOutput, DirectMatterDevice, int)>[];
+    for (final favorite in _favorites.outputs) {
+      final deviceIndex = _devices.indexWhere(
+        (device) => device.nodeId == favorite.nodeId,
+      );
+      if (deviceIndex < 0) continue;
+      final device = _devices[deviceIndex];
+      final outputIndex = device.onOffEndpoints.indexOf(favorite.endpoint);
+      if (outputIndex < 0) continue;
+      resolved.add((favorite, device, outputIndex));
+    }
+    if (resolved.isEmpty) return const <Widget>[];
+    return <Widget>[
+      Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(4, 16, 4, 8),
+        child: Row(
+          children: <Widget>[
+            const Icon(Icons.star_rounded, size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'علاقه‌مندی‌ها',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            Text('${toPersianDigits(resolved.length)} خروجی'),
+          ],
+        ),
+      ),
+      Card(
+        child: Column(
+          children: <Widget>[
+            for (final item in resolved)
+              _FavoriteOutputTile(
+                device: item.$2,
+                endpoint: item.$1.endpoint,
+                outputIndex: item.$3,
+                roomName: _roomNameForDevice(item.$2.nodeId),
+                state: _states[_stateKey(item.$2.nodeId, item.$1.endpoint)],
+                busy: _busy.contains(
+                  _stateKey(item.$2.nodeId, item.$1.endpoint),
+                ),
+                unavailable: _unavailableNodes.contains(item.$2.nodeId),
+                onChanged: (value) =>
+                    _setOnOff(item.$2, item.$1.endpoint, value),
+                onRemove: () => _toggleFavorite(item.$2, item.$1.endpoint),
+                onRefresh: () => _refreshDevice(item.$2),
+              ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  String? _roomNameForDevice(int nodeId) {
+    final roomId = _roomCatalog.roomIdForDevice(nodeId);
+    if (roomId == null) return null;
+    for (final room in _roomCatalog.rooms) {
+      if (room.id == roomId) return room.name;
+    }
+    return null;
+  }
+
   List<Widget> _roomSection(
     BuildContext context, {
     ManisaRoom? room,
@@ -722,7 +828,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
-            Text('${devices.length} وسیله'),
+            Text('${toPersianDigits(devices.length)} وسیله'),
             if (room != null)
               PopupMenuButton<String>(
                 tooltip: 'تنظیمات اتاق',
@@ -773,12 +879,15 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             busy: _busy,
             error: _deviceErrors[device.nodeId],
             unavailable: _unavailableNodes.contains(device.nodeId),
+            favorites: _favorites,
             onChanged: (endpoint, value) => _setOnOff(device, endpoint, value),
             onRemove: () => _removeDevice(device),
             onRename: () => _renameDevice(device),
             onAssignRoom: () => _assignRoom(device),
             onManageChannels: () => _manageChannels(device),
             onRefresh: () => _refreshDevice(device),
+            onToggleFavorite: (endpoint) =>
+                _toggleFavorite(device, endpoint),
           ),
         ),
     ];
@@ -857,6 +966,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                     ),
                   ],
                   const SizedBox(height: 24),
+                  if (_favorites.outputs.isNotEmpty)
+                    ..._favoriteSection(context),
                   if (_devices.isEmpty && _roomCatalog.rooms.isEmpty)
                     const _EmptyDirectMatterState(),
                   if (_devices.isNotEmpty || _roomCatalog.rooms.isNotEmpty)
@@ -904,12 +1015,14 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.busy,
     required this.error,
     required this.unavailable,
+    required this.favorites,
     required this.onChanged,
     required this.onRemove,
     required this.onRename,
     required this.onAssignRoom,
     required this.onManageChannels,
     required this.onRefresh,
+    required this.onToggleFavorite,
   });
 
   final DirectMatterDevice device;
@@ -918,12 +1031,14 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final Set<String> busy;
   final String? error;
   final bool unavailable;
+  final FavoriteCatalog favorites;
   final void Function(int endpoint, bool value) onChanged;
   final VoidCallback onRemove;
   final VoidCallback onRename;
   final VoidCallback onAssignRoom;
   final VoidCallback onManageChannels;
   final VoidCallback onRefresh;
+  final void Function(int endpoint) onToggleFavorite;
 
   String _key(int endpoint) => '${device.nodeId}:$endpoint';
 
@@ -949,8 +1064,8 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                       ),
                       Text(
                         roomName == null
-                            ? '${device.onOffEndpoints.length} خروجی'
-                            : '${device.onOffEndpoints.length} خروجی · $roomName',
+                            ? '${toPersianDigits(device.onOffEndpoints.length)} خروجی'
+                            : '${toPersianDigits(device.onOffEndpoints.length)} خروجی · $roomName',
                       ),
                     ],
                   ),
@@ -1010,6 +1125,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   final key = _key(endpoint);
                   final state = states[key];
                   final isBusy = busy.contains(key);
+                  final favorite = favorites.contains(device.nodeId, endpoint);
                   if (state == null) {
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
@@ -1019,7 +1135,15 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: const Text('وضعیت دریافت نشده'),
-                      leading: const Icon(Icons.help_outline),
+                      leading: IconButton(
+                        tooltip: favorite
+                            ? 'حذف از علاقه‌مندی‌ها'
+                            : 'افزودن به علاقه‌مندی‌ها',
+                        onPressed: () => onToggleFavorite(endpoint),
+                        icon: Icon(
+                          favorite ? Icons.star_rounded : Icons.star_border,
+                        ),
+                      ),
                       trailing: TextButton(
                         onPressed: isBusy ? null : onRefresh,
                         child: const Text('بررسی'),
@@ -1046,19 +1170,89 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                     onChanged: isBusy || unavailable
                         ? null
                         : (next) => onChanged(endpoint, next),
-                    secondary: isBusy
-                        ? const SizedBox.square(
-                            dimension: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(
-                            state ? Icons.lightbulb : Icons.lightbulb_outline,
-                          ),
+                    secondary: IconButton(
+                      tooltip: favorite
+                          ? 'حذف از علاقه‌مندی‌ها'
+                          : 'افزودن به علاقه‌مندی‌ها',
+                      onPressed: () => onToggleFavorite(endpoint),
+                      icon: isBusy
+                          ? const SizedBox.square(
+                              dimension: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              favorite ? Icons.star_rounded : Icons.star_border,
+                            ),
+                    ),
                   );
                 },
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+final class _FavoriteOutputTile extends StatelessWidget {
+  const _FavoriteOutputTile({
+    required this.device,
+    required this.endpoint,
+    required this.outputIndex,
+    required this.roomName,
+    required this.state,
+    required this.busy,
+    required this.unavailable,
+    required this.onChanged,
+    required this.onRemove,
+    required this.onRefresh,
+  });
+
+  final DirectMatterDevice device;
+  final int endpoint;
+  final int outputIndex;
+  final String? roomName;
+  final bool? state;
+  final bool busy;
+  final bool unavailable;
+  final ValueChanged<bool> onChanged;
+  final VoidCallback onRemove;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitlePrefix = roomName == null
+        ? device.name
+        : '${device.name} · $roomName';
+    final value = state;
+    if (value == null) {
+      return ListTile(
+        title: Text(device.channelName(endpoint, outputIndex)),
+        subtitle: Text('$subtitlePrefix · وضعیت دریافت نشده'),
+        leading: IconButton(
+          tooltip: 'حذف از علاقه‌مندی‌ها',
+          onPressed: onRemove,
+          icon: const Icon(Icons.star_rounded),
+        ),
+        trailing: TextButton(
+          onPressed: busy ? null : onRefresh,
+          child: const Text('بررسی'),
+        ),
+      );
+    }
+    return SwitchListTile.adaptive(
+      title: Text(device.channelName(endpoint, outputIndex)),
+      subtitle: Text(
+        unavailable
+            ? '$subtitlePrefix · در دسترس نیست؛ آخرین وضعیت: ${value ? 'روشن' : 'خاموش'}'
+            : '$subtitlePrefix · ${value ? 'روشن' : 'خاموش'}',
+      ),
+      value: value,
+      onChanged: busy || unavailable ? null : onChanged,
+      secondary: IconButton(
+        tooltip: 'حذف از علاقه‌مندی‌ها',
+        onPressed: onRemove,
+        icon: const Icon(Icons.star_rounded),
       ),
     );
   }
@@ -1211,7 +1405,7 @@ final class _DirectMatterAddDeviceScreenState
           padding: const EdgeInsets.all(24),
           children: <Widget>[
             Text(
-              'مرحلهٔ ${_step + 1} از ۳',
+              'مرحلهٔ ${toPersianDigits(_step + 1)} از ۳',
               style: Theme.of(context).textTheme.labelLarge,
             ),
             const SizedBox(height: 8),
@@ -1758,7 +1952,9 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
                 controller: _names[widget.device.onOffEndpoints[index]],
                 enabled: !_saving && _testing == null,
                 maxLength: 40,
-                decoration: InputDecoration(labelText: 'خروجی ${index + 1}'),
+                decoration: InputDecoration(
+                  labelText: 'خروجی ${toPersianDigits(index + 1)}',
+                ),
               ),
               Align(
                 alignment: AlignmentDirectional.centerStart,
