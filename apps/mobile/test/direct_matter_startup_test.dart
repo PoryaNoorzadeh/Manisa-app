@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_app.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
+import 'package:manisa_mobile/src/matter/favorite_store.dart';
 import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
@@ -33,6 +34,7 @@ void main() {
     expect(controller.discoveryCalls, 1);
     await tester.tap(find.text('افزودن وسیله'));
     await tester.pumpAndSettle();
+    expect(find.text('مرحلهٔ ۱ از ۳'), findsOneWidget);
     expect(find.text('کد اتصال'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -432,7 +434,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(roomStore.catalog.roomIdForDevice(7), isNotNull);
-    expect(find.textContaining('1 خروجی · پذیرایی'), findsOneWidget);
+    expect(find.textContaining('۱ خروجی · پذیرایی'), findsOneWidget);
     expect(find.text('بدون اتاق'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -447,7 +449,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('پذیرایی'), findsOneWidget);
-    expect(find.textContaining('1 خروجی · پذیرایی'), findsOneWidget);
+    expect(find.textContaining('۱ خروجی · پذیرایی'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -576,6 +578,67 @@ void main() {
         .toList();
     expect(titles.indexOf('اتاق خواب'), lessThan(titles.indexOf('پذیرایی')));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('adds a favorite output and restores its one-tap control', (
+    tester,
+  ) async {
+    final controller = _Controller();
+    controller.discovery.complete(<int>[1]);
+    final favoriteStore = _MemoryFavoriteStore();
+
+    Future<void> showApp() => tester.pumpWidget(
+      ManisaDirectApp(
+        controller: controller,
+        deviceStore: _Store(),
+        favoriteStore: favoriteStore,
+      ),
+    );
+
+    await showApp();
+    await tester.pumpAndSettle();
+    expect(find.text('علاقه‌مندی‌ها'), findsNothing);
+
+    await tester.tap(find.byTooltip('افزودن به علاقه‌مندی‌ها'));
+    await tester.pumpAndSettle();
+    expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
+    expect(find.text('۱ خروجی'), findsWidgets);
+    expect(favoriteStore.catalog.contains(7, 1), isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await showApp();
+    await tester.pumpAndSettle();
+
+    expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
+    expect(find.byType(SwitchListTile), findsNWidgets(2));
+    expect(find.byTooltip('حذف از علاقه‌مندی‌ها'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('favorite preserves truthful unknown state', (tester) async {
+    final controller = _Controller(readFails: true);
+    controller.discovery.complete(<int>[1]);
+    final favoriteStore = _MemoryFavoriteStore(
+      catalog: const FavoriteCatalog(
+        outputs: <FavoriteOutput>[
+          FavoriteOutput(nodeId: 7, endpoint: 1),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      ManisaDirectApp(
+        controller: controller,
+        deviceStore: _Store(),
+        favoriteStore: favoriteStore,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
+    expect(find.textContaining('وضعیت دریافت نشده'), findsNWidgets(2));
+    expect(find.byType(SwitchListTile), findsNothing);
   });
 }
 
@@ -733,5 +796,19 @@ class _MemoryHomeStore implements HomeProfileStore {
   @override
   Future<void> save(ManisaHomeProfile value) async {
     profile = value;
+  }
+}
+
+class _MemoryFavoriteStore implements FavoriteStore {
+  _MemoryFavoriteStore({this.catalog = const FavoriteCatalog()});
+
+  FavoriteCatalog catalog;
+
+  @override
+  Future<FavoriteCatalog> load() async => catalog;
+
+  @override
+  Future<void> save(FavoriteCatalog value) async {
+    catalog = value;
   }
 }
