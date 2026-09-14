@@ -6,11 +6,47 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_app.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
+import 'package:manisa_mobile/src/matter/electrical_measurement.dart';
 import 'package:manisa_mobile/src/matter/favorite_store.dart';
 import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  testWidgets('shows only supported electrical values and marks stale data', (
+    tester,
+  ) async {
+    final controller = _ElectricalController();
+    controller.discovery.complete(<int>[1]);
+    final store = _RenameStore()..fail = false;
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: store),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('مصرف برق'), findsOneWidget);
+    expect(find.text('توان فعلی'), findsOneWidget);
+    expect(find.text('۰ وات'), findsOneWidget);
+    expect(find.text('انرژی مصرف‌شده'), findsOneWidget);
+    expect(find.text('۱٫۵ کیلووات‌ساعت'), findsOneWidget);
+    expect(find.text('ولتاژ'), findsOneWidget);
+    expect(find.text('دریافت نشده'), findsOneWidget);
+    expect(find.text('جریان'), findsNothing);
+    expect(
+      store.device.measurementCapabilities[1],
+      <ElectricalMetric>{
+        ElectricalMetric.activePower,
+        ElectricalMetric.voltage,
+        ElectricalMetric.cumulativeEnergyImported,
+      },
+    );
+
+    controller.failMeasurements = true;
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+    expect(find.text('نیاز به به‌روزرسانی'), findsOneWidget);
+    expect(find.text('۰ وات'), findsOneWidget);
+  });
+
   testWidgets('shows a Persian dimmer only for a confirmed LevelControl endpoint', (tester) async {
     final controller = _LevelController(initialLevel: 127);
     controller.nodeValues[7] = false;
@@ -770,6 +806,32 @@ class _LevelController extends _Controller
 
   @override
   Stream<DirectMatterLevelEvent> watchLevels() => levelEvents.stream;
+}
+
+class _ElectricalController extends _Controller
+    implements ElectricalMeasurementController {
+  bool failMeasurements = false;
+
+  @override
+  Future<Map<int, DirectElectricalMeasurement>> readElectricalMeasurements(
+    int nodeId,
+  ) async {
+    if (failMeasurements) {
+      throw PlatformException(code: 'matter_electrical_read_failed');
+    }
+    return <int, DirectElectricalMeasurement>{
+      1: const DirectElectricalMeasurement(
+        supported: <ElectricalMetric>{
+          ElectricalMetric.activePower,
+          ElectricalMetric.voltage,
+          ElectricalMetric.cumulativeEnergyImported,
+        },
+        activePowerMilliwatts: 0,
+        voltageMillivolts: null,
+        cumulativeEnergyImportedMilliwattHours: 1500000,
+      ),
+    };
+  }
 }
 
 class _Controller implements DirectMatterController {
