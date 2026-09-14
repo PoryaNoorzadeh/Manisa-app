@@ -82,7 +82,11 @@ abstract interface class DirectMatterController {
   Future<void> removeDevice(int nodeId);
 }
 
-final class PlatformDirectMatterController implements DirectMatterController {
+abstract interface class DeviceTypeReader {
+  Future<Map<int, List<int>>> readDeviceTypes(int nodeId);
+}
+
+final class PlatformDirectMatterController implements DirectMatterController, DeviceTypeReader {
   const PlatformDirectMatterController({
     MethodChannel methods = const MethodChannel(_methodChannelName),
     EventChannel events = const EventChannel(_eventChannelName),
@@ -94,6 +98,25 @@ final class PlatformDirectMatterController implements DirectMatterController {
 
   final MethodChannel _methods;
   final EventChannel _events;
+
+  @override
+  Future<Map<int, List<int>>> readDeviceTypes(int nodeId) async {
+    final raw = await _methods.invokeMapMethod<Object?, Object?>(
+      'readDeviceTypes', <String, Object?>{'nodeId': nodeId},
+    );
+    if (raw == null) throw const FormatException('missing device types');
+    final result = <int, List<int>>{};
+    for (final entry in raw.entries) {
+      final endpoint = int.tryParse(entry.key.toString());
+      final values = entry.value;
+      if (endpoint == null || endpoint < 0 || values is! List ||
+          values.any((value) => value is! int || value < 0)) {
+        throw const FormatException('invalid device types');
+      }
+      result[endpoint] = List<int>.unmodifiable(values.cast<int>());
+    }
+    return result;
+  }
 
   @override
   Future<bool> isSupported() async =>
