@@ -41,6 +41,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.util.Arrays
 import matter.onboardingpayload.OnboardingPayloadParser
 import matter.tlv.AnonymousTag
+import matter.tlv.ContextSpecificTag
 import matter.tlv.TlvReader
 import matter.tlv.TlvWriter
 
@@ -156,6 +157,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "commissionWifi" -> commissionWifi(call, result)
                 "discoverOnOffEndpoints" -> withNodeId(call, result) { nodeId ->
                     discoverOnOffEndpoints(nodeId, result, subscribe = true)
+                }
+                "readDeviceTypes" -> withNodeId(call, result) { nodeId ->
+                    readDeviceTypes(nodeId, result)
                 }
                 "readOnOff" -> withNodeAndEndpoint(call, result) { nodeId, endpoint ->
                     readOnOff(nodeId, endpoint, result)
@@ -495,6 +499,53 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 null,
                 false,
                 0,
+            )
+        }
+    }
+
+    private fun readDeviceTypes(nodeId: Long, result: MethodChannel.Result) {
+        withConnectedDevice(nodeId, result) { devicePointer ->
+            var finished = false
+            fun finish(value: Map<String, List<Long>>?, error: String?) {
+                runOnUiThread {
+                    if (!finished) {
+                        finished = true
+                        if (error == null) result.success(value)
+                        else result.error("matter_descriptor_failed", error, null)
+                    }
+                }
+            }
+            controller.readPath(
+                object : ReportCallback {
+                    override fun onError(attributePath: ChipAttributePath?, eventPath: ChipEventPath?, ex: Exception) {
+                        finish(null, ex.message ?: "Descriptor read failed")
+                    }
+                    override fun onReport(nodeState: NodeState) {
+                        try {
+                            val types = mutableMapOf<String, List<Long>>()
+                            for ((endpoint, state) in nodeState.endpointStates) {
+                                val tlv = state.getClusterState(0x001DL)?.getAttributeState(0L)?.tlv ?: continue
+                                val reader = TlvReader(tlv)
+                                val ids = mutableListOf<Long>()
+                                reader.enterArray(AnonymousTag)
+                                while (!reader.isEndOfContainer()) {
+                                    reader.enterStructure(AnonymousTag)
+                                    ids.add(reader.getUInt(ContextSpecificTag(0)).toLong())
+                                    reader.getUShort(ContextSpecificTag(1))
+                                    reader.exitContainer()
+                                }
+                                reader.exitContainer()
+                                types[endpoint.toString()] = ids
+                            }
+                            finish(types, null)
+                        } catch (error: Exception) {
+                            finish(null, error.message ?: "Invalid Descriptor")
+                        }
+                    }
+                }, devicePointer,
+                listOf(ChipAttributePath.newInstance(
+                    ChipPathId.forWildcard(), ChipPathId.forId(0x001DL), ChipPathId.forId(0L),
+                )), null, false, 0,
             )
         }
     }
