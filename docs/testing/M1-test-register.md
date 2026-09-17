@@ -435,20 +435,29 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 - کنترل مستقل بسته پس از دانلود: `sha256sum -c` برابر `OK`.
 - هیچ تست سخت‌افزاری تازه‌ای با این ثبت تأیید نشده است.
 
-## M3.3 — اندازه‌گیری توان و انرژی؛ در حال توسعه
+## M3.3 — اندازه‌گیری توان و انرژی؛ نامزد 0.13.0+18
 
-- شاخه فعال: `feature/m3-power-measurement`، [PR #8](https://github.com/PoryaNoorzadeh/Manisa-app/pull/8)، نسخه کاندید `0.13.0+18`.
-- دامنه: کشف واقعی ActivePower، Voltage و ActiveCurrent از cluster `0x0090` و CumulativeEnergyImported از cluster `0x0091`؛ UI فقط برای attribute موجود نشان داده می‌شود.
+- شاخه و PR: `feature/m3-power-measurement`، [PR #8](https://github.com/PoryaNoorzadeh/Manisa-app/pull/8)؛ commit نهایی [1829004](https://github.com/PoryaNoorzadeh/Manisa-app/commit/1829004e91c9600e974f2f04db8d93e526bd80f4). هنوز به `develop` merge نشده و نامزد انتشار عمومی نیست.
+- دامنه پیاده‌سازی: کشف واقعی ActivePower، Voltage و ActiveCurrent از cluster `0x0090` و CumulativeEnergyImported از cluster `0x0091`؛ UI فقط برای attribute موجود نمایش داده می‌شود.
 - مقدار صفر، supported-null، unsupported و stale چهار وضعیت جدا هستند. capability ذخیره می‌شود ولی مقدار اندازه‌گیری به‌عنوان حقیقت پایدار ذخیره نمی‌شود.
-- ارقام و جداکننده اعشار UI فارسی‌اند؛ QR، SSID و credential تبدیل نمی‌شوند.
+- واحدهای Matter به‌درستی به وات، ولت، آمپر و کیلووات‌ساعت تبدیل می‌شوند؛ ارقام و جداکننده اعشار UI فارسی‌اند؛ QR، SSID و credential تبدیل نمی‌شوند.
 
-| شناسه | تست باقی‌مانده | وضعیت / معیار |
+| شناسه | تست/شاهد | وضعیت |
 |---|---|---|
-| M3-C12 | واحدها و scaleهای mW/mV/mA/mWh، صفر/null/unsupported و ارقام فارسی | تست نوشته شده؛ اجرای نهایی CI شاخه develop-based در جریان |
-| M3-C13 | مهاجرت metadata، نمایش widget و حفظ آخرین مقدار با برچسب stale هنگام خطای read | تست نوشته شده؛ اجرای نهایی CI در جریان |
-| M3-C14 | کامپایل TLV bridge با connectedhomeip v1.5.1.0 و APK نسخه‌دار | در انتظار ساخت native |
-| M3-T12 | مقایسه توان/ولتاژ/جریان/انرژی اپ با meter مرجع | معوق — سخت‌افزار اندازه‌گیری و بار معلوم |
-| M3-T13 | قطع بار، صفر واقعی، قطع شبکه و بازیابی refresh | معوق — پریز اندازه‌گیر و شبکه واقعی |
-| M3-T14 | خوانایی کارت مصرف با فونت بزرگ و کاربر ناآشنا | معوق — تست UX روی گوشی |
+| M3-C12 | واحدها و scaleهای mW/mV/mA/mWh، صفر/null/unsupported و ارقام فارسی | تأیید CI؛ Flutter Analyze و تست‌های کامل در [34827896509](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34827896509) سبز هستند |
+| M3-C13 | مهاجرت metadata، نمایش widget و حفظ آخرین مقدار با برچسب stale هنگام خطای read | تأیید CI؛ در همان تست‌های Flutter و Validate Flutter پوشش داده شده |
+| M3-C14 | کامپایل Kotlin/TLV با connectedhomeip v1.5.1.0 و ساخت APK یکپارچه ARM64 | تأیید در [34827896498](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34827896498)؛ integrated release سبز |
+| M3-C15 | job عمومی debug APK | نیازمند اصلاح زیرساخت CI؛ plugin `com.android.application:9.1.0` در Gradle Portal پیدا نشد؛ روی artifact یکپارچه اثر ندارد |
 
-گام بعدی: سبزکردن native build و artifact نسخه `0.13.0+18`، سپس subscription زنده اندازه‌گیری و آزمون دقت روی سخت‌افزار. موارد معوق M1، M2 و M3 بدون شاهد متناظر تأیید نمی‌شوند و مانع ادامه توسعه نرم‌افزار نیستند.
+- artifact: [manisa-m3-v0.13.0-build18-arm64-release-bundle](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34827896498/artifacts/10341089962)، انقضا 2026-09-28.
+- APK: `manisa-m3-v0.13.0-build18-arm64-release.apk`، اندازه 64,041,590 بایت؛ SHA-256: `3b208bb697ad0ce5240962b0deb013cc616a2f33b8126a9cd081a345ac63ca93`.
+- کنترل مستقل بسته پس از دانلود: `sha256sum -c` برابر `OK`.
+- هیچ تست سخت‌افزاری اندازه‌گیری یا دقت meter با این ثبت تأیید نشده است.
+
+| شناسه | تست واقعی/کار باقی‌مانده | معیار قبولی | وضعیت |
+|---|---|---|---|
+| M3-T12 | مقایسه توان/ولتاژ/جریان/انرژی اپ با meter مرجع | خطای اندازه‌گیری و واحدها ثبت شود | معوق — سخت‌افزار اندازه‌گیری و بار معلوم |
+| M3-T13 | قطع بار، صفر واقعی، قطع شبکه و بازیابی refresh | صفر واقعی با نامشخص اشتباه نشود و recovery بدون commissioning مجدد باشد | معوق — پریز اندازه‌گیر و شبکه واقعی |
+| M3-T14 | خوانایی کارت مصرف با فونت بزرگ و کاربر ناآشنا | ارقام و وضعیت stale واضح و قابل فهم باشند | معوق — تست UX روی گوشی |
+
+گام بعدی: merge کردن PR #8 به `develop`، رفع/بی‌اثرکردن job debug عمومی، سپس توسعه subscription زنده اندازه‌گیری‌ها و آزمون دقت روی سخت‌افزار. موارد معوق M1، M2 و M3 بدون شاهد متناظر تأیید نمی‌شوند و مانع ادامه توسعه نرم‌افزار نیستند.
