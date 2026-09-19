@@ -7,6 +7,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../core/persian_digits.dart';
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
+import 'electrical_measurement.dart';
 import 'favorite_store.dart';
 import 'home_profile_store.dart';
 import 'level_control.dart';
@@ -89,6 +90,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   FavoriteCatalog _favorites = const FavoriteCatalog();
   final Map<String, bool> _states = <String, bool>{};
   final Map<String, int> _levels = <String, int>{};
+  final Map<String, DirectElectricalMeasurement> _electricalMeasurements =
+      <String, DirectElectricalMeasurement>{};
+  final Set<int> _staleMeasurementNodes = <int>{};
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
   StreamSubscription<DirectMatterLevelEvent>? _levelEvents;
@@ -314,6 +318,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     try {
       Map<int, List<int>>? types;
       Map<int, int?>? levels;
+      Map<int, DirectElectricalMeasurement>? measurements;
       if (controller is DeviceTypeReader) {
         try {
           types = await (controller as DeviceTypeReader)
@@ -332,7 +337,23 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           // Preserve cached capability and existing state on an optional read failure.
         }
       }
-      if ((types == null || types.isEmpty) && levels == null) return;
+      if (controller is ElectricalMeasurementController) {
+        try {
+          measurements =
+              await (controller as ElectricalMeasurementController)
+                  .readElectricalMeasurements(nodeId)
+                  .timeout(_readTimeout);
+        } catch (_) {
+          if (_canUpdate(nodeId)) {
+            setState(() => _staleMeasurementNodes.add(nodeId));
+          }
+        }
+      }
+      if ((types == null || types.isEmpty) &&
+          levels == null &&
+          measurements == null) {
+        return;
+      }
       if (!_canUpdate(nodeId) || _editingMetadata) return;
       // Product metadata failures must never disable a working OnOff control.
       setState(() => _editingMetadata = true);
@@ -341,6 +362,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         final updated = current.copyWith(
           deviceTypes: types == null || types.isEmpty ? null : types,
           levelEndpoints: levels?.keys.toList(growable: false),
+          measurementCapabilities: measurements?.map(
+            (endpoint, value) => MapEntry(endpoint, value.supported),
+          ),
         );
         await widget.deviceStore.save(updated);
         if (!_canUpdate(nodeId)) return;
@@ -357,6 +381,16 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                 _levels[key] = entry.value!;
               }
             }
+          }
+          if (measurements != null) {
+            _electricalMeasurements.removeWhere(
+              (key, _) => key.startsWith('$nodeId:'),
+            );
+            for (final entry in measurements.entries) {
+              _electricalMeasurements[_stateKey(nodeId, entry.key)] =
+                  entry.value;
+            }
+            _staleMeasurementNodes.remove(nodeId);
           }
         });
       } finally {
@@ -831,10 +865,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               .where((item) => item.nodeId != device.nodeId)
               .toList(growable: false);
           _unavailableNodes.remove(device.nodeId);
+          _staleMeasurementNodes.remove(device.nodeId);
           _deviceErrors.remove(device.nodeId);
           for (final endpoint in device.onOffEndpoints) {
             _states.remove(_stateKey(device.nodeId, endpoint));
           }
+          _electricalMeasurements.removeWhere(
+            (key, _) => key.startsWith('${device.nodeId}:'),
+          );
         });
       }
     } catch (error) {
@@ -1009,6 +1047,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             roomName: room?.name,
             states: _states,
             levels: _levels,
+            electricalMeasurements: _electricalMeasurements,
+            measurementsStale:
+                _staleMeasurementNodes.contains(device.nodeId),
             busy: _busy,
             error: _deviceErrors[device.nodeId],
             unavailable: _unavailableNodes.contains(device.nodeId),
@@ -1146,6 +1187,8 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.roomName,
     required this.states,
     required this.levels,
+    required this.electricalMeasurements,
+    required this.measurementsStale,
     required this.busy,
     required this.error,
     required this.unavailable,
@@ -1164,6 +1207,8 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final String? roomName;
   final Map<String, bool> states;
   final Map<String, int> levels;
+  final Map<String, DirectElectricalMeasurement> electricalMeasurements;
+  final bool measurementsStale;
   final Set<String> busy;
   final String? error;
   final bool unavailable;
@@ -1263,6 +1308,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   final key = _key(endpoint);
                   final state = states[key];
                   final level = levels[key];
+                  final measurement = electricalMeasurements[key];
                   final isBusy = busy.contains(key);
                   final favorite = favorites.contains(device.nodeId, endpoint);
                   if (state == null) {
@@ -1295,6 +1341,13 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                             level: level,
                             enabled: false,
                             onChanged: (value) => onLevelChanged(endpoint, value),
+                          ),
+                        if (device.measurementCapabilities.containsKey(endpoint))
+                          _ElectricalMeasurementPanel(
+                            supported:
+                                device.measurementCapabilities[endpoint]!,
+                            measurement: measurement,
+                            stale: unavailable || measurementsStale,
                           ),
                       ],
                     );
@@ -1342,12 +1395,137 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                           enabled: !isBusy && !unavailable && level != null,
                           onChanged: (value) => onLevelChanged(endpoint, value),
                         ),
+                      if (device.measurementCapabilities.containsKey(endpoint))
+                        _ElectricalMeasurementPanel(
+                          supported: device.measurementCapabilities[endpoint]!,
+                          measurement: measurement,
+                          stale: unavailable || measurementsStale,
+                        ),
                     ],
                   );
                 },
               ),
+            for (final entry in device.measurementCapabilities.entries)
+              if (!device.onOffEndpoints.contains(entry.key))
+                _ElectricalMeasurementPanel(
+                  title: device.measurementCapabilities.length == 1
+                      ? 'اندازه‌گیری وسیله'
+                      : 'اندازه‌گیری ${toPersianDigits(
+                          device.measurementCapabilities.keys
+                                  .toList(growable: false)
+                                  .indexOf(entry.key) +
+                              1,
+                        )}',
+                  supported: entry.value,
+                  measurement: electricalMeasurements[_key(entry.key)],
+                  stale: unavailable || measurementsStale,
+                ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+final class _ElectricalMeasurementPanel extends StatelessWidget {
+  const _ElectricalMeasurementPanel({
+    required this.supported,
+    required this.measurement,
+    required this.stale,
+    this.title = 'مصرف برق',
+  });
+
+  final Set<ElectricalMetric> supported;
+  final DirectElectricalMeasurement? measurement;
+  final bool stale;
+  final String title;
+
+  String _value(ElectricalMetric metric) {
+    final current = measurement;
+    if (current == null) return 'دریافت نشده';
+    switch (metric) {
+      case ElectricalMetric.activePower:
+        final value = current.activePowerMilliwatts;
+        return value == null ? 'دریافت نشده' : formatActivePower(value);
+      case ElectricalMetric.voltage:
+        final value = current.voltageMillivolts;
+        return value == null ? 'دریافت نشده' : formatVoltage(value);
+      case ElectricalMetric.activeCurrent:
+        final value = current.activeCurrentMilliamps;
+        return value == null ? 'دریافت نشده' : formatActiveCurrent(value);
+      case ElectricalMetric.cumulativeEnergyImported:
+        final value = current.cumulativeEnergyImportedMilliwattHours;
+        return value == null ? 'دریافت نشده' : formatImportedEnergy(value);
+    }
+  }
+
+  String _label(ElectricalMetric metric) {
+    switch (metric) {
+      case ElectricalMetric.activePower:
+        return 'توان فعلی';
+      case ElectricalMetric.voltage:
+        return 'ولتاژ';
+      case ElectricalMetric.activeCurrent:
+        return 'جریان';
+      case ElectricalMetric.cumulativeEnergyImported:
+        return 'انرژی مصرف‌شده';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const order = <ElectricalMetric>[
+      ElectricalMetric.activePower,
+      ElectricalMetric.cumulativeEnergyImported,
+      ElectricalMetric.voltage,
+      ElectricalMetric.activeCurrent,
+    ];
+    final visible = order.where(supported.contains).toList(growable: false);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsetsDirectional.fromSTEB(8, 4, 8, 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.bolt_outlined, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              if (stale)
+                Text(
+                  'نیاز به به‌روزرسانی',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final metric in visible)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: <Widget>[
+                  Expanded(child: Text(_label(metric))),
+                  Text(
+                    _value(metric),
+                    textDirection: TextDirection.rtl,
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
