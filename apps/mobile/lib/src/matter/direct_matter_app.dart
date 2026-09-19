@@ -5,6 +5,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../core/persian_digits.dart';
+import 'color_control.dart';
+import 'color_control_widget.dart';
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
 import 'electrical_measurement.dart';
@@ -90,6 +92,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   FavoriteCatalog _favorites = const FavoriteCatalog();
   final Map<String, bool> _states = <String, bool>{};
   final Map<String, int> _levels = <String, int>{};
+  final Map<String, DirectColorState> _colors = <String, DirectColorState>{};
+  final Set<String> _staleColors = <String>{};
+  final Set<int> _readingColors = <int>{};
+  final Map<int, Object> _colorLifetimes = <int, Object>{};
+  final Map<String, int> _colorRevisions = <String, int>{};
+  StreamSubscription<DirectColorEvent>? _colorEvents;
   final Map<String, DirectElectricalMeasurement> _electricalMeasurements =
       <String, DirectElectricalMeasurement>{};
   final Set<int> _staleMeasurementNodes = <int>{};
@@ -120,6 +128,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_events?.cancel());
     unawaited(_levelEvents?.cancel());
+    unawaited(_colorEvents?.cancel());
     super.dispose();
   }
 
@@ -209,6 +218,34 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           },
         );
       }
+      if (controller is ColorControlController) {
+        _colorEvents = (controller as ColorControlController).watchColors().listen((event) {
+          if (!_canUpdate(event.nodeId)) return;
+          final device = _devices.firstWhere((item) => item.nodeId == event.nodeId);
+          if (!device.colorCapabilities.containsKey(event.endpoint)) return;
+          final key = _stateKey(event.nodeId, event.endpoint);
+          setState(() {
+            if (event.stale) {
+              _staleColors.add(key);
+            } else {
+              final previous = _colors[key] ?? DirectColorState.fromMap(
+                  <String, int>{'capabilities': device.colorCapabilities[event.endpoint]!});
+              _colors[key] = previous.merge(event.report);
+              _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1;
+              // A partial report cannot make a failed full read fresh.
+              if (DirectColorState.fromMap(<String, int?>{
+                  'capabilities': device.colorCapabilities[event.endpoint],
+                  ...event.report.values,
+                }).hsv != null && !_unavailableNodes.contains(event.nodeId)) {
+                _staleColors.remove(key);
+              }
+            }
+          });
+        }, onError: (Object error, StackTrace stack) {
+          if (!mounted) return;
+          setState(() => _staleColors.addAll(_colors.keys));
+        });
+      }
       // Restore live state without blocking the home screen or onboarding.
       unawaited(_refreshAllStates());
     } catch (error) {
@@ -297,7 +334,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             _deviceErrors.remove(device.nodeId);
           }
         });
-        unawaited(_refreshDeviceCapabilities(device.nodeId));
+        unawaited(_refreshOptionalControls(device.nodeId));
       }
     } catch (error) {
       if (_canUpdate(device.nodeId)) {
@@ -310,6 +347,111 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     } finally {
       _refreshingNodes.remove(device.nodeId);
     }
+  }
+
+  Future<void> _refreshOptionalControls(int nodeId) async {
+    await _refreshColors(nodeId);
+    if (_canUpdate(nodeId)) await _refreshDeviceCapabilities(nodeId);
+  }
+
+  Future<void> _refreshColors(int nodeId) async {
+    final controller = widget.controller;
+    if (controller is! ColorControlController || !_canUpdate(nodeId) ||
+        !_readingColors.add(nodeId)) return;
+    final lifetime = _colorLifetimes.putIfAbsent(nodeId, Object.new);
+    final revisions = Map<String, int>.of(_colorRevisions);
+    bool active() => _canUpdate(nodeId) && identical(_colorLifetimes[nodeId], lifetime);
+    try {
+      final values = await (controller as ColorControlController).readColors(nodeId).timeout(_readTimeout);
+      if (!active()) return;
+      final current = _devices.firstWhere((item) => item.nodeId == nodeId);
+      final updated = current.copyWith(colorCapabilities:
+          values.map((endpoint, color) => MapEntry(endpoint, color.capabilities)));
+      setState(() {
+        _devices = _devices.map((item) => item.nodeId == nodeId ? updated : item).toList();
+        _colors.removeWhere((key, _) => key.startsWith('$nodeId:') &&
+          !values.containsKey(int.parse(key.split(':').last)));
+        for (final entry in values.entries) {
+          final key = _stateKey(nodeId, entry.key);
+          if (_colorRevisions[key] == revisions[key]) _colors[key] = entry.value;
+          _staleColors.remove(key);
+        }
+      });
+      if (!_editingMetadata) {
+        setState(() => _editingMetadata = true);
+        try { await widget.deviceStore.save(updated); }
+        catch (_) { /* Keep a successfully read color usable; retry metadata later. */ }
+        finally { if (mounted) setState(() => _editingMetadata = false); }
+      }
+    } catch (_) {
+      if (active()) setState(() {
+        final device = _devices.firstWhere((item) => item.nodeId == nodeId);
+        _staleColors.addAll(device.colorCapabilities.keys.map((e) => _stateKey(nodeId, e)));
+      });
+    } finally {
+      if (identical(_colorLifetimes[nodeId], lifetime)) _readingColors.remove(nodeId);
+    }
+  }
+
+  Future<void> _setColor(DirectMatterDevice device, int endpoint, HSVColor color) async {
+    final controller = widget.controller;
+    final key = _stateKey(device.nodeId, endpoint);
+    final state = _colors[key];
+    if (controller is! ColorControlController || state == null || !state.supportsColor ||
+        !_canUpdate(device.nodeId) || _unavailableNodes.contains(device.nodeId) ||
+        _staleColors.contains(key) || !_busy.add(key)) return;
+    final lifetime = _colorLifetimes.putIfAbsent(device.nodeId, Object.new);
+    bool active() => _canUpdate(device.nodeId) && identical(_colorLifetimes[device.nodeId], lifetime);
+    setState(() => _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1);
+    try {
+      final xy = hsvToXy(color);
+      final colorController = controller as ColorControlController;
+      await colorController.setColor(nodeId: device.nodeId, endpoint: endpoint,
+        mode: state.supportsHueSaturation ? 'hs' : 'xy',
+        first: state.supportsHueSaturation ? (color.hue % 360 / 360 * 254).round() : xy.x,
+        second: state.supportsHueSaturation ? (color.saturation * 254).round() : xy.y,
+      ).timeout(_readTimeout);
+      if (!active()) return;
+      final revision = _colorRevisions[key];
+      final confirmation = await colorController.readColors(device.nodeId).timeout(_readTimeout);
+      if (!active()) return;
+      final confirmed = confirmation[endpoint];
+      if (confirmed == null || confirmed.hsv == null) throw StateError('color not confirmed');
+      setState(() {
+        if (_colorRevisions[key] == revision) _colors[key] = confirmed;
+        _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1;
+        _staleColors.remove(key);
+        _deviceErrors.remove(device.nodeId);
+      });
+    } catch (_) {
+      if (active()) setState(() {
+        _staleColors.add(key);
+        _deviceErrors[device.nodeId] = 'Color command failed';
+      });
+    } finally {
+      if (active()) setState(() => _busy.remove(key));
+    }
+  }
+
+  Future<void> _renameChannel(DirectMatterDevice device, int endpoint) async {
+    if (_editingMetadata || !_canUpdate(device.nodeId) || _removingNodes.isNotEmpty) return;
+    final index = device.onOffEndpoints.indexOf(endpoint);
+    setState(() => _editingMetadata = true);
+    try {
+      await showDialog<void>(context: context, barrierDismissible: false,
+        builder: (_) => _RenameDeviceDialog(
+          title: 'تغییر نام خروجی', emptyMessage: 'یک نام برای خروجی بنویس.',
+          initialName: device.channelName(endpoint, index < 0 ? 0 : index),
+          onSave: (name) async {
+            if (!_canUpdate(device.nodeId)) throw StateError('device removed');
+            final current = _devices.firstWhere((item) => item.nodeId == device.nodeId);
+            final updated = current.copyWith(channelNames: <int,String>{...current.channelNames, endpoint: name});
+            await widget.deviceStore.save(updated);
+            if (!_canUpdate(device.nodeId)) return;
+            setState(() => _devices = _devices.map((item) => item.nodeId == device.nodeId ? updated : item).toList());
+          },
+        ));
+    } finally { if (mounted) setState(() => _editingMetadata = false); }
   }
 
   Future<void> _refreshDeviceCapabilities(int nodeId) async {
@@ -866,6 +1008,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               .toList(growable: false);
           _unavailableNodes.remove(device.nodeId);
           _staleMeasurementNodes.remove(device.nodeId);
+          _colorLifetimes.remove(device.nodeId);
+          _readingColors.remove(device.nodeId);
+          _colors.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
+          _colorRevisions.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
+          _staleColors.removeWhere((key) => key.startsWith('${device.nodeId}:'));
           _deviceErrors.remove(device.nodeId);
           for (final endpoint in device.onOffEndpoints) {
             _states.remove(_stateKey(device.nodeId, endpoint));
@@ -1047,6 +1194,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             roomName: room?.name,
             states: _states,
             levels: _levels,
+            colors: _colors,
+            staleColors: _staleColors,
+            onColorChanged: (endpoint, color) => _setColor(device, endpoint, color),
+            onRenameChannel: (endpoint) => _renameChannel(device, endpoint),
             electricalMeasurements: _electricalMeasurements,
             measurementsStale:
                 _staleMeasurementNodes.contains(device.nodeId),
@@ -1187,6 +1338,10 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.roomName,
     required this.states,
     required this.levels,
+    required this.colors,
+    required this.staleColors,
+    required this.onColorChanged,
+    required this.onRenameChannel,
     required this.electricalMeasurements,
     required this.measurementsStale,
     required this.busy,
@@ -1207,6 +1362,10 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final String? roomName;
   final Map<String, bool> states;
   final Map<String, int> levels;
+  final Map<String, DirectColorState> colors;
+  final Set<String> staleColors;
+  final void Function(int endpoint, HSVColor color) onColorChanged;
+  final ValueChanged<int> onRenameChannel;
   final Map<String, DirectElectricalMeasurement> electricalMeasurements;
   final bool measurementsStale;
   final Set<String> busy;
@@ -1336,7 +1495,20 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                             child: const Text('بررسی'),
                           ),
                         ),
-                        if (device.levelEndpoints.contains(endpoint))
+                        Align(alignment: AlignmentDirectional.centerStart,
+                          child: TextButton.icon(
+                            key: ValueKey('rename-output-${device.nodeId}-$endpoint'),
+                            onPressed: () => onRenameChannel(endpoint),
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            label: const Text('تغییر نام خروجی'),
+                          )),
+                        if (device.colorCapabilities.containsKey(endpoint))
+                          ColorControl(key: ValueKey('color-${device.nodeId}-$endpoint'),
+                            state: colors[key], enabled: !isBusy && !unavailable,
+                            stale: staleColors.contains(key) || unavailable,
+                            onRefresh: onRefresh,
+                            onChanged: (color) => onColorChanged(endpoint, color)),
+                      if (device.levelEndpoints.contains(endpoint))
                           _LevelControl(
                             level: level,
                             enabled: false,
@@ -1389,6 +1561,19 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                                 ),
                             ),
                         ),
+                        Align(alignment: AlignmentDirectional.centerStart,
+                          child: TextButton.icon(
+                            key: ValueKey('rename-output-${device.nodeId}-$endpoint'),
+                            onPressed: () => onRenameChannel(endpoint),
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            label: const Text('تغییر نام خروجی'),
+                          )),
+                        if (device.colorCapabilities.containsKey(endpoint))
+                          ColorControl(key: ValueKey('color-${device.nodeId}-$endpoint'),
+                            state: colors[key], enabled: !isBusy && !unavailable,
+                            stale: staleColors.contains(key) || unavailable,
+                            onRefresh: onRefresh,
+                            onChanged: (color) => onColorChanged(endpoint, color)),
                       if (device.levelEndpoints.contains(endpoint))
                         _LevelControl(
                           level: level,
@@ -1405,6 +1590,20 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   );
                 },
               ),
+            for (final endpoint in device.colorCapabilities.keys)
+              if (!device.onOffEndpoints.contains(endpoint)) ...<Widget>[
+                ListTile(title: Text(device.channelName(endpoint,
+                    device.colorCapabilities.keys.toList().indexOf(endpoint))),
+                  trailing: IconButton(tooltip: 'تغییر نام خروجی', icon: const Icon(Icons.edit_outlined),
+                    onPressed: () => onRenameChannel(endpoint))),
+                ColorControl(key: ValueKey('color-${device.nodeId}-$endpoint'),
+                  state: colors[_key(endpoint)], enabled: !busy.contains(_key(endpoint)) && !unavailable,
+                  stale: staleColors.contains(_key(endpoint)) || unavailable,
+                  onRefresh: onRefresh, onChanged: (color) => onColorChanged(endpoint, color)),
+                if (device.levelEndpoints.contains(endpoint)) _LevelControl(
+                  level: levels[_key(endpoint)], enabled: !busy.contains(_key(endpoint)) && !unavailable,
+                  onChanged: (value) => onLevelChanged(endpoint, value)),
+              ],
             for (final entry in device.measurementCapabilities.entries)
               if (!device.onOffEndpoints.contains(entry.key))
                 _ElectricalMeasurementPanel(
@@ -1958,6 +2157,7 @@ final class _MatterErrorNotice extends StatelessWidget {
       return 'حذف تأیید نشد. وسیله در فهرست باقی مانده؛ اتصال آن را بررسی کن و دوباره تلاش کن.';
     if (error.startsWith('Command failed'))
       return 'تغییر وضعیت تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
+    if (error.startsWith('Color command failed')) return 'رنگ تأیید نشد. برای دریافت رنگ واقعی، وضعیت را دوباره بررسی کن.';
     if (error.startsWith('Level command failed'))
       return 'تغییر شدت نور تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
     if (error.startsWith('Could not save discovered channels'))
@@ -2186,7 +2386,10 @@ final class _HomeNameDialogState extends State<_HomeNameDialog> {
 }
 
 final class _RenameDeviceDialog extends StatefulWidget {
-  const _RenameDeviceDialog({required this.initialName, required this.onSave});
+  const _RenameDeviceDialog({required this.initialName, required this.onSave,
+    this.title = 'تغییر نام وسیله', this.emptyMessage = 'یک نام برای وسیله بنویس.'});
+  final String title;
+  final String emptyMessage;
   final String initialName;
   final Future<void> Function(String name) onSave;
 
@@ -2211,7 +2414,7 @@ final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
     if (_saving) return;
     final name = _name.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = 'یک نام برای وسیله بنویس.');
+      setState(() => _error = widget.emptyMessage);
       return;
     }
     setState(() {
@@ -2236,7 +2439,7 @@ final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving,
     child: AlertDialog(
-      title: const Text('تغییر نام وسیله'),
+      title: Text(widget.title),
       content: SingleChildScrollView(
         child: TextField(
           controller: _name,
@@ -2246,8 +2449,8 @@ final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _save(),
           decoration: InputDecoration(
-            labelText: 'نام وسیله',
-            helperText: 'مثلاً کلید پذیرایی',
+            labelText: widget.title == 'تغییر نام خروجی' ? 'نام خروجی' : 'نام وسیله',
+            helperText: widget.title == 'تغییر نام خروجی' ? 'مثلاً خروجی ۱ اتاق کودک' : 'مثلاً کلید پذیرایی',
             errorText: _error,
           ),
         ),

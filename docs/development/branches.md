@@ -5,7 +5,7 @@ Updated 2026-09-14.
 | Ref | Role | Policy |
 | --- | --- | --- |
 | main | Integration/release target and canonical test register | Promote reviewed candidates by PR; green CI alone does not establish hardware acceptance |
-| develop | Current development baseline | Includes validated M3.2.1 merge c2d43fc; active feature work targets this branch |
+| develop | Current development baseline | Created from validated M3.2 commit 5f7470564c9044c7e4c468d0786737193603a960; next work branches from here |
 | codex/m1-persian-onboarding | Historical M1–M3.2 development line | Superseded by develop; retained as rollback reference; no new work |
 | codex/m1-baseline-startup-recovery | Historical hardware-tested M1 recovery | Retained; fully ancestral to current development |
 | feature/m1-direct-matter-mobile | Historical initial mobile integration | Retained; fully ancestral to current development |
@@ -23,8 +23,15 @@ A future integration merge must retain it; replacing main with the develop tree
 would lose that history. The canonical register remains
 [main:docs/testing/M1-test-register.md](https://github.com/PoryaNoorzadeh/Manisa-app/blob/main/docs/testing/M1-test-register.md).
 
-Validated candidate: 0.12.1+17 at c2d43fc29637e06af0c34e0e7bb5c5272d274776. Previous rollback candidate: 0.12.0+16 at 5f7470564c9044c7e4c468d0786737193603a960.
+Validated candidate: 0.12.0+16 at 5f7470564c9044c7e4c468d0786737193603a960.
 [Integrated build](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34807457773),
 [CI](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34807457695),
 [Runner](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/34807457725).
 Hardware dimmer testing and external LevelControl state subscription remain open.
+
+
+2026-09-19 update: `feature/m3-rgb-names` adds M3.4 on top of the M3.3
+candidate. It targets `develop`; PR #8 merged at 10b7a90 after all CI gates passed. Keep existing Android CI
+gates intact and validate the actual integrated Flutter/Matter release build.
+Historical branches remain preserved. Hardware acceptance through the delivered
+M3.3 build was reported by the user; see the current section of the test register.

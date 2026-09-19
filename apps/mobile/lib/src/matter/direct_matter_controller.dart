@@ -3,7 +3,15 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'color_control.dart';
 import 'electrical_measurement.dart';
+
+abstract interface class ColorControlController {
+  Future<Map<int, DirectColorState>> readColors(int nodeId);
+  Future<void> setColor({required int nodeId, required int endpoint,
+    required String mode, required int first, required int second});
+  Stream<DirectColorEvent> watchColors();
+}
 
 final class DirectMatterCommissionResult {
   const DirectMatterCommissionResult({
@@ -142,14 +150,17 @@ final class PlatformDirectMatterController
         DeviceTypeReader,
         LevelControlController,
         LevelEventController,
+        ColorControlController,
         ElectricalMeasurementController {
   const PlatformDirectMatterController({
     MethodChannel methods = const MethodChannel(_methodChannelName),
     EventChannel events = const EventChannel(_eventChannelName),
     EventChannel levelEvents = const EventChannel(_levelEventChannelName),
+    EventChannel colorEvents = const EventChannel('com.manisa/matter/color_events'),
   })  : _methods = methods,
         _events = events,
-        _levelEvents = levelEvents;
+        _levelEvents = levelEvents,
+        _colorEvents = colorEvents;
 
   static const String _methodChannelName = 'com.manisa/matter/methods';
   static const String _eventChannelName = 'com.manisa/matter/events';
@@ -158,6 +169,48 @@ final class PlatformDirectMatterController
   final MethodChannel _methods;
   final EventChannel _events;
   final EventChannel _levelEvents;
+  final EventChannel _colorEvents;
+
+  @override
+  Future<Map<int, DirectColorState>> readColors(int nodeId) async {
+    final raw = await _methods.invokeMapMethod<Object?, Object?>(
+        'readColors', <String, Object?>{'nodeId': nodeId});
+    if (raw == null) throw const FormatException('missing color response');
+    final result = <int, DirectColorState>{};
+    for (final entry in raw.entries) {
+      final endpoint = int.tryParse(entry.key.toString());
+      if (endpoint == null || endpoint <= 0 || entry.value is! Map<Object?, Object?>) {
+        throw const FormatException('invalid color response');
+      }
+      final color = DirectColorState.fromMap(entry.value! as Map<Object?, Object?>);
+      if (color.supportsColor) result[endpoint] = color;
+    }
+    return result;
+  }
+
+  @override
+  Future<void> setColor({required int nodeId, required int endpoint,
+    required String mode, required int first, required int second}) {
+    final maximum = mode == 'hs' ? 254 : 65279;
+    if ((mode != 'hs' && mode != 'xy') || endpoint <= 0 ||
+        first < 0 || first > maximum || second < 0 || second > maximum ||
+        (mode == 'xy' && (second == 0 || first + second > 65536))) {
+      throw ArgumentError('invalid color command');
+    }
+    return _methods.invokeMethod<void>('setColor', <String, Object?>{
+      'nodeId': nodeId, 'endpoint': endpoint, 'mode': mode,
+      'first': first, 'second': second,
+    });
+  }
+
+  @override
+  Stream<DirectColorEvent> watchColors() => _colorEvents.receiveBroadcastStream()
+      .map((event) {
+        if (event is! Map<Object?, Object?>) {
+          throw const FormatException('invalid color event');
+        }
+        return DirectColorEvent.fromMap(event);
+      });
 
   @override
   Future<Map<int, DirectElectricalMeasurement>> readElectricalMeasurements(
