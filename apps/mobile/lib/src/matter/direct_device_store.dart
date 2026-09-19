@@ -13,6 +13,7 @@ final class DirectMatterDevice {
     this.channelNames = const <int, String>{},
     this.deviceTypes = const <int, List<int>>{},
     this.levelEndpoints = const <int>[],
+    this.colorCapabilities = const <int, int>{},
     this.measurementCapabilities = const <int, Set<ElectricalMetric>>{},
   });
 
@@ -22,6 +23,7 @@ final class DirectMatterDevice {
   final Map<int, String> channelNames;
   final Map<int, List<int>> deviceTypes;
   final List<int> levelEndpoints;
+  final Map<int, int> colorCapabilities;
   final Map<int, Set<ElectricalMetric>> measurementCapabilities;
 
   bool isSocket(int endpoint) =>
@@ -46,6 +48,7 @@ final class DirectMatterDevice {
     Map<int, String>? channelNames,
     Map<int, List<int>>? deviceTypes,
     List<int>? levelEndpoints,
+    Map<int, int>? colorCapabilities,
     Map<int, Set<ElectricalMetric>>? measurementCapabilities,
   }) => DirectMatterDevice(
     nodeId: nodeId,
@@ -54,6 +57,7 @@ final class DirectMatterDevice {
     channelNames: channelNames ?? this.channelNames,
     deviceTypes: deviceTypes ?? this.deviceTypes,
     levelEndpoints: levelEndpoints ?? this.levelEndpoints,
+    colorCapabilities: colorCapabilities ?? this.colorCapabilities,
     measurementCapabilities:
         measurementCapabilities ?? this.measurementCapabilities,
   );
@@ -64,6 +68,7 @@ final class DirectMatterDevice {
     'onOffEndpoints': onOffEndpoints,
     'deviceTypes': deviceTypes.map((endpoint, types) => MapEntry(endpoint.toString(), types)),
     'levelEndpoints': levelEndpoints,
+    'colorCapabilities': colorCapabilities.map((key, value) => MapEntry(key.toString(), value)),
     'measurementCapabilities': measurementCapabilities.map(
       (endpoint, metrics) => MapEntry(
         endpoint.toString(),
@@ -79,6 +84,19 @@ final class DirectMatterDevice {
     final nodeId = json['nodeId'];
     final name = json['name'];
     final endpoints = json['onOffEndpoints'];
+    final rawColors = json['colorCapabilities'];
+    final colors = <int, int>{};
+    if (rawColors != null) {
+      if (rawColors is! Map<String, Object?>) throw const FormatException('invalid color capabilities');
+      for (final entry in rawColors.entries) {
+        final endpoint = int.tryParse(entry.key);
+        final value = entry.value;
+        if (endpoint == null || endpoint <= 0 || value is! int || value < 0 || value > 65535) {
+          throw const FormatException('invalid color capability');
+        }
+        colors[endpoint] = value;
+      }
+    }
     final rawNames = json['channelNames'];
     final rawTypes = json['deviceTypes'];
     final rawLevelEndpoints = json['levelEndpoints'];
@@ -147,6 +165,7 @@ final class DirectMatterDevice {
     return DirectMatterDevice(
       nodeId: nodeId,
       name: name,
+      colorCapabilities: Map<int, int>.unmodifiable(colors),
       deviceTypes: Map<int, List<int>>.unmodifiable(types),
       levelEndpoints: (rawLevelEndpoints as List<Object?>? ?? const <Object?>[])
           .map((value) {

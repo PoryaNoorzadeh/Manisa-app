@@ -62,6 +62,14 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         private const val METHODS = "com.manisa/matter/methods"
         private const val EVENTS = "com.manisa/matter/events"
         private const val LEVEL_EVENTS = "com.manisa/matter/level_events"
+        private const val COLOR_EVENTS = "com.manisa/matter/color_events"
+        private const val COLOR_CLUSTER = 0x0300L
+        // Attribute id -> wire name. Values >= 0x4000 plus x/y use uint16.
+        private val COLOR_ATTRIBUTES = mapOf(
+            0L to "hue", 1L to "saturation", 3L to "x", 4L to "y",
+            8L to "mode", 0x4000L to "enhancedHue", 0x4001L to "enhancedMode",
+            0x400AL to "capabilities",
+        )
         private const val VENDOR_ID = 0xFFF4
         private const val STATUS_OK = 0L
         private const val PERMISSION_REQUEST_MATTER = 9101
@@ -81,7 +89,13 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var bleCommissioner: ManisaBleCommissioner? = null
     private var eventSink: EventChannel.EventSink? = null
     private var levelEventSink: EventChannel.EventSink? = null
+    private var colorEventSink: EventChannel.EventSink? = null
+    private val colorCapabilities = mutableMapOf<Long, Map<Int, Int>>()
+    private val colorLifetimes = mutableMapOf<Long, Any>()
+    private val colorSubscriptionTokens = mutableMapOf<Long, Any>()
+    private val colorSubscriptionPaths = mutableMapOf<Long, List<Pair<Int, Long>>>()
     private val levelSubscriptionEndpoints = mutableMapOf<Long, List<Int>>()
+    private val onOffSubscriptionEndpoints = mutableMapOf<Long, List<Int>>()
     private var pendingCommission: MethodChannel.Result? = null
     private var pendingCommissionNodeId: Long = 0
     private var pendingPermissionCommission: CommissionRequest? = null
@@ -92,6 +106,15 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             .setMethodCallHandler(this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENTS)
             .setStreamHandler(this)
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, COLOR_EVENTS)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    colorEventSink = events
+                }
+                override fun onCancel(arguments: Any?) {
+                    colorEventSink = null
+                }
+            })
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, LEVEL_EVENTS)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
@@ -176,6 +199,25 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 }
                 "readLevels" -> withNodeId(call, result) { nodeId ->
                     readLevels(nodeId, result)
+                }
+                "readColors" -> withNodeId(call, result) { nodeId ->
+                    readColors(nodeId, result)
+                }
+                "setColor" -> withNodeAndEndpoint(call, result) { nodeId, endpoint ->
+                    val mode = call.argument<String>("mode")
+                    val first = call.argument<Number>("first")?.toInt()
+                    val second = call.argument<Number>("second")?.toInt()
+                    val maximum = if (mode == "hs") 254 else 65279
+                    val capability = if (mode == "hs") 1 else 8
+                    if ((mode != "hs" && mode != "xy") || first == null || second == null ||
+                        first !in 0..maximum || second !in 0..maximum ||
+                        (mode == "xy" && (second == 0 || first + second > 65536))) {
+                        result.error("invalid_args", "Invalid color command", null)
+                    } else if (((colorCapabilities[nodeId]?.get(endpoint) ?: 0) and capability) == 0) {
+                        result.error("unsupported_color", "Read device color capabilities first", null)
+                    } else {
+                        invokeColor(nodeId, endpoint, mode, first, second, result)
+                    }
                 }
                 "readElectricalMeasurements" -> withNodeId(call, result) { nodeId ->
                     readElectricalMeasurements(nodeId, result)
@@ -464,6 +506,11 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     runOnUiThread {
                         pendingRemovals.remove(nodeId)
                         levelSubscriptionEndpoints.remove(nodeId)
+                        onOffSubscriptionEndpoints.remove(nodeId)
+                        colorCapabilities.remove(nodeId)
+                        colorLifetimes.remove(nodeId)
+                        colorSubscriptionTokens.remove(nodeId)
+                        colorSubscriptionPaths.remove(nodeId)
                         Log.i(TAG, "Device confirmed fabric removal nodeId=$remoteDeviceId")
                         result.success(null)
                     }
@@ -619,6 +666,166 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 0,
             )
         }
+    }
+
+    override fun onDestroy() {
+        colorEventSink = null
+        colorLifetimes.clear()
+        colorSubscriptionTokens.clear()
+        colorSubscriptionPaths.clear()
+        super.onDestroy()
+    }
+
+    private fun decodeColors(nodeState: NodeState): Map<Int, Map<String, Int?>> {
+        val colors = mutableMapOf<Int, Map<String, Int?>>()
+        for ((endpoint, state) in nodeState.endpointStates) {
+            if (endpoint <= 0) continue
+            val cluster = state.getClusterState(COLOR_CLUSTER) ?: continue
+            val values = mutableMapOf<String, Int?>()
+            for ((attribute, name) in COLOR_ATTRIBUTES) {
+                val tlv = cluster.getAttributeState(attribute)?.tlv ?: continue
+                val reader = TlvReader(tlv)
+                values[name] = if (reader.isNull()) {
+                    reader.getNull(AnonymousTag)
+                    null
+                } else if (attribute == 3L || attribute == 4L ||
+                    attribute == 0x4000L || attribute == 0x400AL) {
+                    reader.getUShort(AnonymousTag).toInt()
+                } else {
+                    reader.getUByte(AnonymousTag).toInt()
+                }
+            }
+            if (values.isNotEmpty()) colors[endpoint] = values
+        }
+        return colors
+    }
+
+    private fun readColors(nodeId: Long, result: MethodChannel.Result) {
+        val lifetime = colorLifetimes.getOrPut(nodeId) { Any() }
+        val replied = java.util.concurrent.atomic.AtomicBoolean(false)
+        withConnectedDevice(nodeId, result) { devicePointer ->
+            controller.readPath(object : ReportCallback {
+                override fun onError(attributePath: ChipAttributePath?, eventPath: ChipEventPath?, ex: Exception) {
+                    if (replied.compareAndSet(false, true)) {
+                        runOnUiThread { result.error("matter_color_read_failed", ex.message, null) }
+                    }
+                }
+                override fun onReport(nodeState: NodeState) {
+                    if (!replied.compareAndSet(false, true)) return
+                    try {
+                        val all = decodeColors(nodeState)
+                        val colors = all.filterValues { ((it["capabilities"] ?: 0) and 9) != 0 }
+                        runOnUiThread {
+                            if (colorLifetimes[nodeId] !== lifetime || pendingRemovals.contains(nodeId)) {
+                                result.error("device_removed", "Color read belongs to an old device", null)
+                                return@runOnUiThread
+                            }
+                            colorCapabilities[nodeId] = colors.mapValues { it.value["capabilities"]!! }
+                            result.success(colors.mapKeys { it.key.toString() })
+                            // Subscribe only to attributes actually returned by this device.
+                            val paths = colors.flatMap { (endpoint, values) ->
+                                COLOR_ATTRIBUTES.filterValues { values.containsKey(it) }.keys
+                                    .map { endpoint to it }
+                            }.sortedWith(compareBy({ it.first }, { it.second }))
+                            if (paths.isNotEmpty() && colorSubscriptionPaths[nodeId] != paths) {
+                                try { subscribeColors(nodeId, devicePointer, paths) }
+                                catch (error: Exception) {
+                                    colorSubscriptionPaths.remove(nodeId)
+                                    colorSubscriptionTokens.remove(nodeId)
+                                    Log.e(TAG, "Color subscription setup failed", error)
+                                }
+                            } else if (paths.isEmpty()) {
+                                colorSubscriptionTokens.remove(nodeId)
+                                colorSubscriptionPaths.remove(nodeId)
+                            }
+                        }
+                    } catch (error: Exception) {
+                        runOnUiThread { result.error("matter_color_read_failed", error.message, null) }
+                    }
+                }
+            }, devicePointer, COLOR_ATTRIBUTES.keys.map { attribute ->
+                ChipAttributePath.newInstance(ChipPathId.forWildcard(),
+                    ChipPathId.forId(COLOR_CLUSTER), ChipPathId.forId(attribute))
+            }, null, false, 0)
+        }
+    }
+
+    private fun invokeColor(nodeId: Long, endpoint: Int, mode: String,
+        first: Int, second: Int, result: MethodChannel.Result) {
+        withConnectedDevice(nodeId, result) { devicePointer ->
+            val writer = TlvWriter()
+            writer.startStructure(AnonymousTag)
+            if (mode == "hs") {
+                writer.put(ContextSpecificTag(0), first.toUByte())
+                writer.put(ContextSpecificTag(1), second.toUByte())
+            } else {
+                writer.put(ContextSpecificTag(0), first.toUShort())
+                writer.put(ContextSpecificTag(1), second.toUShort())
+            }
+            writer.put(ContextSpecificTag(2), 0.toUShort()) // immediate; read back final color
+            // ExecuteIfOff allows configuring the indicator without changing OnOff or level.
+            writer.put(ContextSpecificTag(3), 1.toUByte())
+            writer.put(ContextSpecificTag(4), 1.toUByte())
+            writer.endStructure()
+            val invoke = InvokeElement.newInstance(endpoint, COLOR_CLUSTER,
+                if (mode == "hs") 0x06L else 0x07L, writer.getEncoded(), null)
+            controller.invoke(object : InvokeCallback {
+                override fun onError(ex: Exception?) {
+                    result.error("matter_color_invoke_failed", ex?.message, null)
+                }
+                override fun onResponse(invokeElement: InvokeElement?, successCode: Long) {
+                    if (successCode == STATUS_OK) result.success(null)
+                    else result.error("matter_color_invoke_failed", "Color command rejected", successCode)
+                }
+            }, devicePointer, invoke, 0, 0)
+        }
+    }
+
+    private fun subscribeColors(nodeId: Long, devicePointer: Long, paths: List<Pair<Int, Long>>) {
+        val token = Any()
+        colorSubscriptionTokens[nodeId] = token
+        colorSubscriptionPaths[nodeId] = paths
+        fun stale() {
+            runOnUiThread {
+                if (colorSubscriptionTokens[nodeId] !== token) return@runOnUiThread
+                for (endpoint in paths.map { it.first }.distinct()) {
+                    colorEventSink?.success(mapOf("nodeId" to nodeId, "endpoint" to endpoint,
+                        "stale" to true, "values" to emptyMap<String, Int>()))
+                }
+            }
+        }
+        controller.subscribeToPath(
+            SubscriptionEstablishedCallback { id -> Log.i(TAG, "Color subscription established: $id") },
+            ResubscriptionAttemptCallback { _, _ -> stale() },
+            object : ReportCallback {
+                override fun onError(attributePath: ChipAttributePath?, eventPath: ChipEventPath?, ex: Exception) {
+                    stale()
+                    runOnUiThread {
+                        if (colorSubscriptionTokens[nodeId] === token) {
+                            colorSubscriptionPaths.remove(nodeId)
+                            colorSubscriptionTokens.remove(nodeId)
+                        }
+                    }
+                }
+                override fun onReport(nodeState: NodeState) {
+                    try {
+                        val colors = decodeColors(nodeState)
+                        runOnUiThread {
+                            if (colorSubscriptionTokens[nodeId] !== token || pendingRemovals.contains(nodeId)) return@runOnUiThread
+                            for ((endpoint, values) in colors) {
+                                if (colorCapabilities[nodeId]?.containsKey(endpoint) != true) continue
+                                colorEventSink?.success(mapOf("nodeId" to nodeId,
+                                    "endpoint" to endpoint, "values" to values))
+                            }
+                        }
+                    } catch (error: Exception) {
+                        Log.e(TAG, "Invalid color report", error)
+                        stale()
+                    }
+                }
+            }, devicePointer, paths.map { (endpoint, attribute) ->
+                ChipAttributePath.newInstance(endpoint, COLOR_CLUSTER, attribute)
+            }, null, 1, 60, true, false, 0)
     }
 
     private fun readLevels(nodeId: Long, result: MethodChannel.Result) {
@@ -839,6 +1046,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun subscribeOnOff(nodeId: Long, devicePointer: Long, endpoints: List<Int>) {
+        if (onOffSubscriptionEndpoints[nodeId] == endpoints) return
+        onOffSubscriptionEndpoints[nodeId] = endpoints
         val paths = endpoints.map { endpoint ->
             ChipAttributePath.newInstance(
                 endpoint,
@@ -859,6 +1068,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     eventPath: ChipEventPath?,
                     ex: Exception,
                 ) {
+                    runOnUiThread { onOffSubscriptionEndpoints.remove(nodeId) }
                     Log.e(TAG, "OnOff subscription failed", ex)
                 }
 
@@ -888,7 +1098,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             null,
             1,
             60,
-            false,
+            true, // Keep OnOff, LevelControl and ColorControl subscriptions together.
             false,
             0,
         )
@@ -911,6 +1121,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     eventPath: ChipEventPath?,
                     ex: Exception,
                 ) {
+                    runOnUiThread { levelSubscriptionEndpoints.remove(nodeId) }
                     Log.e(TAG, "LevelControl subscription failed", ex)
                 }
 
@@ -945,7 +1156,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             null,
             1,
             60,
-            false,
+            true, // Keep OnOff, LevelControl and ColorControl subscriptions together.
             false,
             0,
         )

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:manisa_mobile/src/matter/color_control.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_app.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
@@ -12,6 +13,103 @@ import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  testWidgets('direct output edit persists by endpoint and preserves other names', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[2,1]);
+    final store = _RenameStore()..fail = false;
+    store.device = store.device.copyWith(onOffEndpoints: <int>[2,1],
+      channelNames: <int,String>{2: 'راهرو'});
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    final edit = find.byKey(const ValueKey('rename-output-7-1'));
+    await tester.ensureVisible(edit);
+    await tester.tap(edit);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '   ');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('یک نام برای خروجی بنویس.'), findsOneWidget);
+    store.fail = true;
+    await tester.enterText(find.byType(TextField), 'خروجی ۱ اتاق کودک');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('نام ذخیره نشد. دوباره تلاش کن.'), findsOneWidget);
+    expect(store.device.channelNames[1], isNull);
+    store.fail = false;
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(store.device.channelNames, <int,String>{2: 'راهرو', 1: 'خروجی ۱ اتاق کودک'});
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    expect(find.text('خروجی ۱ اتاق کودک'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('RGB starts with device color, sends once, confirms and merges live reports', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800,1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = _ColorController()..discovery.complete(<int>[1]);
+    final store = _RenameStore()..fail = false;
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    expect(find.text('رنگ نور'), findsOneWidget);
+    expect(controller.colorCommands, isEmpty);
+    expect(store.device.colorCapabilities, <int,int>{1: 1});
+    Slider hueSlider() => tester.widget<Slider>(find.byKey(const ValueKey('color-hue')));
+    expect(hueSlider().value, closeTo(169*360/254, 0.001));
+    hueSlider().onChanged!(120);
+    await tester.pump();
+    expect(controller.colorCommands, isEmpty);
+    hueSlider().onChangeEnd!(120);
+    await tester.pumpAndSettle();
+    expect(controller.colorCommands.single, <Object>[7,1,'hs',85,127]);
+    expect(hueSlider().value, closeTo(42*360/254, 0.001)); // device clamps command
+    controller.colorEvents.add(DirectColorEvent(nodeId: 7,endpoint: 9,
+      report: DirectColorState.fromMap(<String,int>{'hue': 0})));
+    await tester.pumpAndSettle();
+    expect(hueSlider().value, closeTo(42*360/254, 0.001));
+    controller.colorEvents.add(DirectColorEvent(nodeId: 7,endpoint: 1,
+      report: DirectColorState.fromMap(<String,int>{'hue': 100})));
+    await tester.pumpAndSettle();
+    expect(hueSlider().value, closeTo(100*360/254, 0.001));
+    controller.failColor = true;
+    hueSlider().onChangeEnd!(60);
+    await tester.pumpAndSettle();
+    expect(find.text('رنگ نیاز به به‌روزرسانی دارد'), findsOneWidget);
+    expect(hueSlider().value, closeTo(100*360/254, 0.001));
+    expect(hueSlider().onChanged, isNull);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNotNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.colorEvents.add(DirectColorEvent(nodeId: 7,endpoint: 1,
+      report: DirectColorState.fromMap(<String,int>{'hue': 0})));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await controller.events.close();
+    await controller.levelEvents.close();
+    await controller.colorEvents.close();
+  });
+
+  testWidgets('unknown RGB is not replaced by an invented initial color', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800,1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = _ColorController()..discovery.complete(<int>[1]);
+    controller.color = DirectColorState.fromMap(<String,Object?>{
+      'capabilities': 1, 'mode': 0, 'hue': null, 'saturation': 254});
+    await tester.pumpWidget(ManisaDirectApp(controller: controller,
+      deviceStore: _RenameStore()..fail = false));
+    await tester.pumpAndSettle();
+    expect(find.text('رنگ فعلی دریافت نشده'), findsOneWidget);
+    expect(find.byKey(const ValueKey('color-hue')), findsNothing);
+    expect(find.byKey(const ValueKey('confirmed-color')), findsNothing);
+    expect(controller.colorCommands, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+    await controller.levelEvents.close();
+    await controller.colorEvents.close();
+  });
+
+
   testWidgets('shows only supported electrical values and marks stale data', (
     tester,
   ) async {
@@ -1003,4 +1101,30 @@ class _MemoryFavoriteStore implements FavoriteStore {
   Future<void> save(FavoriteCatalog value) async {
     catalog = value;
   }
+}
+
+class _ColorController extends _LevelController implements ColorControlController {
+  _ColorController() : super(initialLevel: 127);
+  DirectColorState color = DirectColorState.fromMap(<String,int>{
+    'capabilities': 1, 'mode': 0, 'hue': 169, 'saturation': 127});
+  bool failColor = false;
+  final colorCommands = <List<Object>>[];
+  // Closed by each widget test after disposing its app.
+  // ignore: close_sinks
+  final colorEvents = StreamController<DirectColorEvent>.broadcast();
+  @override
+  Future<Map<int, DirectColorState>> readColors(int nodeId) async {
+    if (failColor) throw StateError('read failed');
+    return <int,DirectColorState>{1: color};
+  }
+  @override
+  Future<void> setColor({required int nodeId, required int endpoint,
+    required String mode, required int first, required int second}) async {
+    if (failColor) throw StateError('command failed');
+    colorCommands.add(<Object>[nodeId,endpoint,mode,first,second]);
+    color = DirectColorState.fromMap(<String,int>{'capabilities': 1,
+      'mode': 0, 'hue': 42, 'saturation': second});
+  }
+  @override
+  Stream<DirectColorEvent> watchColors() => colorEvents.stream;
 }
