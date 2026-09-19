@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../core/persian_digits.dart';
 import 'color_control.dart';
 
@@ -31,7 +32,7 @@ final class _ColorControlState extends State<ColorControl> {
   Widget build(BuildContext context) {
     final confirmed = widget.state?.hsv;
     final shown = _draft ?? confirmed;
-    final active = widget.enabled && !widget.stale;
+    final active = widget.enabled && !widget.stale && widget.state?.supportsColor == true;
     const presets = <String, double>{'قرمز': 0, 'نارنجی': 30, 'زرد': 60,
       'سبز': 120, 'آبی': 240, 'بنفش': 280};
     return Padding(

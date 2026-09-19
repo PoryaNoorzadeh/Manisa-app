@@ -380,6 +380,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (!_editingMetadata) {
         setState(() => _editingMetadata = true);
         try { await widget.deviceStore.save(updated); }
+        catch (_) { /* Keep a successfully read color usable; retry metadata later. */ }
         finally { if (mounted) setState(() => _editingMetadata = false); }
       }
     } catch (_) {
@@ -401,7 +402,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         _staleColors.contains(key) || !_busy.add(key)) return;
     final lifetime = _colorLifetimes.putIfAbsent(device.nodeId, Object.new);
     bool active() => _canUpdate(device.nodeId) && identical(_colorLifetimes[device.nodeId], lifetime);
-    setState(() {});
+    setState(() => _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1);
     try {
       final xy = hsvToXy(color);
       final colorController = controller as ColorControlController;
@@ -418,6 +419,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (confirmed == null || confirmed.hsv == null) throw StateError('color not confirmed');
       setState(() {
         if (_colorRevisions[key] == revision) _colors[key] = confirmed;
+        _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1;
         _staleColors.remove(key);
         _deviceErrors.remove(device.nodeId);
       });

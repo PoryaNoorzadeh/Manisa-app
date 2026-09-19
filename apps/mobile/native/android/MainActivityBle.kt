@@ -90,6 +90,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var eventSink: EventChannel.EventSink? = null
     private var levelEventSink: EventChannel.EventSink? = null
     private var colorEventSink: EventChannel.EventSink? = null
+    private val subscriptionIds = mutableMapOf<Pair<Long, String>, Long>()
+    private val subscriptionEpochs = mutableMapOf<Pair<Long, String>, Any>()
     private val colorCapabilities = mutableMapOf<Long, Map<Int, Int>>()
     private val colorLifetimes = mutableMapOf<Long, Any>()
     private val colorSubscriptionTokens = mutableMapOf<Long, Any>()
@@ -507,6 +509,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         pendingRemovals.remove(nodeId)
                         levelSubscriptionEndpoints.remove(nodeId)
                         onOffSubscriptionEndpoints.remove(nodeId)
+                        subscriptionEpochs.keys.filter { it.first == nodeId }.toList()
+                            .forEach { stopSubscription(it.first, it.second) }
                         colorCapabilities.remove(nodeId)
                         colorLifetimes.remove(nodeId)
                         colorSubscriptionTokens.remove(nodeId)
@@ -668,8 +672,36 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
     }
 
+    private fun stopSubscription(nodeId: Long, kind: String) {
+        val key = nodeId to kind
+        subscriptionEpochs.remove(key)
+        subscriptionIds.remove(key)?.let { id ->
+            try { controller.shutdownSubscriptions(controller.fabricIndex, nodeId, id) }
+            catch (error: Exception) { Log.w(TAG, "Subscription cleanup failed", error) }
+        }
+    }
+
+    private fun startSubscription(nodeId: Long, kind: String): Any {
+        stopSubscription(nodeId, kind)
+        return Any().also { subscriptionEpochs[nodeId to kind] = it }
+    }
+
+    private fun rememberSubscription(nodeId: Long, kind: String, token: Any, id: Long) {
+        runOnUiThread {
+            if (subscriptionEpochs[nodeId to kind] === token) {
+                subscriptionIds[nodeId to kind] = id
+            } else {
+                try { controller.shutdownSubscriptions(controller.fabricIndex, nodeId, id) }
+                catch (error: Exception) { Log.w(TAG, "Late subscription cleanup failed", error) }
+            }
+        }
+    }
+
     override fun onDestroy() {
+        eventSink = null
+        levelEventSink = null
         colorEventSink = null
+        subscriptionEpochs.keys.toList().forEach { stopSubscription(it.first, it.second) }
         colorLifetimes.clear()
         colorSubscriptionTokens.clear()
         colorSubscriptionPaths.clear()
@@ -735,6 +767,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                                     Log.e(TAG, "Color subscription setup failed", error)
                                 }
                             } else if (paths.isEmpty()) {
+                                stopSubscription(nodeId, "color")
                                 colorSubscriptionTokens.remove(nodeId)
                                 colorSubscriptionPaths.remove(nodeId)
                             }
@@ -782,7 +815,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     private fun subscribeColors(nodeId: Long, devicePointer: Long, paths: List<Pair<Int, Long>>) {
-        val token = Any()
+        val token = startSubscription(nodeId, "color")
         colorSubscriptionTokens[nodeId] = token
         colorSubscriptionPaths[nodeId] = paths
         fun stale() {
@@ -795,7 +828,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             }
         }
         controller.subscribeToPath(
-            SubscriptionEstablishedCallback { id -> Log.i(TAG, "Color subscription established: $id") },
+            SubscriptionEstablishedCallback { id -> rememberSubscription(nodeId, "color", token, id) },
             ResubscriptionAttemptCallback { _, _ -> stale() },
             object : ReportCallback {
                 override fun onError(attributePath: ChipAttributePath?, eventPath: ChipEventPath?, ex: Exception) {
@@ -1047,7 +1080,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
     private fun subscribeOnOff(nodeId: Long, devicePointer: Long, endpoints: List<Int>) {
         if (onOffSubscriptionEndpoints[nodeId] == endpoints) return
-        onOffSubscriptionEndpoints[nodeId] = endpoints
+        val token = startSubscription(nodeId, "onoff")
         val paths = endpoints.map { endpoint ->
             ChipAttributePath.newInstance(
                 endpoint,
@@ -1057,7 +1090,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
         controller.subscribeToPath(
             SubscriptionEstablishedCallback { subscriptionId ->
-                Log.i(TAG, "OnOff subscription established: $subscriptionId")
+                rememberSubscription(nodeId, "onoff", token, subscriptionId)
             },
             ResubscriptionAttemptCallback { cause, delayMs ->
                 Log.w(TAG, "Matter resubscribe cause=$cause delayMs=$delayMs")
@@ -1068,7 +1101,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     eventPath: ChipEventPath?,
                     ex: Exception,
                 ) {
-                    runOnUiThread { onOffSubscriptionEndpoints.remove(nodeId) }
+                    runOnUiThread {
+                        if (subscriptionEpochs[nodeId to "onoff"] === token) {
+                            onOffSubscriptionEndpoints.remove(nodeId)
+                            stopSubscription(nodeId, "onoff")
+                        }
+                    }
                     Log.e(TAG, "OnOff subscription failed", ex)
                 }
 
@@ -1082,6 +1120,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                             ?: continue
                         val value = TlvReader(tlv).getBool(AnonymousTag)
                         runOnUiThread {
+                            if (subscriptionEpochs[nodeId to "onoff"] !== token) return@runOnUiThread
                             eventSink?.success(
                                 mapOf(
                                     "nodeId" to nodeId,
@@ -1102,15 +1141,17 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             false,
             0,
         )
+        onOffSubscriptionEndpoints[nodeId] = endpoints
     }
 
     private fun subscribeLevels(nodeId: Long, devicePointer: Long, endpoints: List<Int>) {
+        val token = startSubscription(nodeId, "level")
         val paths = endpoints.map { endpoint ->
             ChipAttributePath.newInstance(endpoint, 0x0008L, 0L)
         }
         controller.subscribeToPath(
             SubscriptionEstablishedCallback { subscriptionId ->
-                Log.i(TAG, "LevelControl subscription established: $subscriptionId")
+                rememberSubscription(nodeId, "level", token, subscriptionId)
             },
             ResubscriptionAttemptCallback { cause, delayMs ->
                 Log.w(TAG, "LevelControl resubscribe cause=$cause delayMs=$delayMs")
@@ -1121,7 +1162,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     eventPath: ChipEventPath?,
                     ex: Exception,
                 ) {
-                    runOnUiThread { levelSubscriptionEndpoints.remove(nodeId) }
+                    runOnUiThread {
+                        if (subscriptionEpochs[nodeId to "level"] === token) {
+                            levelSubscriptionEndpoints.remove(nodeId)
+                            stopSubscription(nodeId, "level")
+                        }
+                    }
                     Log.e(TAG, "LevelControl subscription failed", ex)
                 }
 
@@ -1139,6 +1185,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                                 reader.getUByte(AnonymousTag).toInt()
                             }
                             runOnUiThread {
+                                if (subscriptionEpochs[nodeId to "level"] !== token) return@runOnUiThread
                                 levelEventSink?.success(mapOf(
                                     "nodeId" to nodeId,
                                     "endpoint" to endpoint,
