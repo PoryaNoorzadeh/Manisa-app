@@ -40,7 +40,7 @@ final class _ColorControlState extends State<ColorControl> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
         Row(children: <Widget>[
           const Expanded(child: Text('رنگ نور', style: TextStyle(fontWeight: FontWeight.w600))),
-          if (shown != null) Semantics(label: 'رنگ دریافت‌شده از وسیله', child: Container(
+          if (shown != null) Semantics(label: _draft == null ? 'رنگ دریافت‌شده از وسیله' : 'پیش‌نمایش رنگ', child: Container(
             key: const ValueKey('confirmed-color'), width: 28, height: 28,
             decoration: BoxDecoration(color: shown.toColor(), shape: BoxShape.circle,
               border: Border.all(color: Theme.of(context).colorScheme.outline)),

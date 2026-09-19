@@ -90,6 +90,30 @@ void main() {
     await controller.colorEvents.close();
   });
 
+  testWidgets('late color refresh cannot overwrite a newer device report', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800,1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = _ColorController()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller,
+      deviceStore: _RenameStore()..fail = false));
+    await tester.pumpAndSettle();
+    final pending = Completer<Map<int, DirectColorState>>();
+    controller.pendingColorRead = pending;
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+    controller.colorEvents.add(DirectColorEvent(nodeId: 7,endpoint: 1,
+      report: DirectColorState.fromMap(<String,int>{'hue': 90})));
+    await tester.pumpAndSettle();
+    pending.complete(<int,DirectColorState>{1: controller.color});
+    await tester.pumpAndSettle();
+    final hue = tester.widget<Slider>(find.byKey(const ValueKey('color-hue')));
+    expect(hue.value, closeTo(90*360/254, 0.001));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+    await controller.levelEvents.close();
+    await controller.colorEvents.close();
+  });
+
   testWidgets('unknown RGB is not replaced by an invented initial color', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800,1400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -1108,6 +1132,7 @@ class _ColorController extends _LevelController implements ColorControlControlle
   DirectColorState color = DirectColorState.fromMap(<String,int>{
     'capabilities': 1, 'mode': 0, 'hue': 169, 'saturation': 127});
   bool failColor = false;
+  Completer<Map<int, DirectColorState>>? pendingColorRead;
   final colorCommands = <List<Object>>[];
   // Closed by each widget test after disposing its app.
   // ignore: close_sinks
@@ -1115,6 +1140,7 @@ class _ColorController extends _LevelController implements ColorControlControlle
   @override
   Future<Map<int, DirectColorState>> readColors(int nodeId) async {
     if (failColor) throw StateError('read failed');
+    if (pendingColorRead != null) return pendingColorRead!.future;
     return <int,DirectColorState>{1: color};
   }
   @override

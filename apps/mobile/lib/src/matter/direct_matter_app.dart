@@ -2449,8 +2449,8 @@ final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _save(),
           decoration: InputDecoration(
-            labelText: 'نام وسیله',
-            helperText: 'مثلاً کلید پذیرایی',
+            labelText: widget.title == 'تغییر نام خروجی' ? 'نام خروجی' : 'نام وسیله',
+            helperText: widget.title == 'تغییر نام خروجی' ? 'مثلاً خروجی ۱ اتاق کودک' : 'مثلاً کلید پذیرایی',
             errorText: _error,
           ),
         ),
