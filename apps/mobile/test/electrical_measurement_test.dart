@@ -39,6 +39,29 @@ void main() {
     }
   });
 
+  test('merges a partial report without losing other measurements', () {
+    const previous = DirectElectricalMeasurement(
+      supported: <ElectricalMetric>{ElectricalMetric.activePower, ElectricalMetric.voltage},
+      activePowerMilliwatts: 12000, voltageMillivolts: 230000);
+    final merged = previous.merge(DirectElectricalMeasurement.fromMap(
+      <Object?, Object?>{'activePowerMilliwatts': 0}));
+    expect(merged.activePowerMilliwatts, 0);
+    expect(merged.voltageMillivolts, 230000);
+  });
+
+  test('decodes sparse live values and per-metric stale state', () {
+    final value = DirectElectricalEvent.fromMap(<Object?, Object?>{
+      'nodeId': 42, 'endpoint': 7,
+      'values': <Object?, Object?>{'activePowerMilliwatts': 12500},
+      'staleMetrics': <Object?>['voltage'],
+    });
+    expect(value.report!.activePowerMilliwatts, 12500);
+    expect(value.staleMetrics, <ElectricalMetric>{ElectricalMetric.voltage});
+    expect(() => DirectElectricalEvent.fromMap(<Object?, Object?>{
+      'nodeId': 42, 'endpoint': 7,
+    }), throwsFormatException);
+  });
+
   test('formats Matter units with Persian digits and decimal separator', () {
     expect(formatActivePower(0), '۰ وات');
     expect(formatActivePower(12345), '۱۲٫۳ وات');

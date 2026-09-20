@@ -148,10 +148,25 @@ void main() {
     expect(find.text('مصرف برق'), findsOneWidget);
     expect(find.text('توان فعلی'), findsOneWidget);
     expect(find.text('۰ وات'), findsOneWidget);
+    controller.electricalEvents.add(DirectElectricalEvent(nodeId: 7, endpoint: 1,
+      report: DirectElectricalMeasurement.fromMap(<Object?, Object?>{
+        'activePowerMilliwatts': 12500}), staleMetrics: const <ElectricalMetric>{}));
+    await tester.pumpAndSettle();
+    expect(find.text('۱۲٫۵ وات'), findsOneWidget);
+    expect(find.text('۱٫۵ کیلووات‌ساعت'), findsOneWidget);
+    controller.electricalEvents.add(const DirectElectricalEvent(nodeId: 7, endpoint: 1,
+      staleMetrics: <ElectricalMetric>{ElectricalMetric.voltage}));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.sync_problem_outlined), findsOneWidget);
+    controller.electricalEvents.add(DirectElectricalEvent(nodeId: 7, endpoint: 1,
+      report: DirectElectricalMeasurement.fromMap(<Object?, Object?>{
+        'voltageMillivolts': 230000}), staleMetrics: const <ElectricalMetric>{}));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.sync_problem_outlined), findsNothing);
+    expect(find.text('۲۳۰ ولت'), findsOneWidget);
     expect(find.text('انرژی مصرف‌شده'), findsOneWidget);
     expect(find.text('۱٫۵ کیلووات‌ساعت'), findsOneWidget);
     expect(find.text('ولتاژ'), findsOneWidget);
-    expect(find.text('دریافت نشده'), findsOneWidget);
     expect(find.text('جریان'), findsNothing);
     expect(
       store.device.measurementCapabilities[1],
@@ -166,7 +181,10 @@ void main() {
     await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pumpAndSettle();
     expect(find.text('نیاز به به‌روزرسانی'), findsOneWidget);
-    expect(find.text('۰ وات'), findsOneWidget);
+    expect(find.text('۱۲٫۵ وات'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+    await controller.electricalEvents.close();
   });
 
   testWidgets('shows a Persian dimmer only for a confirmed LevelControl endpoint', (tester) async {
@@ -931,8 +949,14 @@ class _LevelController extends _Controller
 }
 
 class _ElectricalController extends _Controller
-    implements ElectricalMeasurementController {
+    implements ElectricalMeasurementController, ElectricalMeasurementEventController {
   bool failMeasurements = false;
+  // Closed by the widget test that creates this fixture.
+  // ignore: close_sinks
+  final electricalEvents = StreamController<DirectElectricalEvent>.broadcast();
+
+  @override
+  Stream<DirectElectricalEvent> watchElectricalMeasurements() => electricalEvents.stream;
 
   @override
   Future<Map<int, DirectElectricalMeasurement>> readElectricalMeasurements(
