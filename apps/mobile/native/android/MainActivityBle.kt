@@ -63,12 +63,19 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         private const val EVENTS = "com.manisa/matter/events"
         private const val LEVEL_EVENTS = "com.manisa/matter/level_events"
         private const val COLOR_EVENTS = "com.manisa/matter/color_events"
+        private const val ELECTRICAL_EVENTS = "com.manisa/matter/electrical_events"
         private const val COLOR_CLUSTER = 0x0300L
         // Attribute id -> wire name. Values >= 0x4000 plus x/y use uint16.
         private val COLOR_ATTRIBUTES = mapOf(
             0L to "hue", 1L to "saturation", 3L to "x", 4L to "y",
             8L to "mode", 0x4000L to "enhancedHue", 0x4001L to "enhancedMode",
             0x400AL to "capabilities",
+        )
+        private val ELECTRICAL_ATTRIBUTES = listOf(
+            Triple(0x0090L, 4L, "voltageMillivolts"),
+            Triple(0x0090L, 5L, "activeCurrentMilliamps"),
+            Triple(0x0090L, 8L, "activePowerMilliwatts"),
+            Triple(0x0091L, 1L, "cumulativeEnergyImportedMilliwattHours"),
         )
         private const val VENDOR_ID = 0xFFF4
         private const val STATUS_OK = 0L
@@ -90,12 +97,15 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var eventSink: EventChannel.EventSink? = null
     private var levelEventSink: EventChannel.EventSink? = null
     private var colorEventSink: EventChannel.EventSink? = null
+    private var electricalEventSink: EventChannel.EventSink? = null
     private val subscriptionIds = mutableMapOf<Pair<Long, String>, Long>()
     private val subscriptionEpochs = mutableMapOf<Pair<Long, String>, Any>()
     private val colorCapabilities = mutableMapOf<Long, Map<Int, Int>>()
     private val colorLifetimes = mutableMapOf<Long, Any>()
     private val colorSubscriptionTokens = mutableMapOf<Long, Any>()
     private val colorSubscriptionPaths = mutableMapOf<Long, List<Pair<Int, Long>>>()
+    private val electricalSubscriptionPaths =
+        mutableMapOf<Long, List<Triple<Int, Long, Long>>>()
     private val levelSubscriptionEndpoints = mutableMapOf<Long, List<Int>>()
     private val onOffSubscriptionEndpoints = mutableMapOf<Long, List<Int>>()
     private var pendingCommission: MethodChannel.Result? = null
@@ -125,6 +135,16 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
                 override fun onCancel(arguments: Any?) {
                     levelEventSink = null
+                }
+            })
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, ELECTRICAL_EVENTS)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    electricalEventSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    electricalEventSink = null
                 }
             })
         try {
@@ -515,6 +535,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         colorLifetimes.remove(nodeId)
                         colorSubscriptionTokens.remove(nodeId)
                         colorSubscriptionPaths.remove(nodeId)
+                        electricalSubscriptionPaths.remove(nodeId)
                         Log.i(TAG, "Device confirmed fabric removal nodeId=$remoteDeviceId")
                         result.success(null)
                     }
@@ -701,10 +722,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         eventSink = null
         levelEventSink = null
         colorEventSink = null
+        electricalEventSink = null
         subscriptionEpochs.keys.toList().forEach { stopSubscription(it.first, it.second) }
         colorLifetimes.clear()
         colorSubscriptionTokens.clear()
         colorSubscriptionPaths.clear()
+        electricalSubscriptionPaths.clear()
         super.onDestroy()
     }
 
@@ -934,6 +957,47 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
     }
 
+    private fun decodeElectricalMeasurements(
+        nodeState: NodeState,
+    ): Map<Int, Map<String, Long?>> {
+        fun nullableLong(tlv: ByteArray): Long? {
+            val reader = TlvReader(tlv)
+            return if (reader.isNull()) {
+                reader.getNull(AnonymousTag)
+                null
+            } else {
+                reader.getLong(AnonymousTag)
+            }
+        }
+
+        fun nullableEnergy(tlv: ByteArray): Long? {
+            val reader = TlvReader(tlv)
+            if (reader.isNull()) {
+                reader.getNull(AnonymousTag)
+                return null
+            }
+            reader.enterStructure(AnonymousTag)
+            return reader.getLong(ContextSpecificTag(0))
+        }
+
+        val measurements = mutableMapOf<Int, Map<String, Long?>>()
+        for ((endpoint, state) in nodeState.endpointStates) {
+            if (endpoint <= 0) continue
+            val values = mutableMapOf<String, Long?>()
+            for ((cluster, attribute, name) in ELECTRICAL_ATTRIBUTES) {
+                val tlv = state.getClusterState(cluster)
+                    ?.getAttributeState(attribute)?.tlv ?: continue
+                values[name] = if (cluster == 0x0091L) {
+                    nullableEnergy(tlv)
+                } else {
+                    nullableLong(tlv)
+                }
+            }
+            if (values.isNotEmpty()) measurements[endpoint] = values
+        }
+        return measurements
+    }
+
     private fun readElectricalMeasurements(nodeId: Long, result: MethodChannel.Result) {
         withConnectedDevice(nodeId, result) { devicePointer ->
             controller.readPath(
@@ -948,50 +1012,25 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
                     override fun onReport(nodeState: NodeState) {
                         try {
-                            fun nullableLong(tlv: ByteArray): Long? {
-                                val reader = TlvReader(tlv)
-                                return if (reader.isNull()) {
-                                    reader.getNull(AnonymousTag)
-                                    null
-                                } else {
-                                    reader.getLong(AnonymousTag)
+                            val measurements = decodeElectricalMeasurements(nodeState)
+                            result.success(measurements.mapKeys { it.key.toString() })
+                            val paths = measurements.flatMap { (endpoint, values) ->
+                                ELECTRICAL_ATTRIBUTES
+                                    .filter { values.containsKey(it.third) }
+                                    .map { Triple(endpoint, it.first, it.second) }
+                            }.sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
+                            if (paths.isNotEmpty() &&
+                                electricalSubscriptionPaths[nodeId] != paths) {
+                                try {
+                                    subscribeElectricalMeasurements(nodeId, devicePointer, paths)
+                                } catch (error: Exception) {
+                                    electricalSubscriptionPaths.remove(nodeId)
+                                    Log.e(TAG, "Electrical subscription setup failed", error)
                                 }
+                            } else if (paths.isEmpty()) {
+                                stopSubscription(nodeId, "electrical")
+                                electricalSubscriptionPaths.remove(nodeId)
                             }
-
-                            fun nullableEnergy(tlv: ByteArray): Long? {
-                                val reader = TlvReader(tlv)
-                                if (reader.isNull()) {
-                                    reader.getNull(AnonymousTag)
-                                    return null
-                                }
-                                reader.enterStructure(AnonymousTag)
-                                return reader.getLong(ContextSpecificTag(0))
-                            }
-
-                            val measurements = mutableMapOf<String, Map<String, Long?>>()
-                            for ((endpoint, state) in nodeState.endpointStates) {
-                                if (endpoint <= 0) continue
-                                val values = mutableMapOf<String, Long?>()
-                                val power = state.getClusterState(0x0090L)
-                                power?.getAttributeState(4L)?.tlv?.let {
-                                    values["voltageMillivolts"] = nullableLong(it)
-                                }
-                                power?.getAttributeState(5L)?.tlv?.let {
-                                    values["activeCurrentMilliamps"] = nullableLong(it)
-                                }
-                                power?.getAttributeState(8L)?.tlv?.let {
-                                    values["activePowerMilliwatts"] = nullableLong(it)
-                                }
-                                state.getClusterState(0x0091L)
-                                    ?.getAttributeState(1L)?.tlv?.let {
-                                        values["cumulativeEnergyImportedMilliwattHours"] =
-                                            nullableEnergy(it)
-                                    }
-                                if (values.isNotEmpty()) {
-                                    measurements[endpoint.toString()] = values
-                                }
-                            }
-                            result.success(measurements)
                         } catch (error: Exception) {
                             result.error(
                                 "matter_electrical_read_failed",
@@ -1002,33 +1041,109 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     }
                 },
                 devicePointer,
-                listOf(
+                ELECTRICAL_ATTRIBUTES.map { (cluster, attribute, _) ->
                     ChipAttributePath.newInstance(
                         ChipPathId.forWildcard(),
-                        ChipPathId.forId(0x0090L),
-                        ChipPathId.forId(4L),
-                    ),
-                    ChipAttributePath.newInstance(
-                        ChipPathId.forWildcard(),
-                        ChipPathId.forId(0x0090L),
-                        ChipPathId.forId(5L),
-                    ),
-                    ChipAttributePath.newInstance(
-                        ChipPathId.forWildcard(),
-                        ChipPathId.forId(0x0090L),
-                        ChipPathId.forId(8L),
-                    ),
-                    ChipAttributePath.newInstance(
-                        ChipPathId.forWildcard(),
-                        ChipPathId.forId(0x0091L),
-                        ChipPathId.forId(1L),
-                    ),
-                ),
+                        ChipPathId.forId(cluster),
+                        ChipPathId.forId(attribute),
+                    )
+                },
                 null,
                 false,
                 0,
             )
         }
+    }
+
+    private fun subscribeElectricalMeasurements(
+        nodeId: Long,
+        devicePointer: Long,
+        paths: List<Triple<Int, Long, Long>>,
+    ) {
+        val token = startSubscription(nodeId, "electrical")
+        electricalSubscriptionPaths[nodeId] = paths
+
+        fun markStale() {
+            runOnUiThread {
+                if (subscriptionEpochs[nodeId to "electrical"] !== token) {
+                    return@runOnUiThread
+                }
+                val byEndpoint = paths.groupBy { it.first }
+                for ((endpoint, endpointPaths) in byEndpoint) {
+                    val names = endpointPaths.mapNotNull { path ->
+                        ELECTRICAL_ATTRIBUTES.firstOrNull {
+                            it.first == path.second && it.second == path.third
+                        }?.third
+                    }
+                    electricalEventSink?.success(
+                        mapOf(
+                            "nodeId" to nodeId,
+                            "endpoint" to endpoint,
+                            "staleMetrics" to names,
+                        ),
+                    )
+                }
+            }
+        }
+
+        controller.subscribeToPath(
+            SubscriptionEstablishedCallback { id ->
+                rememberSubscription(nodeId, "electrical", token, id)
+            },
+            ResubscriptionAttemptCallback { cause, delayMs ->
+                Log.w(TAG, "Electrical resubscribe cause=$cause delayMs=$delayMs")
+                markStale()
+            },
+            object : ReportCallback {
+                override fun onError(
+                    attributePath: ChipAttributePath?,
+                    eventPath: ChipEventPath?,
+                    ex: Exception,
+                ) {
+                    markStale()
+                    runOnUiThread {
+                        if (subscriptionEpochs[nodeId to "electrical"] === token) {
+                            electricalSubscriptionPaths.remove(nodeId)
+                            stopSubscription(nodeId, "electrical")
+                        }
+                    }
+                    Log.e(TAG, "Electrical subscription failed", ex)
+                }
+
+                override fun onReport(nodeState: NodeState) {
+                    try {
+                        val measurements = decodeElectricalMeasurements(nodeState)
+                        runOnUiThread {
+                            if (subscriptionEpochs[nodeId to "electrical"] !== token ||
+                                pendingRemovals.contains(nodeId)) return@runOnUiThread
+                            for ((endpoint, values) in measurements) {
+                                if (paths.none { it.first == endpoint }) continue
+                                electricalEventSink?.success(
+                                    mapOf(
+                                        "nodeId" to nodeId,
+                                        "endpoint" to endpoint,
+                                        "values" to values,
+                                    ),
+                                )
+                            }
+                        }
+                    } catch (error: Exception) {
+                        Log.e(TAG, "Invalid electrical report", error)
+                        markStale()
+                    }
+                }
+            },
+            devicePointer,
+            paths.map { (endpoint, cluster, attribute) ->
+                ChipAttributePath.newInstance(endpoint, cluster, attribute)
+            },
+            null,
+            1,
+            60,
+            true,
+            false,
+            0,
+        )
     }
 
     private fun invokeOnOff(

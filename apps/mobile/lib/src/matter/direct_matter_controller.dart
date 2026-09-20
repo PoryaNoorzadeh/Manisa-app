@@ -144,6 +144,10 @@ abstract interface class ElectricalMeasurementController {
   );
 }
 
+abstract interface class ElectricalMeasurementEventController {
+  Stream<DirectElectricalEvent> watchElectricalMeasurements();
+}
+
 final class PlatformDirectMatterController
     implements
         DirectMatterController,
@@ -151,16 +155,19 @@ final class PlatformDirectMatterController
         LevelControlController,
         LevelEventController,
         ColorControlController,
-        ElectricalMeasurementController {
+        ElectricalMeasurementController,
+        ElectricalMeasurementEventController {
   const PlatformDirectMatterController({
     MethodChannel methods = const MethodChannel(_methodChannelName),
     EventChannel events = const EventChannel(_eventChannelName),
     EventChannel levelEvents = const EventChannel(_levelEventChannelName),
     EventChannel colorEvents = const EventChannel('com.manisa/matter/color_events'),
+    EventChannel electricalEvents = const EventChannel('com.manisa/matter/electrical_events'),
   })  : _methods = methods,
         _events = events,
         _levelEvents = levelEvents,
-        _colorEvents = colorEvents;
+        _colorEvents = colorEvents,
+        _electricalEvents = electricalEvents;
 
   static const String _methodChannelName = 'com.manisa/matter/methods';
   static const String _eventChannelName = 'com.manisa/matter/events';
@@ -170,6 +177,16 @@ final class PlatformDirectMatterController
   final EventChannel _events;
   final EventChannel _levelEvents;
   final EventChannel _colorEvents;
+  final EventChannel _electricalEvents;
+
+  @override
+  Stream<DirectElectricalEvent> watchElectricalMeasurements() =>
+      _electricalEvents.receiveBroadcastStream().map((event) {
+        if (event is! Map<Object?, Object?>) {
+          throw const FormatException('invalid electrical event');
+        }
+        return DirectElectricalEvent.fromMap(event);
+      });
 
   @override
   Future<Map<int, DirectColorState>> readColors(int nodeId) async {

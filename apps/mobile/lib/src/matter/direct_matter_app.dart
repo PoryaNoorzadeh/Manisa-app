@@ -100,10 +100,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   StreamSubscription<DirectColorEvent>? _colorEvents;
   final Map<String, DirectElectricalMeasurement> _electricalMeasurements =
       <String, DirectElectricalMeasurement>{};
-  final Set<int> _staleMeasurementNodes = <int>{};
+  final Map<String, Set<ElectricalMetric>> _staleElectricalMetrics =
+      <String, Set<ElectricalMetric>>{};
   final Set<String> _busy = <String>{};
   StreamSubscription<DirectMatterOnOffEvent>? _events;
   StreamSubscription<DirectMatterLevelEvent>? _levelEvents;
+  StreamSubscription<DirectElectricalEvent>? _electricalEvents;
   final Set<int> _refreshingNodes = <int>{};
   final Set<int> _readingCapabilities = <int>{};
   final Set<int> _removingNodes = <int>{};
@@ -129,6 +131,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     unawaited(_events?.cancel());
     unawaited(_levelEvents?.cancel());
     unawaited(_colorEvents?.cancel());
+    unawaited(_electricalEvents?.cancel());
     super.dispose();
   }
 
@@ -244,6 +247,51 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         }, onError: (Object error, StackTrace stack) {
           if (!mounted) return;
           setState(() => _staleColors.addAll(_colors.keys));
+        });
+      }
+      if (controller is ElectricalMeasurementEventController) {
+        _electricalEvents = (controller as ElectricalMeasurementEventController)
+            .watchElectricalMeasurements().listen((event) {
+          if (!_canUpdate(event.nodeId)) return;
+          final device = _devices.firstWhere((item) => item.nodeId == event.nodeId);
+          final supported = device.measurementCapabilities[event.endpoint];
+          if (supported == null) return;
+          final key = _stateKey(event.nodeId, event.endpoint);
+          setState(() {
+            final stale = <ElectricalMetric>{
+              ...?_staleElectricalMetrics[key],
+              ...event.staleMetrics.where(supported.contains),
+            };
+            final report = event.report;
+            if (report != null) {
+              final accepted = report.supported.intersection(supported);
+              if (accepted.isNotEmpty) {
+                final filtered = DirectElectricalMeasurement(
+                  supported: accepted,
+                  activePowerMilliwatts: report.activePowerMilliwatts,
+                  voltageMillivolts: report.voltageMillivolts,
+                  activeCurrentMilliamps: report.activeCurrentMilliamps,
+                  cumulativeEnergyImportedMilliwattHours:
+                      report.cumulativeEnergyImportedMilliwattHours,
+                );
+                _electricalMeasurements[key] =
+                    _electricalMeasurements[key]?.merge(filtered) ?? filtered;
+                stale.removeAll(accepted);
+              }
+            }
+            if (stale.isEmpty) _staleElectricalMetrics.remove(key);
+            else _staleElectricalMetrics[key] = stale;
+          });
+        }, onError: (Object error, StackTrace stack) {
+          if (!mounted) return;
+          setState(() {
+            for (final device in _devices) {
+              for (final entry in device.measurementCapabilities.entries) {
+                _staleElectricalMetrics[_stateKey(device.nodeId, entry.key)] =
+                    Set<ElectricalMetric>.of(entry.value);
+              }
+            }
+          });
         });
       }
       // Restore live state without blocking the home screen or onboarding.
@@ -487,7 +535,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                   .timeout(_readTimeout);
         } catch (_) {
           if (_canUpdate(nodeId)) {
-            setState(() => _staleMeasurementNodes.add(nodeId));
+            setState(() {
+              final device = _devices.firstWhere((item) => item.nodeId == nodeId);
+              for (final entry in device.measurementCapabilities.entries) {
+                _staleElectricalMetrics[_stateKey(nodeId, entry.key)] =
+                    Set<ElectricalMetric>.of(entry.value);
+              }
+            });
           }
         }
       }
@@ -532,7 +586,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               _electricalMeasurements[_stateKey(nodeId, entry.key)] =
                   entry.value;
             }
-            _staleMeasurementNodes.remove(nodeId);
+            _staleElectricalMetrics.removeWhere((key, _) => key.startsWith('$nodeId:'));
           }
         });
       } finally {
@@ -1007,7 +1061,6 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               .where((item) => item.nodeId != device.nodeId)
               .toList(growable: false);
           _unavailableNodes.remove(device.nodeId);
-          _staleMeasurementNodes.remove(device.nodeId);
           _colorLifetimes.remove(device.nodeId);
           _readingColors.remove(device.nodeId);
           _colors.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
@@ -1018,6 +1071,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             _states.remove(_stateKey(device.nodeId, endpoint));
           }
           _electricalMeasurements.removeWhere(
+            (key, _) => key.startsWith('${device.nodeId}:'),
+          );
+          _staleElectricalMetrics.removeWhere(
             (key, _) => key.startsWith('${device.nodeId}:'),
           );
         });
@@ -1199,8 +1255,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             onColorChanged: (endpoint, color) => _setColor(device, endpoint, color),
             onRenameChannel: (endpoint) => _renameChannel(device, endpoint),
             electricalMeasurements: _electricalMeasurements,
-            measurementsStale:
-                _staleMeasurementNodes.contains(device.nodeId),
+            staleElectricalMetrics: _staleElectricalMetrics,
             busy: _busy,
             error: _deviceErrors[device.nodeId],
             unavailable: _unavailableNodes.contains(device.nodeId),
@@ -1343,7 +1398,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.onColorChanged,
     required this.onRenameChannel,
     required this.electricalMeasurements,
-    required this.measurementsStale,
+    required this.staleElectricalMetrics,
     required this.busy,
     required this.error,
     required this.unavailable,
@@ -1367,7 +1422,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final void Function(int endpoint, HSVColor color) onColorChanged;
   final ValueChanged<int> onRenameChannel;
   final Map<String, DirectElectricalMeasurement> electricalMeasurements;
-  final bool measurementsStale;
+  final Map<String, Set<ElectricalMetric>> staleElectricalMetrics;
   final Set<String> busy;
   final String? error;
   final bool unavailable;
@@ -1519,7 +1574,9 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                             supported:
                                 device.measurementCapabilities[endpoint]!,
                             measurement: measurement,
-                            stale: unavailable || measurementsStale,
+                            staleMetrics: unavailable
+                                ? device.measurementCapabilities[endpoint]!
+                                : staleElectricalMetrics[key] ?? const {},
                           ),
                       ],
                     );
@@ -1584,7 +1641,9 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         _ElectricalMeasurementPanel(
                           supported: device.measurementCapabilities[endpoint]!,
                           measurement: measurement,
-                          stale: unavailable || measurementsStale,
+                          staleMetrics: unavailable
+                              ? device.measurementCapabilities[endpoint]!
+                              : staleElectricalMetrics[key] ?? const {},
                         ),
                     ],
                   );
@@ -1617,7 +1676,9 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         )}',
                   supported: entry.value,
                   measurement: electricalMeasurements[_key(entry.key)],
-                  stale: unavailable || measurementsStale,
+                  staleMetrics: unavailable
+                      ? entry.value
+                      : staleElectricalMetrics[_key(entry.key)] ?? const {},
                 ),
           ],
         ),
@@ -1630,13 +1691,13 @@ final class _ElectricalMeasurementPanel extends StatelessWidget {
   const _ElectricalMeasurementPanel({
     required this.supported,
     required this.measurement,
-    required this.stale,
+    required this.staleMetrics,
     this.title = 'مصرف برق',
   });
 
   final Set<ElectricalMetric> supported;
   final DirectElectricalMeasurement? measurement;
-  final bool stale;
+  final Set<ElectricalMetric> staleMetrics;
   final String title;
 
   String _value(ElectricalMetric metric) {
@@ -1701,7 +1762,7 @@ final class _ElectricalMeasurementPanel extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
-              if (stale)
+              if (staleMetrics.isNotEmpty)
                 Text(
                   'نیاز به به‌روزرسانی',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -1717,6 +1778,11 @@ final class _ElectricalMeasurementPanel extends StatelessWidget {
               child: Row(
                 children: <Widget>[
                   Expanded(child: Text(_label(metric))),
+                  if (staleMetrics.contains(metric)) ...<Widget>[
+                    Icon(Icons.sync_problem_outlined, size: 16,
+                      color: Theme.of(context).colorScheme.error),
+                    const SizedBox(width: 4),
+                  ],
                   Text(
                     _value(metric),
                     textDirection: TextDirection.rtl,

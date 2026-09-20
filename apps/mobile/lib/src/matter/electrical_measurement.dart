@@ -7,6 +7,13 @@ enum ElectricalMetric {
   cumulativeEnergyImported,
 }
 
+ElectricalMetric electricalMetricFromWireName(String name) {
+  for (final metric in ElectricalMetric.values) {
+    if (metric.name == name) return metric;
+  }
+  throw const FormatException('invalid electrical metric');
+}
+
 final class DirectElectricalMeasurement {
   const DirectElectricalMeasurement({
     required this.supported,
@@ -21,6 +28,23 @@ final class DirectElectricalMeasurement {
   final int? voltageMillivolts;
   final int? activeCurrentMilliamps;
   final int? cumulativeEnergyImportedMilliwattHours;
+
+  DirectElectricalMeasurement merge(DirectElectricalMeasurement report) =>
+      DirectElectricalMeasurement(
+        supported: Set<ElectricalMetric>.unmodifiable(
+          <ElectricalMetric>{...supported, ...report.supported},
+        ),
+        activePowerMilliwatts: report.supported.contains(ElectricalMetric.activePower)
+            ? report.activePowerMilliwatts : activePowerMilliwatts,
+        voltageMillivolts: report.supported.contains(ElectricalMetric.voltage)
+            ? report.voltageMillivolts : voltageMillivolts,
+        activeCurrentMilliamps: report.supported.contains(ElectricalMetric.activeCurrent)
+            ? report.activeCurrentMilliamps : activeCurrentMilliamps,
+        cumulativeEnergyImportedMilliwattHours: report.supported.contains(
+          ElectricalMetric.cumulativeEnergyImported,
+        ) ? report.cumulativeEnergyImportedMilliwattHours
+          : cumulativeEnergyImportedMilliwattHours,
+      );
 
   factory DirectElectricalMeasurement.fromMap(Map<Object?, Object?> value) {
     int? read(String key, {bool nonNegative = false}) {
@@ -57,6 +81,42 @@ final class DirectElectricalMeasurement {
         nonNegative: true,
       ),
     );
+  }
+}
+
+final class DirectElectricalEvent {
+  const DirectElectricalEvent({required this.nodeId, required this.endpoint,
+    required this.staleMetrics, this.report});
+
+  final int nodeId;
+  final int endpoint;
+  final DirectElectricalMeasurement? report;
+  final Set<ElectricalMetric> staleMetrics;
+
+  factory DirectElectricalEvent.fromMap(Map<Object?, Object?> value) {
+    final nodeId = value['nodeId'];
+    final endpoint = value['endpoint'];
+    final rawValues = value['values'];
+    final rawStale = value['staleMetrics'];
+    if (nodeId is! int || endpoint is! int || endpoint <= 0 ||
+        (rawValues != null && rawValues is! Map<Object?, Object?>) ||
+        (rawStale != null && rawStale is! List<Object?>)) {
+      throw const FormatException('invalid electrical event');
+    }
+    DirectElectricalMeasurement? report;
+    if (rawValues is Map<Object?, Object?> && rawValues.isNotEmpty) {
+      report = DirectElectricalMeasurement.fromMap(rawValues);
+    }
+    final stale = <ElectricalMetric>{};
+    for (final name in (rawStale as List<Object?>? ?? const <Object?>[])) {
+      if (name is! String) throw const FormatException('invalid stale electrical metric');
+      stale.add(electricalMetricFromWireName(name));
+    }
+    if (report == null && stale.isEmpty) {
+      throw const FormatException('empty electrical event');
+    }
+    return DirectElectricalEvent(nodeId: nodeId, endpoint: endpoint,
+      report: report, staleMetrics: Set<ElectricalMetric>.unmodifiable(stale));
   }
 }
 

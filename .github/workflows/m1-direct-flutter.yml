@@ -188,7 +188,10 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M3.3 electrical measurement candidate
+          Manisa M3.5 live electrical measurement candidate
+          - Live Matter subscriptions for power, energy, voltage and current
+          - Per-metric freshness; stale reports preserve the last valid value
+          - Sparse reports merge without clearing unrelated measurements
           - Actual Matter electrical attributes determine visible measurements
           - Read-only power, energy, voltage and current with Persian digits
           - Real zero, supported-null and stale values remain distinct
