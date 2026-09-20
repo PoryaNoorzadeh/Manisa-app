@@ -524,7 +524,11 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 
 ## M4.1 — سنسور دما و رطوبت؛ نامزد 0.17.0+22
 
-- مبنا: `develop@7bad44f`، نسخهٔ 0.16.0+21 و پایان نرم‌افزاری M3.
+- مبنا: `develop@7bad44f`، نسخهٔ 0.16.0+21 و پایان نرم‌افزاری M3؛
+  [CI پایانی M3](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35497046033)
+  و [بستهٔ یکپارچهٔ M3](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35497046032) موفق بوده‌اند.
+- تغییرات M4.1 در [PR #12](https://github.com/PoryaNoorzadeh/Manisa-app/pull/12)،
+  کد نامزد `c873e8a2130d98ccae01365dc23196aa3660f2cd`؛ پس از سبزشدن همهٔ gateها در 2026-09-20 با merge `1aca6b6` به `develop` اضافه شد.
 - دامنه: کشف MeasuredValue واقعی از TemperatureMeasurement و
   RelativeHumidityMeasurement، دریافت اولیه و subscription زنده، پشتیبانی از
   وسیلهٔ صرفاً سنسور، صفر/null/قدیمی، retry و حفظ خوانش زنده در برابر پاسخ دیرهنگام.
@@ -535,13 +539,21 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 
 | شناسه | معیار | وضعیت |
 | --- | --- | --- |
-| M4-C01 | بازه و واحدهای دما/رطوبت، منفی، صفر، null، metadata قدیمی و ارقام فارسی | تست نوشته شده؛ در انتظار اجرای CI |
-| M4-C02 | وسیلهٔ بدون OnOff، دریافت اولیه/زنده، stale مستقل، پاسخ دیرهنگام، retry و reopen | تست نوشته شده؛ در انتظار اجرای CI |
-| M4-C03 | حفظ کلیدهای موجود، حذف وسیله، late callback و خوانایی فونت بزرگ | تست نوشته شده؛ در انتظار اجرای CI |
-| M4-C04 | کامپایل bridge واقعی با SDK ثابت و APK نسخه‌دار ARM64 | در انتظار CI و artifact |
+| M4-C01 | بازه و واحدهای دما/رطوبت، منفی، صفر، null، metadata قدیمی و ارقام فارسی | تأیید؛ تحلیل Flutter و هر ۹۳ تست در [CI](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35522472486) موفق |
+| M4-C02 | وسیلهٔ بدون OnOff، دریافت اولیه/زنده، stale مستقل، پاسخ دیرهنگام، retry و reopen | تأیید؛ تحلیل Flutter و هر ۹۳ تست در [CI](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35522472486) موفق |
+| M4-C03 | حفظ کلیدهای موجود، حذف وسیله، late callback و خوانایی فونت بزرگ | تأیید؛ تحلیل Flutter و هر ۹۳ تست در [CI](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35522472486) موفق |
+| M4-C04 | کامپایل bridge واقعی با SDK ثابت و APK نسخه‌دار ARM64 | تأیید؛ [ساخت یکپارچهٔ Android/Matter](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35522472488) موفق |
 | M4-T01 | تغییر واقعی دما/رطوبت و تطبیق مقدار و واحد با مرجع | معوق؛ سنسور واقعی و مرجع لازم است |
 | M4-T02 | قطع/وصل شبکه، بازشدن اپ، حذف و pairing مجدد و دریافت گزارش تازه | معوق؛ سنسور و گوشی واقعی لازم است |
 | M4-T03 | گزارش‌دهی سنسور کم‌مصرف/خواب و سازگاری با سیاست تازگی | معوق؛ وابسته به نوع سخت‌افزار |
 
 تأیید سخت‌افزاری قبلی کاربر به قوت خود باقی است؛ این ثبت، تأیید سخت‌افزاری تازه
-برای M4 ایجاد نمی‌کند. نتیجهٔ CI و مشخصات بسته پس از اجرا درج می‌شود.
+برای M4 ایجاد نمی‌کند. خروج نرم‌افزاری M4.1 انجام شده و گام بعدی M4.2 است.
+
+- اجرای اول، مشکل چیدمان پیام retry در فونت بزرگ را یافت؛ با چیدمان عمودی اصلاح شد. تستِ دکمهٔ خارج از صفحه نیز اکنون پیش از لمس اسکرول می‌کند. اجرای بعدی هر ۹۳ تست را بدون حذف تست یا gate گذراند.
+
+- هر چهار job در [CI نهایی](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35522472486) موفق‌اند: Go، Flutter، Android عمومی و SDK رسمی Matter؛ هیچ gate حذف یا غیرفعال نشده است.
+- [بستهٔ نسخهٔ 0.17.0+22](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35522472488/artifacts/10609327331)، انقضای artifact گیت‌هاب: 2026-10-04.
+- APK: `manisa-m4-v0.17.0-build22-arm64-release.apk`، اندازهٔ 64,287,822 بایت (61.31 MiB).
+- SHA-256 فایل APK: `6e631bd44173673d53f28d581eadb70838a37a2dbeacd032cd5f142a1d452a26`.
+- پس از دریافت، checksum فایل APK و digest بستهٔ ZIP، نسخه/شمارهٔ ساخت/commit داخل metadata، و وجود runtimeهای Matter و Flutter برای ARM64 مستقل بررسی شدند و تطابق داشتند.
