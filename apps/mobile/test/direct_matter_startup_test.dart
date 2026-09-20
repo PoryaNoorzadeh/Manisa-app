@@ -187,6 +187,118 @@ void main() {
     await controller.electricalEvents.close();
   });
 
+  testWidgets(
+    'M3 features stay bound to endpoint identity across live reports and reopen',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final controller = _M3RegressionController()
+        ..discovery.complete(<int>[2, 1]);
+      final store = _RenameStore()
+        ..fail = false
+        ..device = const DirectMatterDevice(
+          nodeId: 7,
+          name: 'کلید اتاق کودک',
+          onOffEndpoints: <int>[1, 2],
+          channelNames: <int, String>{1: 'چراغ کودک', 2: 'راهرو'},
+        );
+      final favoriteStore = _MemoryFavoriteStore(
+        catalog: const FavoriteCatalog(
+          outputs: <FavoriteOutput>[
+            FavoriteOutput(nodeId: 7, endpoint: 2),
+          ],
+        ),
+      );
+
+      Future<void> showApp() => tester.pumpWidget(
+        ManisaDirectApp(
+          controller: controller,
+          deviceStore: store,
+          favoriteStore: favoriteStore,
+        ),
+      );
+
+      await showApp();
+      await tester.pumpAndSettle();
+      expect(store.device.onOffEndpoints, <int>[2, 1]);
+      expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
+      expect(find.text('راهرو'), findsWidgets);
+      expect(find.text('چراغ کودک'), findsOneWidget);
+      expect(find.text('رنگ نور'), findsOneWidget);
+      expect(find.text('شدت نور'), findsOneWidget);
+      expect(find.text('مصرف برق'), findsOneWidget);
+
+      final rename = find.byKey(const ValueKey('rename-output-7-1'));
+      await tester.ensureVisible(rename);
+      await tester.tap(rename);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'خروجی ۱ اتاق کودک');
+      await tester.tap(find.text('ذخیره'));
+      await tester.pumpAndSettle();
+      expect(store.device.channelNames, <int, String>{
+        1: 'خروجی ۱ اتاق کودک',
+        2: 'راهرو',
+      });
+
+      controller.levelEvents.add(
+        const DirectMatterLevelEvent(nodeId: 7, endpoint: 1, level: 64),
+      );
+      controller.colorEvents.add(
+        DirectColorEvent(
+          nodeId: 7,
+          endpoint: 1,
+          report: DirectColorState.fromMap(<String, int>{'hue': 100}),
+        ),
+      );
+      controller.electricalEvents.add(
+        DirectElectricalEvent(
+          nodeId: 7,
+          endpoint: 1,
+          report: DirectElectricalMeasurement.fromMap(<Object?, Object?>{
+            'activePowerMilliwatts': 12500,
+          }),
+          staleMetrics: const <ElectricalMetric>{},
+        ),
+      );
+      controller.events.add(
+        const DirectMatterOnOffEvent(
+          nodeId: 7,
+          endpoint: 2,
+          value: false,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('خروجی ۱ اتاق کودک'), findsOneWidget);
+      expect(find.text('راهرو'), findsWidgets);
+      expect(find.text('۲۵٪'), findsOneWidget);
+      expect(find.text('۱۲٫۵ وات'), findsOneWidget);
+      expect(
+        tester
+            .widget<Slider>(find.byKey(const ValueKey('color-hue')))
+            .value,
+        closeTo(100 * 360 / 254, 0.001),
+      );
+      expect(favoriteStore.catalog.contains(7, 2), isTrue);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await showApp();
+      await tester.pumpAndSettle();
+      expect(store.device.onOffEndpoints, <int>[2, 1]);
+      expect(find.text('خروجی ۱ اتاق کودک'), findsOneWidget);
+      expect(find.text('راهرو'), findsWidgets);
+      expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
+      expect(favoriteStore.catalog.contains(7, 2), isTrue);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await controller.events.close();
+      await controller.levelEvents.close();
+      await controller.colorEvents.close();
+      await controller.electricalEvents.close();
+    },
+  );
+
   testWidgets('shows a Persian dimmer only for a confirmed LevelControl endpoint', (tester) async {
     final controller = _LevelController(initialLevel: 127);
     controller.nodeValues[7] = false;
@@ -1177,4 +1289,33 @@ class _ColorController extends _LevelController implements ColorControlControlle
   }
   @override
   Stream<DirectColorEvent> watchColors() => colorEvents.stream;
+}
+
+class _M3RegressionController extends _ColorController
+    implements
+        ElectricalMeasurementController,
+        ElectricalMeasurementEventController {
+  // Closed by the M3 cross-feature widget test.
+  // ignore: close_sinks
+  final electricalEvents = StreamController<DirectElectricalEvent>.broadcast();
+
+  @override
+  Stream<DirectElectricalEvent> watchElectricalMeasurements() =>
+      electricalEvents.stream;
+
+  @override
+  Future<Map<int, DirectElectricalMeasurement>> readElectricalMeasurements(
+    int nodeId,
+  ) async => <int, DirectElectricalMeasurement>{
+    1: const DirectElectricalMeasurement(
+      supported: <ElectricalMetric>{
+        ElectricalMetric.activePower,
+        ElectricalMetric.voltage,
+        ElectricalMetric.cumulativeEnergyImported,
+      },
+      activePowerMilliwatts: 5000,
+      voltageMillivolts: 230000,
+      cumulativeEnergyImportedMilliwattHours: 1500000,
+    ),
+  };
 }
