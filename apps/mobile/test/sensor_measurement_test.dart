@@ -199,6 +199,8 @@ void main() {
     expect(find.byIcon(Icons.update),findsNWidgets(2));
     fake.failRead = false;
     fake.value = reading(-150,0);
+    await tester.ensureVisible(find.text('دریافت دوباره'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('دریافت دوباره'));
     await tester.pumpAndSettle();
     expect(find.text('-۱٫۵ °C'),findsOneWidget);

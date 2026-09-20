@@ -32,8 +32,8 @@ final class SensorMeasurementPanel extends StatelessWidget {
               : null,
         ),
       if (supported.any((metric) => observation?.isStale(metric, now) == true))
-        Row(children: <Widget>[
-          const Expanded(child: Text('نیاز به به‌روزرسانی')),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
+          const Text('نیاز به به‌روزرسانی'),
           TextButton(onPressed: onRefresh, child: const Text('دریافت دوباره')),
         ]),
     ]),
