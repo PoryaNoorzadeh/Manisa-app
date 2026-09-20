@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import android.util.Log
 import chip.devicecontroller.AttestationTrustStoreDelegate
@@ -64,6 +66,11 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         private const val LEVEL_EVENTS = "com.manisa/matter/level_events"
         private const val COLOR_EVENTS = "com.manisa/matter/color_events"
         private const val ELECTRICAL_EVENTS = "com.manisa/matter/electrical_events"
+        private const val SENSOR_EVENTS = "com.manisa/matter/sensor_events"
+        private val SENSOR_ATTRIBUTES = listOf(
+            Triple(0x0402L, 0L, "temperature"),
+            Triple(0x0405L, 0L, "humidity"),
+        )
         private const val COLOR_CLUSTER = 0x0300L
         // Attribute id -> wire name. Values >= 0x4000 plus x/y use uint16.
         private val COLOR_ATTRIBUTES = mapOf(
@@ -98,6 +105,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var levelEventSink: EventChannel.EventSink? = null
     private var colorEventSink: EventChannel.EventSink? = null
     private var electricalEventSink: EventChannel.EventSink? = null
+    private var sensorEventSink: EventChannel.EventSink? = null
+    private val sensorReadTokens = mutableMapOf<Long, Any>()
+    private val sensorSubscriptionPaths = mutableMapOf<Long, List<Triple<Int, Long, Long>>>()
+    private val sensorHandler = Handler(Looper.getMainLooper())
     private val subscriptionIds = mutableMapOf<Pair<Long, String>, Long>()
     private val subscriptionEpochs = mutableMapOf<Pair<Long, String>, Any>()
     private val colorCapabilities = mutableMapOf<Long, Map<Int, Int>>()
@@ -145,6 +156,15 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
 
                 override fun onCancel(arguments: Any?) {
                     electricalEventSink = null
+                }
+            })
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, SENSOR_EVENTS)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    sensorEventSink = events
+                }
+                override fun onCancel(arguments: Any?) {
+                    sensorEventSink = null
                 }
             })
         try {
@@ -240,6 +260,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     } else {
                         invokeColor(nodeId, endpoint, mode, first, second, result)
                     }
+                }
+                "readSensorMeasurements" -> withNodeId(call, result) { nodeId ->
+                    readSensorMeasurements(nodeId, result)
                 }
                 "readElectricalMeasurements" -> withNodeId(call, result) { nodeId ->
                     readElectricalMeasurements(nodeId, result)
@@ -476,17 +499,14 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         errorMessage: String?,
                         errorDetails: Any?,
                     ) {
-                        pendingCommission = null
-                        pendingCommissionNodeId = 0
-                        bleCommissioner = null
-                        pending.error(errorCode, errorMessage, errorDetails)
+                        // Pairing succeeded. Optional OnOff discovery must not lose
+                        // a sensor-only node that has already joined this fabric.
+                        Log.w(TAG, "Post-commission OnOff discovery unavailable: $errorCode")
+                        success(emptyList<Any>())
                     }
 
                     override fun notImplemented() {
-                        pendingCommission = null
-                        pendingCommissionNodeId = 0
-                        bleCommissioner = null
-                        pending.notImplemented()
+                        success(emptyList<Any>())
                     }
                 },
                 subscribe = true,
@@ -536,6 +556,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         colorSubscriptionTokens.remove(nodeId)
                         colorSubscriptionPaths.remove(nodeId)
                         electricalSubscriptionPaths.remove(nodeId)
+                        sensorReadTokens.remove(nodeId)
+                        sensorSubscriptionPaths.remove(nodeId)
                         Log.i(TAG, "Device confirmed fabric removal nodeId=$remoteDeviceId")
                         result.success(null)
                     }
@@ -723,6 +745,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         levelEventSink = null
         colorEventSink = null
         electricalEventSink = null
+        sensorEventSink = null
+        sensorReadTokens.clear()
+        sensorSubscriptionPaths.clear()
+        sensorHandler.removeCallbacksAndMessages(null)
         subscriptionEpochs.keys.toList().forEach { stopSubscription(it.first, it.second) }
         colorLifetimes.clear()
         colorSubscriptionTokens.clear()
@@ -954,6 +980,163 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     }
                 }, devicePointer, invoke, 0, 0,
             )
+        }
+    }
+
+    private fun decodeSensorMeasurements(nodeState: NodeState): Map<Int, Map<String, Int?>> {
+        val readings = mutableMapOf<Int, Map<String, Int?>>()
+        for ((endpoint, state) in nodeState.endpointStates) {
+            if (endpoint !in 1..65534) continue
+            val values = mutableMapOf<String, Int?>()
+            for ((cluster, attribute, name) in SENSOR_ATTRIBUTES) {
+                val tlv = state.getClusterState(cluster)?.getAttributeState(attribute)?.tlv ?: continue
+                val reader = TlvReader(tlv)
+                val value = if (reader.isNull()) {
+                    reader.getNull(AnonymousTag)
+                    null
+                } else if (cluster == 0x0402L) {
+                    reader.getShort(AnonymousTag).toInt()
+                } else {
+                    reader.getUShort(AnonymousTag).toInt()
+                }
+                require(value == null || if (cluster == 0x0402L) value in -27315..32767
+                    else value in 0..10000) { "Out-of-range $name" }
+                values[name] = value
+            }
+            if (values.isNotEmpty()) readings[endpoint] = values
+        }
+        return readings
+    }
+
+    private fun readSensorMeasurements(nodeId: Long, result: MethodChannel.Result) {
+        val token = Any()
+        sensorReadTokens[nodeId] = token
+        var completed = false // Read callbacks and connection callbacks are serialized on main.
+        fun active() = sensorReadTokens[nodeId] === token && !pendingRemovals.contains(nodeId)
+        val timeout = Runnable {
+            if (!completed && sensorReadTokens[nodeId] === token) {
+                completed = true
+                sensorReadTokens.remove(nodeId)
+                result.error("matter_sensor_timeout", "Sensor read timed out", null)
+            }
+        }
+        sensorHandler.postDelayed(timeout, 14000)
+        fun fail(message: String?) {
+            runOnUiThread {
+                if (completed || !active()) return@runOnUiThread
+                completed = true
+                sensorHandler.removeCallbacks(timeout)
+                sensorReadTokens.remove(nodeId)
+                result.error("matter_sensor_read_failed", message, null)
+            }
+        }
+        val connectionResult = object : MethodChannel.Result {
+            override fun success(result: Any?) { }
+            override fun error(code: String, message: String?, details: Any?) = fail(message)
+            override fun notImplemented() = fail("Sensor read unavailable")
+        }
+        try {
+            withConnectedDevice(nodeId, connectionResult) { devicePointer ->
+                runOnUiThread {
+                    if (completed || !active()) return@runOnUiThread
+                    try {
+                        controller.readPath(object : ReportCallback {
+                            override fun onError(attributePath: ChipAttributePath?,
+                                eventPath: ChipEventPath?, ex: Exception) = fail(ex.message)
+                            override fun onReport(nodeState: NodeState) {
+                                runOnUiThread {
+                                    if (completed || !active()) return@runOnUiThread
+                                    val readings = try { decodeSensorMeasurements(nodeState) }
+                                        catch (error: Exception) { fail(error.message); return@runOnUiThread }
+                                    completed = true
+                                    sensorHandler.removeCallbacks(timeout)
+                                    sensorReadTokens.remove(nodeId)
+                                    result.success(readings.mapKeys { it.key.toString() })
+                                    val paths = readings.flatMap { (endpoint, values) ->
+                                        SENSOR_ATTRIBUTES.filter { values.containsKey(it.third) }
+                                            .map { Triple(endpoint, it.first, it.second) }
+                                    }.sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
+                                    if (paths.isEmpty()) {
+                                        stopSubscription(nodeId, "sensors")
+                                        sensorSubscriptionPaths.remove(nodeId)
+                                    } else if (sensorSubscriptionPaths[nodeId] != paths) {
+                                        subscribeSensorMeasurements(nodeId, devicePointer, paths)
+                                    }
+                                }
+                            }
+                        }, devicePointer, SENSOR_ATTRIBUTES.map { (cluster, attribute, _) ->
+                            ChipAttributePath.newInstance(ChipPathId.forWildcard(),
+                                ChipPathId.forId(cluster), ChipPathId.forId(attribute))
+                        }, null, false, 0)
+                    } catch (error: Exception) { fail(error.message) }
+                }
+            }
+        } catch (error: Exception) { fail(error.message) }
+    }
+
+    private fun subscribeSensorMeasurements(nodeId: Long, devicePointer: Long,
+        paths: List<Triple<Int, Long, Long>>) {
+        val token = startSubscription(nodeId, "sensors")
+        sensorSubscriptionPaths[nodeId] = paths
+        fun markStale() {
+            runOnUiThread {
+                if (subscriptionEpochs[nodeId to "sensors"] !== token ||
+                    pendingRemovals.contains(nodeId)) return@runOnUiThread
+                for ((endpoint, endpointPaths) in paths.groupBy { it.first }) {
+                    val names = endpointPaths.mapNotNull { path ->
+                        SENSOR_ATTRIBUTES.firstOrNull {
+                            it.first == path.second && it.second == path.third
+                        }?.third
+                    }
+                    sensorEventSink?.success(mapOf("nodeId" to nodeId,
+                        "endpoint" to endpoint, "staleMetrics" to names))
+                }
+            }
+        }
+        fun terminate() {
+            runOnUiThread {
+                if (subscriptionEpochs[nodeId to "sensors"] !== token) return@runOnUiThread
+                markStale()
+                stopSubscription(nodeId, "sensors")
+                sensorSubscriptionPaths.remove(nodeId)
+            }
+        }
+        try {
+            controller.subscribeToPath(
+                SubscriptionEstablishedCallback { id -> rememberSubscription(nodeId, "sensors", token, id) },
+                ResubscriptionAttemptCallback { _, _ -> markStale() },
+                object : ReportCallback {
+                    override fun onError(attributePath: ChipAttributePath?,
+                        eventPath: ChipEventPath?, ex: Exception) {
+                        Log.w(TAG, "Sensor subscription failed", ex)
+                        terminate()
+                    }
+                    override fun onReport(nodeState: NodeState) {
+                        runOnUiThread {
+                            if (subscriptionEpochs[nodeId to "sensors"] !== token ||
+                                pendingRemovals.contains(nodeId)) return@runOnUiThread
+                            try {
+                                for ((endpoint, values) in decodeSensorMeasurements(nodeState)) {
+                                    val supported = paths.filter { it.first == endpoint }.map { it.second }.toSet()
+                                    val filtered = values.filterKeys { name ->
+                                        SENSOR_ATTRIBUTES.any { it.third == name && it.first in supported }
+                                    }
+                                    if (filtered.isNotEmpty()) sensorEventSink?.success(mapOf(
+                                        "nodeId" to nodeId, "endpoint" to endpoint, "values" to filtered))
+                                }
+                            } catch (error: Exception) {
+                                Log.w(TAG, "Invalid sensor report", error)
+                                markStale()
+                            }
+                        }
+                    }
+                }, devicePointer, paths.map { (endpoint, cluster, attribute) ->
+                    ChipAttributePath.newInstance(endpoint, cluster, attribute)
+                }, null, 5, 60, true, false, 0,
+            )
+        } catch (error: Exception) {
+            Log.w(TAG, "Sensor subscription setup failed", error)
+            terminate()
         }
     }
 

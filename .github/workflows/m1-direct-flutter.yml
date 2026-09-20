@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m3-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m4-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -179,7 +179,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M3"
+            echo "milestone=M4"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -188,7 +188,14 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M3 final regression candidate
+          Manisa M4.1 environmental sensor candidate
+          - Actual TemperatureMeasurement and RelativeHumidityMeasurement discovery
+          - Sensor-only nodes supported without an OnOff endpoint
+          - Signed Celsius temperature and relative humidity with Persian digits
+          - Initial device reads and live, sparse Matter sensor subscriptions
+          - Unknown, zero, stale and unsupported remain distinct
+          - Per-metric age tracking; observations stay volatile across app reopen
+          - Bounded reads and cleanup after removal or Activity destruction
           - Cross-feature regression for endpoint names, favorites, RGB, dimming and metering
           - Endpoint identity remains stable when discovery order changes
           - Names and favorites survive live reports and app reopen

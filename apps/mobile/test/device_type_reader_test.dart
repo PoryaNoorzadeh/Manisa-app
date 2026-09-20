@@ -65,7 +65,7 @@ void main() {
     expect(legacy.productLabel, 'کنترل ۲ خروجی مستقل');
     expect(legacy.copyWith(onOffEndpoints: <int>[11]).productLabel, 'کنترل تک‌خروجی');
     expect(legacy.copyWith(deviceTypes: <int, List<int>>{11: <int>[0xffff]}).isSocket(11), isFalse);
-    expect(legacy.copyWith(onOffEndpoints: <int>[]).productLabel, 'در انتظار شناسایی خروجی‌ها');
+    expect(legacy.copyWith(onOffEndpoints: <int>[]).productLabel, 'در انتظار شناسایی قابلیت‌ها');
   });
 
   test('both declared plug-in unit types use the socket presentation', () {
