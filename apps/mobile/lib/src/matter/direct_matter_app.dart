@@ -14,6 +14,8 @@ import 'favorite_store.dart';
 import 'home_profile_store.dart';
 import 'level_control.dart';
 import 'room_store.dart';
+import 'sensor_measurement.dart';
+import 'sensor_measurement_widget.dart';
 
 final class ManisaDirectApp extends StatelessWidget {
   const ManisaDirectApp({
@@ -90,6 +92,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   RoomCatalog _roomCatalog = const RoomCatalog();
   ManisaHomeProfile _homeProfile = const ManisaHomeProfile();
   FavoriteCatalog _favorites = const FavoriteCatalog();
+  final Map<String, SensorObservation> _sensorObservations = <String, SensorObservation>{};
+  final Map<int, Object> _sensorLifetimes = <int, Object>{};
+  final Set<int> _readingSensors = <int>{};
+  StreamSubscription<DirectSensorEvent>? _sensorEvents;
+  Timer? _sensorFreshnessTimer;
   final Map<String, bool> _states = <String, bool>{};
   final Map<String, int> _levels = <String, int>{};
   final Map<String, DirectColorState> _colors = <String, DirectColorState>{};
@@ -132,6 +139,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     unawaited(_levelEvents?.cancel());
     unawaited(_colorEvents?.cancel());
     unawaited(_electricalEvents?.cancel());
+    unawaited(_sensorEvents?.cancel());
+    _sensorFreshnessTimer?.cancel();
     super.dispose();
   }
 
@@ -294,6 +303,38 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           });
         });
       }
+      if (controller is SensorMeasurementController) {
+        _sensorEvents = (controller as SensorMeasurementController).watchSensorMeasurements().listen((event) {
+          if (!_canUpdate(event.nodeId)) return;
+          final device = _devices.firstWhere((item) => item.nodeId == event.nodeId);
+          final supported = device.sensorCapabilities[event.endpoint];
+          if (supported == null) return;
+          final key = _stateKey(event.nodeId, event.endpoint);
+          setState(() {
+            final observation = _sensorObservations.putIfAbsent(key, SensorObservation.new);
+            observation.markStale(event.staleMetrics.intersection(supported));
+            final report = event.report;
+            if (report != null) {
+              final filtered = <SensorMetric, int?>{
+                for (final entry in report.values.entries)
+                  if (supported.contains(entry.key)) entry.key: entry.value,
+              };
+              observation.report(DirectSensorMeasurement(filtered), DateTime.now());
+              if (filtered.isNotEmpty && device.onOffEndpoints.isEmpty) {
+                _unavailableNodes.remove(event.nodeId);
+                if (_deviceErrors[event.nodeId]?.startsWith('Sensor read failed') == true) {
+                  _deviceErrors.remove(event.nodeId);
+                }
+              }
+            }
+          });
+        }, onError: (Object error, StackTrace stack) {
+          if (!mounted) return;
+          setState(() {
+            for (final device in _devices) { _markSensorsStale(device); }
+          });
+        });
+      }
       // Restore live state without blocking the home screen or onboarding.
       unawaited(_refreshAllStates());
     } catch (error) {
@@ -391,13 +432,79 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           _deviceErrors[device.nodeId] =
               'Could not refresh ${device.name}: $error';
         });
+        if (device.onOffEndpoints.isEmpty) await _refreshSensors(device.nodeId);
       }
     } finally {
       _refreshingNodes.remove(device.nodeId);
     }
   }
 
+  void _markSensorsStale(DirectMatterDevice device) {
+    for (final entry in device.sensorCapabilities.entries) {
+      _sensorObservations.putIfAbsent(_stateKey(device.nodeId, entry.key), SensorObservation.new)
+          .markStale(entry.value);
+    }
+  }
+
+  Future<void> _refreshSensors(int nodeId) async {
+    final controller = widget.controller;
+    if (controller is! SensorMeasurementController || !_canUpdate(nodeId) ||
+        !_readingSensors.add(nodeId)) return;
+    final lifetime = _sensorLifetimes.putIfAbsent(nodeId, Object.new);
+    bool active() => _canUpdate(nodeId) && identical(_sensorLifetimes[nodeId], lifetime);
+    final versions = <String, Map<SensorMetric, int>>{
+      for (final entry in _sensorObservations.entries)
+        if (entry.key.startsWith('$nodeId:')) entry.key: entry.value.readVersion(),
+    };
+    try {
+      final readings = await (controller as SensorMeasurementController)
+          .readSensorMeasurements(nodeId).timeout(_readTimeout);
+      if (!active()) return;
+      final current = _devices.firstWhere((device) => device.nodeId == nodeId);
+      final updated = current.copyWith(sensorCapabilities:
+          readings.map((endpoint, reading) => MapEntry(endpoint, reading.supported)));
+      setState(() {
+        _devices = _devices.map((device) => device.nodeId == nodeId ? updated : device).toList();
+        _sensorObservations.removeWhere((key, _) => key.startsWith('$nodeId:') &&
+            !readings.containsKey(int.parse(key.split(':').last)));
+        for (final entry in readings.entries) {
+          final key = _stateKey(nodeId, entry.key);
+          _sensorObservations.putIfAbsent(key, SensorObservation.new)
+              .read(entry.value, versions[key] ?? const <SensorMetric, int>{}, DateTime.now());
+        }
+        if (current.onOffEndpoints.isEmpty && readings.isNotEmpty) {
+          _unavailableNodes.remove(nodeId);
+          _deviceErrors.remove(nodeId);
+        }
+      });
+      if (readings.isNotEmpty) {
+        _sensorFreshnessTimer ??= Timer.periodic(const Duration(seconds: 15), (_) {
+          if (mounted && _sensorObservations.isNotEmpty) setState(() {});
+        });
+      }
+      if (!_editingMetadata) {
+        setState(() => _editingMetadata = true);
+        try { await widget.deviceStore.save(updated); }
+        catch (_) { /* A metadata save failure must not discard a live sensor read. */ }
+        finally { if (mounted) setState(() => _editingMetadata = false); }
+      }
+    } catch (_) {
+      if (active()) setState(() {
+        final device = _devices.firstWhere((item) => item.nodeId == nodeId);
+        _markSensorsStale(device);
+        if (device.onOffEndpoints.isEmpty && device.sensorCapabilities.isNotEmpty) {
+          _unavailableNodes.add(nodeId);
+          _deviceErrors[nodeId] = 'Sensor read failed';
+        }
+      });
+    } finally {
+      if (identical(_sensorLifetimes[nodeId], lifetime)) _readingSensors.remove(nodeId);
+    }
+  }
+
   Future<void> _refreshOptionalControls(int nodeId) async {
+    await _refreshSensors(nodeId);
+    if (!_canUpdate(nodeId)) return;
     await _refreshColors(nodeId);
     if (_canUpdate(nodeId)) await _refreshDeviceCapabilities(nodeId);
   }
@@ -1061,6 +1168,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               .where((item) => item.nodeId != device.nodeId)
               .toList(growable: false);
           _unavailableNodes.remove(device.nodeId);
+          _sensorLifetimes.remove(device.nodeId);
+          _readingSensors.remove(device.nodeId);
+          _sensorObservations.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
+          if (_sensorObservations.isEmpty) {
+            _sensorFreshnessTimer?.cancel();
+            _sensorFreshnessTimer = null;
+          }
           _colorLifetimes.remove(device.nodeId);
           _readingColors.remove(device.nodeId);
           _colors.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
@@ -1255,6 +1369,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             onColorChanged: (endpoint, color) => _setColor(device, endpoint, color),
             onRenameChannel: (endpoint) => _renameChannel(device, endpoint),
             electricalMeasurements: _electricalMeasurements,
+            sensorObservations: _sensorObservations,
             staleElectricalMetrics: _staleElectricalMetrics,
             busy: _busy,
             error: _deviceErrors[device.nodeId],
@@ -1398,6 +1513,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.onColorChanged,
     required this.onRenameChannel,
     required this.electricalMeasurements,
+    required this.sensorObservations,
     required this.staleElectricalMetrics,
     required this.busy,
     required this.error,
@@ -1422,6 +1538,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final void Function(int endpoint, HSVColor color) onColorChanged;
   final ValueChanged<int> onRenameChannel;
   final Map<String, DirectElectricalMeasurement> electricalMeasurements;
+  final Map<String, SensorObservation> sensorObservations;
   final Map<String, Set<ElectricalMetric>> staleElectricalMetrics;
   final Set<String> busy;
   final String? error;
@@ -1460,9 +1577,11 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                       ),
                       Text(device.productLabel),
                       Text(
-                        roomName == null
-                            ? '${toPersianDigits(device.onOffEndpoints.length)} خروجی'
-                            : '${toPersianDigits(device.onOffEndpoints.length)} خروجی · $roomName',
+                        device.onOffEndpoints.isEmpty && device.sensorCapabilities.isNotEmpty
+                            ? (roomName ?? 'بدون اتاق')
+                            : roomName == null
+                                ? '${toPersianDigits(device.onOffEndpoints.length)} خروجی'
+                                : '${toPersianDigits(device.onOffEndpoints.length)} خروجی · $roomName',
                       ),
                     ],
                   ),
@@ -1475,13 +1594,13 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                     if (value == 'room') onAssignRoom();
                     if (value == 'channels') onManageChannels();
                   },
-                  itemBuilder: (_) => const <PopupMenuEntry<String>>[
-                    PopupMenuItem(
+                  itemBuilder: (_) => <PopupMenuEntry<String>>[
+                    const PopupMenuItem(
                       value: 'rename',
                       child: Text('تغییر نام وسیله'),
                     ),
                     PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
-                    PopupMenuItem(
+                    if (device.onOffEndpoints.isNotEmpty) const PopupMenuItem(
                       value: 'channels',
                       child: Text('نام خروجی‌ها'),
                     ),
@@ -1510,7 +1629,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 12),
-            if (device.onOffEndpoints.isEmpty)
+            if (device.onOffEndpoints.isEmpty && device.sensorCapabilities.isEmpty)
               TextButton(
                 onPressed: onRefresh,
                 child: const Text('دریافت کنترل‌های وسیله'),
@@ -1663,6 +1782,14 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   level: levels[_key(endpoint)], enabled: !busy.contains(_key(endpoint)) && !unavailable,
                   onChanged: (value) => onLevelChanged(endpoint, value)),
               ],
+            for (final entry in device.sensorCapabilities.entries)
+              SensorMeasurementPanel(
+                key: ValueKey('sensors-${device.nodeId}-${entry.key}'),
+                supported: entry.value, observation: sensorObservations[_key(entry.key)],
+                now: DateTime.now(), onRefresh: onRefresh,
+                title: device.channelNames[entry.key] ?? (device.sensorCapabilities.length > 1
+                    ? 'سنسور ${toPersianDigits(device.sensorCapabilities.keys.toList().indexOf(entry.key)+1)}' : null),
+              ),
             for (final entry in device.measurementCapabilities.entries)
               if (!device.onOffEndpoints.contains(entry.key))
                 _ElectricalMeasurementPanel(
@@ -2223,6 +2350,7 @@ final class _MatterErrorNotice extends StatelessWidget {
       return 'حذف تأیید نشد. وسیله در فهرست باقی مانده؛ اتصال آن را بررسی کن و دوباره تلاش کن.';
     if (error.startsWith('Command failed'))
       return 'تغییر وضعیت تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
+    if (error.startsWith('Sensor read failed')) return 'دادهٔ تازهٔ سنسور دریافت نشد. اتصال وسیله را بررسی کن و دوباره تلاش کن.';
     if (error.startsWith('Color command failed')) return 'رنگ تأیید نشد. برای دریافت رنگ واقعی، وضعیت را دوباره بررسی کن.';
     if (error.startsWith('Level command failed'))
       return 'تغییر شدت نور تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';

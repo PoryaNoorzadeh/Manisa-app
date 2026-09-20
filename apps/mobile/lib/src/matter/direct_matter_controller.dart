@@ -5,6 +5,12 @@ import 'package:flutter/services.dart';
 
 import 'color_control.dart';
 import 'electrical_measurement.dart';
+import 'sensor_measurement.dart';
+
+abstract interface class SensorMeasurementController {
+  Future<Map<int, DirectSensorMeasurement>> readSensorMeasurements(int nodeId);
+  Stream<DirectSensorEvent> watchSensorMeasurements();
+}
 
 abstract interface class ColorControlController {
   Future<Map<int, DirectColorState>> readColors(int nodeId);
@@ -155,6 +161,7 @@ final class PlatformDirectMatterController
         LevelControlController,
         LevelEventController,
         ColorControlController,
+        SensorMeasurementController,
         ElectricalMeasurementController,
         ElectricalMeasurementEventController {
   const PlatformDirectMatterController({
@@ -163,11 +170,13 @@ final class PlatformDirectMatterController
     EventChannel levelEvents = const EventChannel(_levelEventChannelName),
     EventChannel colorEvents = const EventChannel('com.manisa/matter/color_events'),
     EventChannel electricalEvents = const EventChannel('com.manisa/matter/electrical_events'),
+    EventChannel sensorEvents = const EventChannel('com.manisa/matter/sensor_events'),
   })  : _methods = methods,
         _events = events,
         _levelEvents = levelEvents,
         _colorEvents = colorEvents,
-        _electricalEvents = electricalEvents;
+        _electricalEvents = electricalEvents,
+        _sensorEvents = sensorEvents;
 
   static const String _methodChannelName = 'com.manisa/matter/methods';
   static const String _eventChannelName = 'com.manisa/matter/events';
@@ -178,6 +187,31 @@ final class PlatformDirectMatterController
   final EventChannel _levelEvents;
   final EventChannel _colorEvents;
   final EventChannel _electricalEvents;
+  final EventChannel _sensorEvents;
+
+  @override
+  Future<Map<int, DirectSensorMeasurement>> readSensorMeasurements(int nodeId) async {
+    final raw = await _methods.invokeMapMethod<Object?, Object?>(
+      'readSensorMeasurements', <String, Object?>{'nodeId': nodeId});
+    if (raw == null) throw const FormatException('missing sensor response');
+    final result = <int, DirectSensorMeasurement>{};
+    for (final entry in raw.entries) {
+      final endpoint = int.tryParse(entry.key.toString());
+      if (endpoint == null || endpoint <= 0 || endpoint > 65534 ||
+          entry.value is! Map<Object?, Object?>) {
+        throw const FormatException('invalid sensor response');
+      }
+      result[endpoint] = DirectSensorMeasurement.fromMap(entry.value! as Map<Object?, Object?>);
+    }
+    return result;
+  }
+
+  @override
+  Stream<DirectSensorEvent> watchSensorMeasurements() =>
+      _sensorEvents.receiveBroadcastStream().map((event) {
+        if (event is! Map<Object?, Object?>) throw const FormatException('invalid sensor event');
+        return DirectSensorEvent.fromMap(event);
+      });
 
   @override
   Stream<DirectElectricalEvent> watchElectricalMeasurements() =>

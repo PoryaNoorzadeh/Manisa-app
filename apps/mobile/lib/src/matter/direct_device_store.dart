@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/persian_digits.dart';
 import 'electrical_measurement.dart';
+import 'sensor_measurement.dart';
 
 final class DirectMatterDevice {
   const DirectMatterDevice({
@@ -13,6 +14,7 @@ final class DirectMatterDevice {
     this.channelNames = const <int, String>{},
     this.deviceTypes = const <int, List<int>>{},
     this.levelEndpoints = const <int>[],
+    this.sensorCapabilities = const <int, Set<SensorMetric>>{},
     this.colorCapabilities = const <int, int>{},
     this.measurementCapabilities = const <int, Set<ElectricalMetric>>{},
   });
@@ -23,6 +25,7 @@ final class DirectMatterDevice {
   final Map<int, String> channelNames;
   final Map<int, List<int>> deviceTypes;
   final List<int> levelEndpoints;
+  final Map<int, Set<SensorMetric>> sensorCapabilities;
   final Map<int, int> colorCapabilities;
   final Map<int, Set<ElectricalMetric>> measurementCapabilities;
 
@@ -30,7 +33,8 @@ final class DirectMatterDevice {
       (deviceTypes[endpoint] ?? const <int>[]).any((id) => id == 0x010a || id == 0x010b);
 
   String get productLabel {
-    if (onOffEndpoints.isEmpty) return 'در انتظار شناسایی خروجی‌ها';
+    if (onOffEndpoints.isEmpty && sensorCapabilities.isNotEmpty) return 'سنسور محیطی';
+    if (onOffEndpoints.isEmpty) return 'در انتظار شناسایی قابلیت‌ها';
     if (onOffEndpoints.every(isSocket)) return 'پریز هوشمند';
     if (onOffEndpoints.any(isSocket)) return 'وسیلهٔ ترکیبی';
     // The number of OnOff endpoints does not prove physical switch gangs.
@@ -48,6 +52,7 @@ final class DirectMatterDevice {
     Map<int, String>? channelNames,
     Map<int, List<int>>? deviceTypes,
     List<int>? levelEndpoints,
+    Map<int, Set<SensorMetric>>? sensorCapabilities,
     Map<int, int>? colorCapabilities,
     Map<int, Set<ElectricalMetric>>? measurementCapabilities,
   }) => DirectMatterDevice(
@@ -57,6 +62,7 @@ final class DirectMatterDevice {
     channelNames: channelNames ?? this.channelNames,
     deviceTypes: deviceTypes ?? this.deviceTypes,
     levelEndpoints: levelEndpoints ?? this.levelEndpoints,
+    sensorCapabilities: sensorCapabilities ?? this.sensorCapabilities,
     colorCapabilities: colorCapabilities ?? this.colorCapabilities,
     measurementCapabilities:
         measurementCapabilities ?? this.measurementCapabilities,
@@ -68,6 +74,8 @@ final class DirectMatterDevice {
     'onOffEndpoints': onOffEndpoints,
     'deviceTypes': deviceTypes.map((endpoint, types) => MapEntry(endpoint.toString(), types)),
     'levelEndpoints': levelEndpoints,
+    'sensorCapabilities': sensorCapabilities.map((endpoint, metrics) => MapEntry(
+      endpoint.toString(), metrics.map((metric) => metric.name).toList(growable: false))),
     'colorCapabilities': colorCapabilities.map((key, value) => MapEntry(key.toString(), value)),
     'measurementCapabilities': measurementCapabilities.map(
       (endpoint, metrics) => MapEntry(
@@ -84,6 +92,26 @@ final class DirectMatterDevice {
     final nodeId = json['nodeId'];
     final name = json['name'];
     final endpoints = json['onOffEndpoints'];
+    final rawSensors = json['sensorCapabilities'];
+    final sensors = <int, Set<SensorMetric>>{};
+    if (rawSensors != null) {
+      if (rawSensors is! Map<String, Object?>) throw const FormatException('invalid sensor capabilities');
+      for (final entry in rawSensors.entries) {
+        final endpoint = int.tryParse(entry.key);
+        final metrics = entry.value;
+        if (endpoint == null || endpoint <= 0 || endpoint > 65534 || metrics is! List<Object?>) {
+          throw const FormatException('invalid sensor capability');
+        }
+        final supported = <SensorMetric>{};
+        for (final name in metrics) {
+          if (name is! String) throw const FormatException('invalid sensor metric');
+          for (final metric in SensorMetric.values) {
+            if (metric.name == name) supported.add(metric);
+          }
+        }
+        if (supported.isNotEmpty) sensors[endpoint] = Set<SensorMetric>.unmodifiable(supported);
+      }
+    }
     final rawColors = json['colorCapabilities'];
     final colors = <int, int>{};
     if (rawColors != null) {
@@ -166,6 +194,7 @@ final class DirectMatterDevice {
       nodeId: nodeId,
       name: name,
       colorCapabilities: Map<int, int>.unmodifiable(colors),
+      sensorCapabilities: Map<int, Set<SensorMetric>>.unmodifiable(sensors),
       deviceTypes: Map<int, List<int>>.unmodifiable(types),
       levelEndpoints: (rawLevelEndpoints as List<Object?>? ?? const <Object?>[])
           .map((value) {
