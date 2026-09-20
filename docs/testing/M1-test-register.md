@@ -561,6 +561,7 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 ## M4.2 — سنسور حضور و در/پنجره؛ نامزد 0.18.0+23
 
 - مبنا: `develop@1aa642c`، پایان نرم‌افزاری M4.1 و نسخهٔ 0.17.0+22.
+- کد نامزد `0529da8e3205258e465ef9bc37edd14843747b75` در [PR #13](https://github.com/PoryaNoorzadeh/Manisa-app/pull/13)؛ پس از موفقیت همهٔ gateها در 2026-09-20 با merge `8d50066` به `develop` اضافه شد.
 - Occupancy از cluster `0x0406` خوانده می‌شود؛ نمایش تماس فقط با تأیید نوع
   Contact Sensor (`0x0015`) در Descriptor و مقدار واقعی Boolean State فعال می‌شود.
 - true برای تماس یعنی بسته و false یعنی باز. دادهٔ نامشخص، نبودِ حضور یا بسته‌بودن
@@ -570,10 +571,10 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 
 | شناسه | معیار | وضعیت |
 | --- | --- | --- |
-| M4-C05 | معنی بیت Occupied و boolean تماس؛ نوع واقعی Contact Sensor و رد generic BooleanState | تست Kotlin و Dart نوشته شده؛ در انتظار CI |
-| M4-C06 | دریافت اولیه/زنده، unknown، false واقعی، stale و retry بدون پاک‌کردن دما | تست نوشته شده؛ در انتظار CI |
-| M4-C07 | reopen، migration، endpoint اشتباه، حذف و late callback و فونت بزرگ فارسی | تست نوشته شده؛ در انتظار CI |
-| M4-C08 | همهٔ gateهای قبلی، اجرای Kotlin codec و APK یکپارچهٔ ARM64 | در انتظار CI و artifact |
+| M4-C05 | معنی بیت Occupied و boolean تماس؛ نوع واقعی Contact Sensor و رد generic BooleanState | تأیید؛ تست Kotlin در [ساخت یکپارچه](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35539200845) و تست Dart در CI موفق |
+| M4-C06 | دریافت اولیه/زنده، unknown، false واقعی، stale و retry بدون پاک‌کردن دما | تأیید؛ تحلیل Flutter و هر ۱۰۱ تست در [CI](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35539200816) موفق |
+| M4-C07 | reopen، migration، endpoint اشتباه، حذف و late callback و فونت بزرگ فارسی | تأیید؛ تحلیل Flutter و هر ۱۰۱ تست در [CI](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35539200816) موفق |
+| M4-C08 | همهٔ gateهای قبلی، اجرای Kotlin codec و APK یکپارچهٔ ARM64 | تأیید؛ همهٔ gateهای [CI](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35539200816) و [ساخت یکپارچه](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35539200845) موفق |
 | M4-T04 | باز/بسته‌کردن واقعی در/پنجره و تطبیق StateValue | معوق؛ سنسور تماس واقعی لازم است |
 | M4-T05 | تغییر حضور واقعی، زمان نگهداری PIR و تأخیر گزارش | معوق؛ سنسور حضور واقعی لازم است |
 | M4-T06 | قطع شبکه، بازیابی، حذف/افزودن مجدد و زمان‌بندی سنسور باتری‌خور | معوق؛ سخت‌افزار و شبکهٔ واقعی لازم است |
@@ -581,3 +582,10 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 پذیرش سخت‌افزاری قبلی کاربر حفظ شده است؛ این بخش تأیید تازه‌ای برای سنسورهای
 جدید ایجاد نمی‌کند. گام بعد از تکمیل نرم‌افزاری M4.2، جمع‌بندی M4 و اطلاعات
 باتری/تغذیهٔ قابل‌دریافت است؛ سپس M5 صحنه‌های دستی و M6 اتوماسیون.
+
+- خروج نرم‌افزاری M4.2 انجام شد: تحلیل Flutter، هر ۱۰۱ تست، آزمون Kotlin، Go و هر دو ساخت Android/Matter موفق هستند.
+- [بستهٔ نسخهٔ 0.18.0+23](https://github.com/PoryaNoorzadeh/Manisa-app/actions/runs/35539200845/artifacts/10614452522)، انقضای artifact گیت‌هاب: 2026-10-04.
+- APK: `manisa-m4-v0.18.0-build23-arm64-release.apk`، اندازهٔ 64,304,430 بایت (61.33 MiB).
+- SHA-256 فایل APK: `f49f8810ff185b96a96b87b42b9bae5c63316a50875a658c5e272770c9d72d90`.
+- پس از دریافت، digest بستهٔ ZIP و checksum فایل APK، نسخه/شمارهٔ ساخت/commit داخل metadata و وجود runtimeهای Matter و Flutter برای ARM64 بررسی شدند و تطابق داشتند.
+- گام برنامه‌ریزی‌شدهٔ بعدی: اطلاعات باتری/تغذیهٔ موجود و رگرسیون مشترک برای بستن نرم‌افزاری M4. موارد M4-T04 تا M4-T06 همچنان منتظر شاهد سخت‌افزاری‌اند.
