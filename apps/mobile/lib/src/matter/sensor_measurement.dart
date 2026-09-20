@@ -1,15 +1,29 @@
 import '../core/persian_digits.dart';
 
-enum SensorMetric { temperature, humidity }
+enum SensorMetric { temperature, humidity, occupancy, contactClosed }
+
+bool isBinarySensor(SensorMetric metric) =>
+    metric == SensorMetric.occupancy || metric == SensorMetric.contactClosed;
+
+String sensorMetricLabel(SensorMetric metric) => switch (metric) {
+  SensorMetric.temperature => 'دما',
+  SensorMetric.humidity => 'رطوبت',
+  SensorMetric.occupancy => 'تشخیص حضور',
+  SensorMetric.contactClosed => 'در / پنجره',
+};
 
 SensorMetric sensorMetricFromWireName(String name) => switch (name) {
   'temperature' => SensorMetric.temperature,
   'humidity' => SensorMetric.humidity,
+  'occupancy' => SensorMetric.occupancy,
+  'contactClosed' => SensorMetric.contactClosed,
   _ => throw const FormatException('invalid sensor metric'),
 };
 
 /// Matter MeasuredValue: signed centi-degrees Celsius / unsigned centi-percent.
-/// A present null means supported but unknown. An absent key is unsupported.
+/// An absent key is unsupported. Environmental readings may be supported-null.
+/// Non-nullable Matter booleans cross the channel as bool and normalize to 0/1
+/// only inside this observation model; zero is never an unknown binary state.
 final class DirectSensorMeasurement {
   DirectSensorMeasurement(Map<SensorMetric, int?> values)
       : values = Map<SensorMetric, int?>.unmodifiable(values);
@@ -21,6 +35,11 @@ final class DirectSensorMeasurement {
     for (final metric in SensorMetric.values) {
       if (!raw.containsKey(metric.name)) continue;
       final value = raw[metric.name];
+      if (isBinarySensor(metric)) {
+        if (value is! bool) throw const FormatException('invalid binary sensor state');
+        values[metric] = value ? 1 : 0;
+        continue;
+      }
       final minimum = metric == SensorMetric.temperature ? -27315 : 0;
       final maximum = metric == SensorMetric.temperature ? 32767 : 10000;
       if (value != null &&
@@ -110,6 +129,12 @@ final class SensorObservation {
 }
 
 String formatSensorValue(SensorMetric metric, int value) {
+  if (isBinarySensor(metric)) {
+    if (value != 0 && value != 1) throw const FormatException('invalid binary observation');
+    return metric == SensorMetric.occupancy
+        ? (value == 1 ? 'حضور تشخیص داده شد' : 'حضوری تشخیص داده نشده')
+        : (value == 1 ? 'بسته' : 'باز');
+  }
   // Preserve the protocol's two decimal places; trim trailing zeroes only.
   var number = (value / 100).toStringAsFixed(2);
   number = number.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');

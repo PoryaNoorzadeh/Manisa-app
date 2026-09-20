@@ -19,12 +19,17 @@ final class SensorMeasurementPanel extends StatelessWidget {
       for (final metric in SensorMetric.values)
         if (supported.contains(metric)) ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: Icon(metric == SensorMetric.temperature
-              ? Icons.thermostat_outlined : Icons.water_drop_outlined),
-          title: Text(metric == SensorMetric.temperature ? 'دما' : 'رطوبت'),
+          leading: Icon(switch (metric) {
+            SensorMetric.temperature => Icons.thermostat_outlined,
+            SensorMetric.humidity => Icons.water_drop_outlined,
+            SensorMetric.occupancy => Icons.person_search_outlined,
+            SensorMetric.contactClosed => Icons.sensor_door_outlined,
+          }),
+          title: Text(sensorMetricLabel(metric)),
           subtitle: Text(observation?.values[metric] == null ? 'دریافت نشده'
               : formatSensorValue(metric, observation!.values[metric]!),
-            textDirection: TextDirection.ltr,
+            textDirection: isBinarySensor(metric) || observation?.values[metric] == null
+                ? TextDirection.rtl : TextDirection.ltr,
             style: Theme.of(context).textTheme.titleMedium),
           trailing: observation?.isStale(metric, now) == true
               ? const Tooltip(message: 'آخرین مقدار؛ نیاز به به‌روزرسانی',

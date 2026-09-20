@@ -70,6 +70,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         private val SENSOR_ATTRIBUTES = listOf(
             Triple(0x0402L, 0L, "temperature"),
             Triple(0x0405L, 0L, "humidity"),
+            Triple(0x0406L, 0L, "occupancy"),
+            Triple(0x0045L, 0L, "contactClosed"),
         )
         private const val COLOR_CLUSTER = 0x0300L
         // Attribute id -> wire name. Values >= 0x4000 plus x/y use uint16.
@@ -983,25 +985,55 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
     }
 
-    private fun decodeSensorMeasurements(nodeState: NodeState): Map<Int, Map<String, Int?>> {
-        val readings = mutableMapOf<Int, Map<String, Int?>>()
+    private fun contactSensorEndpoints(nodeState: NodeState): Set<Int> {
+        val endpoints = mutableSetOf<Int>()
+        for ((endpoint, state) in nodeState.endpointStates) {
+            // BooleanState also belongs to other device types. Never infer a door
+            // from that cluster alone or from an old cached device label.
+            if (endpoint !in 1..65534 || state.getClusterState(0x0045L) == null) continue
+            val tlv = state.getClusterState(0x001DL)?.getAttributeState(0L)?.tlv ?: continue
+            try {
+                val reader = TlvReader(tlv)
+                val types = mutableSetOf<Long>()
+                reader.enterArray(AnonymousTag)
+                while (!reader.isEndOfContainer()) {
+                    reader.enterStructure(AnonymousTag)
+                    types.add(reader.getUInt(ContextSpecificTag(0)).toLong())
+                    reader.getUShort(ContextSpecificTag(1))
+                    reader.exitContainer()
+                }
+                reader.exitContainer()
+                if (ManisaSensorCodec.CONTACT_DEVICE_TYPE in types) endpoints.add(endpoint)
+            } catch (error: Exception) {
+                Log.w(TAG, "Contact type not confirmed on endpoint=$endpoint", error)
+            }
+        }
+        return endpoints
+    }
+
+    private fun decodeSensorMeasurements(nodeState: NodeState,
+        contacts: Set<Int> = contactSensorEndpoints(nodeState)): Map<Int, Map<String, Any?>> {
+        val readings = mutableMapOf<Int, Map<String, Any?>>()
         for ((endpoint, state) in nodeState.endpointStates) {
             if (endpoint !in 1..65534) continue
-            val values = mutableMapOf<String, Int?>()
-            for ((cluster, attribute, name) in SENSOR_ATTRIBUTES) {
+            val values = mutableMapOf<String, Any?>()
+            for ((cluster, attribute, _) in SENSOR_ATTRIBUTES) {
+                if (cluster == 0x0045L && endpoint !in contacts) continue
                 val tlv = state.getClusterState(cluster)?.getAttributeState(attribute)?.tlv ?: continue
                 val reader = TlvReader(tlv)
-                val value = if (reader.isNull()) {
+                val raw: Any? = if (reader.isNull()) {
                     reader.getNull(AnonymousTag)
                     null
-                } else if (cluster == 0x0402L) {
-                    reader.getShort(AnonymousTag).toInt()
-                } else {
-                    reader.getUShort(AnonymousTag).toInt()
+                } else when (cluster) {
+                    0x0402L -> reader.getShort(AnonymousTag).toInt()
+                    0x0405L -> reader.getUShort(AnonymousTag).toInt()
+                    0x0406L -> reader.getUByte(AnonymousTag).toInt()
+                    0x0045L -> reader.getBool(AnonymousTag)
+                    else -> continue
                 }
-                require(value == null || if (cluster == 0x0402L) value in -27315..32767
-                    else value in 0..10000) { "Out-of-range $name" }
-                values[name] = value
+                val types = if (endpoint in contacts) setOf(ManisaSensorCodec.CONTACT_DEVICE_TYPE)
+                    else emptySet()
+                ManisaSensorCodec.decode(cluster, raw, types)?.let { (name, value) -> values[name] = value }
             }
             if (values.isNotEmpty()) readings[endpoint] = values
         }
@@ -1067,7 +1099,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         }, devicePointer, SENSOR_ATTRIBUTES.map { (cluster, attribute, _) ->
                             ChipAttributePath.newInstance(ChipPathId.forWildcard(),
                                 ChipPathId.forId(cluster), ChipPathId.forId(attribute))
-                        }, null, false, 0)
+                        } + listOf(ChipAttributePath.newInstance(ChipPathId.forWildcard(),
+                            ChipPathId.forId(0x001DL), ChipPathId.forId(0L))), null, false, 0)
                     } catch (error: Exception) { fail(error.message) }
                 }
             }
@@ -1116,7 +1149,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                             if (subscriptionEpochs[nodeId to "sensors"] !== token ||
                                 pendingRemovals.contains(nodeId)) return@runOnUiThread
                             try {
-                                for ((endpoint, values) in decodeSensorMeasurements(nodeState)) {
+                                val contacts = paths.filter { it.second == 0x0045L }.map { it.first }.toSet()
+                                for ((endpoint, values) in decodeSensorMeasurements(nodeState, contacts)) {
                                     val supported = paths.filter { it.first == endpoint }.map { it.second }.toSet()
                                     val filtered = values.filterKeys { name ->
                                         SENSOR_ATTRIBUTES.any { it.third == name && it.first in supported }
@@ -1132,7 +1166,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     }
                 }, devicePointer, paths.map { (endpoint, cluster, attribute) ->
                     ChipAttributePath.newInstance(endpoint, cluster, attribute)
-                }, null, 5, 60, true, false, 0,
+                }, null, if (paths.any { it.second == 0x0406L || it.second == 0x0045L }) 1 else 5,
+                60, true, false, 0,
             )
         } catch (error: Exception) {
             Log.w(TAG, "Sensor subscription setup failed", error)
