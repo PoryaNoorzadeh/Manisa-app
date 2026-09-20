@@ -33,7 +33,12 @@ final class DirectMatterDevice {
       (deviceTypes[endpoint] ?? const <int>[]).any((id) => id == 0x010a || id == 0x010b);
 
   String get productLabel {
-    if (onOffEndpoints.isEmpty && sensorCapabilities.isNotEmpty) return 'سنسور محیطی';
+    if (onOffEndpoints.isEmpty && sensorCapabilities.isNotEmpty) {
+      final metrics = sensorCapabilities.values.expand((value) => value).toSet();
+      if (metrics.length == 1 && metrics.contains(SensorMetric.occupancy)) return 'سنسور حضور';
+      if (metrics.length == 1 && metrics.contains(SensorMetric.contactClosed)) return 'سنسور در و پنجره';
+      return metrics.any(isBinarySensor) ? 'سنسور چندمنظوره' : 'سنسور محیطی';
+    }
     if (onOffEndpoints.isEmpty) return 'در انتظار شناسایی قابلیت‌ها';
     if (onOffEndpoints.every(isSocket)) return 'پریز هوشمند';
     if (onOffEndpoints.any(isSocket)) return 'وسیلهٔ ترکیبی';

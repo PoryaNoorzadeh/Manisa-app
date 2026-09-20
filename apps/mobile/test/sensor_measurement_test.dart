@@ -18,6 +18,179 @@ DirectSensorMeasurement reading(int? t, int? h) =>
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('binary channel values must be booleans; false is a known state', () {
+    final binary = DirectSensorMeasurement.fromMap(<Object?,Object?>{
+      'occupancy':false,'contactClosed':true});
+    expect(binary.values,<SensorMetric,int?>{SensorMetric.occupancy:0,SensorMetric.contactClosed:1});
+    expect(formatSensorValue(SensorMetric.occupancy,0),'حضوری تشخیص داده نشده');
+    expect(formatSensorValue(SensorMetric.occupancy,1),'حضور تشخیص داده شد');
+    expect(formatSensorValue(SensorMetric.contactClosed,0),'باز');
+    expect(formatSensorValue(SensorMetric.contactClosed,1),'بسته');
+    for (final metric in <SensorMetric>[SensorMetric.occupancy,SensorMetric.contactClosed]) {
+      for (final invalid in <Object?>[null,0,1,'false',2.0]) {
+        expect(() => DirectSensorMeasurement.fromMap(<Object?,Object?>{metric.name:invalid}),throwsFormatException);
+      }
+    }
+  });
+
+  test('binary capabilities persist without a last closed/occupied state', () {
+    final device = const DirectMatterDevice(nodeId:7,name:'ورودی',onOffEndpoints:<int>[])
+      .copyWith(sensorCapabilities:<int,Set<SensorMetric>>{
+        3:<SensorMetric>{SensorMetric.contactClosed},
+        4:<SensorMetric>{SensorMetric.occupancy}});
+    final restored = DirectMatterDevice.fromJson(jsonDecode(jsonEncode(device.toJson())) as Map<String,Object?>);
+    expect(restored.sensorCapabilities,device.sensorCapabilities);
+    expect(restored.productLabel,'سنسور چندمنظوره');
+    expect(restored.copyWith(sensorCapabilities:<int,Set<SensorMetric>>{
+      3:<SensorMetric>{SensorMetric.contactClosed}}).productLabel,'سنسور در و پنجره');
+    expect(restored.copyWith(sensorCapabilities:<int,Set<SensorMetric>>{
+      4:<SensorMetric>{SensorMetric.occupancy}}).productLabel,'سنسور حضور');
+    expect(restored.toJson().containsKey('values'),isFalse);
+    final raw = restored.toJson();
+    raw['sensorCapabilities'] = <String,Object?>{'4':<String>['occupancy','futureSensor']};
+    expect(DirectMatterDevice.fromJson(raw).sensorCapabilities[4],<SensorMetric>{SensorMetric.occupancy});
+  });
+
+  test('binary live events preserve endpoint and per-metric stale identity', () {
+    final event = DirectSensorEvent.fromMap(<Object?,Object?>{
+      'nodeId':7,'endpoint':3,'values':<Object?,Object?>{'contactClosed':false},
+      'staleMetrics':<Object?>['occupancy']});
+    expect(event.endpoint,3);
+    expect(event.report!.values[SensorMetric.contactClosed],0);
+    expect(event.staleMetrics,<SensorMetric>{SensorMetric.occupancy});
+    final observation = SensorObservation();
+    final now = DateTime.utc(2026,9,20);
+    observation.report(DirectSensorMeasurement.fromMap(<Object?,Object?>{
+      'occupancy':true,'contactClosed':true}),now);
+    final started = observation.readVersion();
+    observation.report(event.report!,now);
+    observation.markStale(event.staleMetrics);
+    observation.read(DirectSensorMeasurement.fromMap(<Object?,Object?>{
+      'occupancy':false,'contactClosed':true}),started,now);
+    expect(observation.values,<SensorMetric,int?>{SensorMetric.occupancy:1,SensorMetric.contactClosed:0});
+    expect(observation.isStale(SensorMetric.occupancy,now),isTrue);
+    expect(observation.isStale(SensorMetric.contactClosed,now),isFalse);
+    expect(observation.isStale(SensorMetric.contactClosed,now.add(const Duration(seconds:90))),isTrue);
+  });
+
+  testWidgets('contact starts unknown, reads actual state and sparse reports preserve environment', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800,1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final fake = _SensorController()..pending = Completer<Map<int,DirectSensorMeasurement>>();
+    final store = _SensorStore()..device = const DirectMatterDevice(
+      nodeId:7,name:'سنسور ورودی',onOffEndpoints:<int>[],sensorCapabilities:<int,Set<SensorMetric>>{
+        2:<SensorMetric>{SensorMetric.contactClosed,SensorMetric.occupancy,temperature}});
+    await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
+    await tester.pumpAndSettle();
+    expect(find.text('دریافت نشده'),findsNWidgets(3));
+    expect(find.text('بسته'),findsNothing);
+    expect(find.text('حضوری تشخیص داده نشده'),findsNothing);
+    fake.pending!.complete(<int,DirectSensorMeasurement>{2:DirectSensorMeasurement.fromMap(<Object?,Object?>{
+      'contactClosed':false,'occupancy':false,'temperature':2150})});
+    fake.pending = null;
+    await tester.pumpAndSettle();
+    expect(find.text('باز'),findsOneWidget);
+    expect(find.text('حضوری تشخیص داده نشده'),findsOneWidget);
+    expect(find.text('۲۱٫۵ °C'),findsOneWidget);
+    expect(find.byType(SwitchListTile),findsNothing);
+    expect(fake.commands,0);
+    fake.events.add(DirectSensorEvent(nodeId:7,endpoint:2,
+      report:DirectSensorMeasurement.fromMap(<Object?,Object?>{'occupancy':true})));
+    await tester.pumpAndSettle();
+    expect(find.text('حضور تشخیص داده شد'),findsOneWidget);
+    expect(find.text('باز'),findsOneWidget);
+    expect(find.text('۲۱٫۵ °C'),findsOneWidget);
+    fake.events.add(const DirectSensorEvent(nodeId:7,endpoint:2,
+      staleMetrics:<SensorMetric>{SensorMetric.contactClosed}));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.update),findsOneWidget);
+    fake.events.add(DirectSensorEvent(nodeId:7,endpoint:2,
+      report:DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':true})));
+    await tester.pumpAndSettle();
+    expect(find.text('بسته'),findsOneWidget);
+    expect(find.byIcon(Icons.update),findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    fake.pending = Completer<Map<int,DirectSensorMeasurement>>();
+    await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
+    await tester.pumpAndSettle();
+    expect(find.text('دریافت نشده'),findsNWidgets(3));
+    expect(find.text('بسته'),findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    fake.pending!.complete(<int,DirectSensorMeasurement>{});
+    await tester.pump();
+    await fake.close();
+  });
+
+  testWidgets('contact failure keeps last open state and retry reads actual closure', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800,1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final fake = _SensorController()..value = DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':false});
+    await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:_SensorStore()));
+    await tester.pumpAndSettle();
+    expect(find.text('سنسور در و پنجره'),findsOneWidget);
+    fake.failRead = true;
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+    expect(find.text('باز'),findsOneWidget);
+    expect(find.byIcon(Icons.update),findsOneWidget);
+    expect(find.text('بسته'),findsNothing);
+    fake.failRead = false;
+    fake.value = DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':true});
+    await tester.ensureVisible(find.text('دریافت دوباره'));
+    await tester.tap(find.text('دریافت دوباره'));
+    await tester.pumpAndSettle();
+    expect(find.text('بسته'),findsOneWidget);
+    expect(find.byIcon(Icons.update),findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await fake.close();
+  });
+
+  testWidgets('contact reports for wrong endpoint or removed device are ignored', (tester) async {
+    final fake = _SensorController()..value = DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':false});
+    final store = _SensorStore();
+    await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
+    await tester.pumpAndSettle();
+    fake.events.add(DirectSensorEvent(nodeId:7,endpoint:9,
+      report:DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':true})));
+    await tester.pumpAndSettle();
+    expect(find.text('باز'),findsOneWidget);
+    fake.pending = Completer<Map<int,DirectSensorMeasurement>>();
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('تنظیمات وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('حذف وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton,'حذف وسیله'));
+    await tester.pumpAndSettle();
+    fake.pending!.complete(<int,DirectSensorMeasurement>{2:fake.value});
+    fake.events.add(DirectSensorEvent(nodeId:7,endpoint:2,
+      report:DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':true})));
+    await tester.pumpAndSettle();
+    expect(find.byType(SensorMeasurementPanel),findsNothing);
+    expect(store.removed,isTrue);
+    expect(tester.takeException(),isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await fake.close();
+  });
+
+  testWidgets('binary states remain readable with large Persian text and stale status', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320,1100));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final observation = SensorObservation()..report(
+      DirectSensorMeasurement.fromMap(<Object?,Object?>{'occupancy':false,'contactClosed':true}),DateTime.utc(2026));
+    await tester.pumpWidget(MaterialApp(home:MediaQuery(
+      data:const MediaQueryData(textScaler:TextScaler.linear(2)),
+      child:Scaffold(body:Directionality(textDirection:TextDirection.rtl,
+        child:SensorMeasurementPanel(supported:const <SensorMetric>{SensorMetric.occupancy,SensorMetric.contactClosed},
+          observation:observation,now:DateTime.utc(2027),onRefresh:() {}))))));
+    await tester.pumpAndSettle();
+    expect(find.text('حضوری تشخیص داده نشده'),findsOneWidget);
+    expect(find.text('بسته'),findsOneWidget);
+    expect(find.byIcon(Icons.update),findsNWidgets(2));
+    expect(tester.takeException(),isNull);
+  });
+
   test('signed centi-degrees, centi-percent, zero and null remain distinct', () {
     expect(reading(-27315, 10000).values, <SensorMetric,int?>{temperature:-27315,humidity:10000});
     expect(reading(32767, 0).values[humidity], 0);
@@ -105,6 +278,18 @@ void main() {
   tearDown(() {
     messenger.setMockMethodCallHandler(methods,null);
     messenger.setMockMethodCallHandler(const MethodChannel('test/manisa/sensor_events'),null);
+  });
+
+  test('native binary channel preserves bool false and targets the correct endpoint', () async {
+    messenger.setMockMethodCallHandler(methods,(call) async {
+      expect(call.arguments,<String,Object?>{'nodeId':7});
+      return <String,Object?>{'3':<String,Object?>{'contactClosed':false},
+        '4':<String,Object?>{'occupancy':true}};
+    });
+    final states = await controller.readSensorMeasurements(7);
+    expect(states.keys,<int>[3,4]);
+    expect(states[3]!.values,<SensorMetric,int?>{SensorMetric.contactClosed:0});
+    expect(states[4]!.values,<SensorMetric,int?>{SensorMetric.occupancy:1});
   });
 
   test('native channel reads exact node and accepts a supported-null attribute', () async {

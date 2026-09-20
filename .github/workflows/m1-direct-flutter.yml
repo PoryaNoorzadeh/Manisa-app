@@ -87,6 +87,14 @@ jobs:
           unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
 
+      - name: Verify native sensor decoding rules
+        run: |
+          "$RUNNER_TEMP/kotlinc/bin/kotlinc" \
+            apps/mobile/native/android/ManisaSensorCodec.kt \
+            apps/mobile/native/tests/ManisaSensorCodecTest.kt \
+            -include-runtime -d "$RUNNER_TEMP/sensor-codec-tests.jar"
+          java -jar "$RUNNER_TEMP/sensor-codec-tests.jar"
+
       - name: Build Matter Android controller libraries
         working-directory: matter
         run: |
@@ -122,6 +130,8 @@ jobs:
           mkdir -p apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile
           cp apps/mobile/native/android/MainActivityBle.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/MainActivity.kt
+          cp apps/mobile/native/android/ManisaSensorCodec.kt \
+            apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/ManisaSensorCodec.kt
           cp apps/mobile/native/android/GenericChipDeviceListener.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/GenericChipDeviceListener.kt
           cp apps/mobile/native/android/ManisaBleCommissioner.kt \
@@ -188,7 +198,12 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M4.1 environmental sensor candidate
+          Manisa M4.2 occupancy and contact sensor candidate
+          - Read-only occupancy and contact states from actual device reports
+          - Door/window labels require Descriptor Contact Sensor type 0x0015
+          - Contact true means closed; false means open; unknown is never closed
+          - Sparse state reports, per-metric stale state and explicit retry
+          - Existing environmental sensors, endpoint names and controls preserved
           - Actual TemperatureMeasurement and RelativeHumidityMeasurement discovery
           - Sensor-only nodes supported without an OnOff endpoint
           - Signed Celsius temperature and relative humidity with Persian digits

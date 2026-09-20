@@ -2083,7 +2083,7 @@ final class DirectMatterAddDeviceScreen extends StatefulWidget {
 
 final class _DirectMatterAddDeviceScreenState
     extends State<DirectMatterAddDeviceScreen> {
-  final TextEditingController _name = TextEditingController(text: 'کلید خانه');
+  final TextEditingController _name = TextEditingController(text: 'وسیلهٔ خانه');
   final TextEditingController _payload = TextEditingController();
   final TextEditingController _ssid = TextEditingController();
   final TextEditingController _password = TextEditingController();
