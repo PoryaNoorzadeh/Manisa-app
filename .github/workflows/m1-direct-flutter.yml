@@ -188,7 +188,10 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M3.5 live electrical measurement candidate
+          Manisa M3 final regression candidate
+          - Cross-feature regression for endpoint names, favorites, RGB, dimming and metering
+          - Endpoint identity remains stable when discovery order changes
+          - Names and favorites survive live reports and app reopen
           - Live Matter subscriptions for power, energy, voltage and current
           - Per-metric freshness; stale reports preserve the last valid value
           - Sparse reports merge without clearing unrelated measurements
