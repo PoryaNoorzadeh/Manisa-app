@@ -108,6 +108,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var colorEventSink: EventChannel.EventSink? = null
     private var electricalEventSink: EventChannel.EventSink? = null
     private var sensorEventSink: EventChannel.EventSink? = null
+    private val powerReadTokens = mutableMapOf<Long, Any>()
     private val sensorReadTokens = mutableMapOf<Long, Any>()
     private val sensorSubscriptionPaths = mutableMapOf<Long, List<Triple<Int, Long, Long>>>()
     private val sensorHandler = Handler(Looper.getMainLooper())
@@ -262,6 +263,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     } else {
                         invokeColor(nodeId, endpoint, mode, first, second, result)
                     }
+                }
+                "readPowerSources" -> withNodeId(call, result) { nodeId ->
+                    readPowerSources(nodeId, result)
                 }
                 "readSensorMeasurements" -> withNodeId(call, result) { nodeId ->
                     readSensorMeasurements(nodeId, result)
@@ -558,6 +562,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         colorSubscriptionTokens.remove(nodeId)
                         colorSubscriptionPaths.remove(nodeId)
                         electricalSubscriptionPaths.remove(nodeId)
+                        powerReadTokens.remove(nodeId)
                         sensorReadTokens.remove(nodeId)
                         sensorSubscriptionPaths.remove(nodeId)
                         Log.i(TAG, "Device confirmed fabric removal nodeId=$remoteDeviceId")
@@ -748,6 +753,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         colorEventSink = null
         electricalEventSink = null
         sensorEventSink = null
+        powerReadTokens.clear()
         sensorReadTokens.clear()
         sensorSubscriptionPaths.clear()
         sensorHandler.removeCallbacksAndMessages(null)
@@ -983,6 +989,83 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 }, devicePointer, invoke, 0, 0,
             )
         }
+    }
+
+    private fun readPowerSources(nodeId: Long, result: MethodChannel.Result) {
+        val token = Any()
+        powerReadTokens[nodeId] = token
+        var completed = false
+        fun active() = !completed && powerReadTokens[nodeId] === token && !pendingRemovals.contains(nodeId)
+        val timeout = Runnable {
+            if (!completed) {
+                completed = true
+                if (powerReadTokens[nodeId] === token) powerReadTokens.remove(nodeId)
+                result.error("matter_power_timeout", "Power source read timed out", null)
+            }
+        }
+        sensorHandler.postDelayed(timeout, 14000)
+        fun fail(message: String?) = runOnUiThread {
+            if (completed) return@runOnUiThread
+            completed = true
+            sensorHandler.removeCallbacks(timeout)
+            if (powerReadTokens[nodeId] === token) powerReadTokens.remove(nodeId)
+            result.error("matter_power_read_failed", message, null)
+        }
+        val connectionResult = object : MethodChannel.Result {
+            override fun success(result: Any?) { }
+            override fun error(code: String, message: String?, details: Any?) = fail(message)
+            override fun notImplemented() = fail("Power source read unavailable")
+        }
+        try {
+            withConnectedDevice(nodeId, connectionResult) { devicePointer ->
+                runOnUiThread {
+                    if (!active()) return@runOnUiThread
+                    try {
+                        controller.readPath(object : ReportCallback {
+                            override fun onError(attributePath: ChipAttributePath?,
+                                eventPath: ChipEventPath?, ex: Exception) = fail(ex.message)
+                            override fun onReport(nodeState: NodeState) {
+                                runOnUiThread {
+                                    if (!active()) return@runOnUiThread
+                                    try {
+                                        val readings = mutableMapOf<String, Map<String, Any?>>()
+                                        for ((endpoint, state) in nodeState.endpointStates) {
+                                            if (endpoint !in 0..65534) continue
+                                            val cluster = state.getClusterState(0x002FL) ?: continue
+                                            val values = mutableMapOf<String, Any?>()
+                                            for ((attribute, _) in ManisaPowerCodec.attributes) {
+                                                val tlv = cluster.getAttributeState(attribute)?.tlv ?: continue
+                                                val reader = TlvReader(tlv)
+                                                val raw: Any? = if (reader.isNull()) {
+                                                    reader.getNull(AnonymousTag)
+                                                    null
+                                                } else when (attribute) {
+                                                    15L, 9L -> reader.getBool(AnonymousTag)
+                                                    0xFFFCL -> reader.getUInt(AnonymousTag).toLong()
+                                                    else -> reader.getUByte(AnonymousTag).toLong()
+                                                }
+                                                ManisaPowerCodec.decode(attribute, raw)?.let { (name, value) -> values[name] = value }
+                                            }
+                                            require(values.containsKey("features") && values.containsKey("status")) {
+                                                "Incomplete power source response"
+                                            }
+                                            readings[endpoint.toString()] = values
+                                        }
+                                        completed = true
+                                        sensorHandler.removeCallbacks(timeout)
+                                        powerReadTokens.remove(nodeId)
+                                        result.success(readings)
+                                    } catch (error: Exception) { fail(error.message) }
+                                }
+                            }
+                        }, devicePointer, ManisaPowerCodec.attributes.keys.map { attribute ->
+                            ChipAttributePath.newInstance(ChipPathId.forWildcard(),
+                                ChipPathId.forId(0x002FL), ChipPathId.forId(attribute))
+                        }, null, false, 0)
+                    } catch (error: Exception) { fail(error.message) }
+                }
+            }
+        } catch (error: Exception) { fail(error.message) }
     }
 
     private fun contactSensorEndpoints(nodeState: NodeState): Set<Int> {

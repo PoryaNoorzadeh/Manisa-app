@@ -29,3 +29,21 @@ object ManisaSensorCodec {
         }
     }
 }
+
+/** Power Source (0x002F) attributes: percentages retain half-percent units. */
+object ManisaPowerCodec {
+    val attributes = mapOf(0xFFFCL to "features", 0L to "status", 12L to "percent",
+        14L to "chargeLevel", 15L to "replacementNeeded", 26L to "chargeState", 9L to "wiredPresent")
+    fun decode(attribute: Long, raw: Any?): Pair<String, Any?>? {
+        val name = attributes[attribute] ?: return null
+        if (attribute == 15L || attribute == 9L) {
+            require(raw is Boolean) { "Invalid power source flag" }
+        } else if (attribute == 12L && raw == null) {
+            return name to null
+        } else {
+            val maximum = when (attribute) { 0xFFFCL -> 0xffffffffL; 12L -> 200L; else -> 255L }
+            require(raw is Long && raw in 0..maximum) { "Invalid power source number" }
+        }
+        return name to raw
+    }
+}

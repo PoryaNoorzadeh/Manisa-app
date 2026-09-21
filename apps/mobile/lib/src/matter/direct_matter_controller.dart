@@ -6,6 +6,11 @@ import 'package:flutter/services.dart';
 import 'color_control.dart';
 import 'electrical_measurement.dart';
 import 'sensor_measurement.dart';
+import 'power_source.dart';
+
+abstract interface class PowerSourceController {
+  Future<Map<int, PowerSource>> readPowerSources(int nodeId);
+}
 
 abstract interface class SensorMeasurementController {
   Future<Map<int, DirectSensorMeasurement>> readSensorMeasurements(int nodeId);
@@ -162,6 +167,7 @@ final class PlatformDirectMatterController
         LevelEventController,
         ColorControlController,
         SensorMeasurementController,
+        PowerSourceController,
         ElectricalMeasurementController,
         ElectricalMeasurementEventController {
   const PlatformDirectMatterController({
@@ -188,6 +194,23 @@ final class PlatformDirectMatterController
   final EventChannel _colorEvents;
   final EventChannel _electricalEvents;
   final EventChannel _sensorEvents;
+
+  @override
+  Future<Map<int, PowerSource>> readPowerSources(int nodeId) async {
+    final raw = await _methods.invokeMapMethod<Object?, Object?>(
+      'readPowerSources', <String, Object?>{'nodeId': nodeId});
+    if (raw == null) throw const FormatException('missing power source response');
+    final result = <int, PowerSource>{};
+    for (final entry in raw.entries) {
+      final endpoint = int.tryParse(entry.key.toString());
+      if (endpoint == null || endpoint < 0 || endpoint > 65534 ||
+          entry.value is! Map<Object?, Object?>) {
+        throw const FormatException('invalid power source endpoint');
+      }
+      result[endpoint] = PowerSource.fromMap(entry.value! as Map<Object?, Object?>);
+    }
+    return result;
+  }
 
   @override
   Future<Map<int, DirectSensorMeasurement>> readSensorMeasurements(int nodeId) async {

@@ -198,7 +198,11 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M4.2 occupancy and contact sensor candidate
+          Manisa M4.3 battery and power source candidate
+          - Actual Power Source snapshots, including root endpoint and multiple sources
+          - Half-percent battery values, low battery, replacement and charging state
+          - Initial/foreground/manual reads; explicitly last-read, no periodic wakeups
+          - Optional/unknown attributes stay distinct; no invented percentages
           - Read-only occupancy and contact states from actual device reports
           - Door/window labels require Descriptor Contact Sensor type 0x0015
           - Contact true means closed; false means open; unknown is never closed
