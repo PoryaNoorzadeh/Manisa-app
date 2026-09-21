@@ -589,3 +589,16 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 - SHA-256 فایل APK: `f49f8810ff185b96a96b87b42b9bae5c63316a50875a658c5e272770c9d72d90`.
 - پس از دریافت، digest بستهٔ ZIP و checksum فایل APK، نسخه/شمارهٔ ساخت/commit داخل metadata و وجود runtimeهای Matter و Flutter برای ARM64 بررسی شدند و تطابق داشتند.
 - گام برنامه‌ریزی‌شدهٔ بعدی: اطلاعات باتری/تغذیهٔ موجود و رگرسیون مشترک برای بستن نرم‌افزاری M4. موارد M4-T04 تا M4-T06 همچنان منتظر شاهد سخت‌افزاری‌اند.
+
+
+### M4.3 — battery/power, build 24
+
+| Case | Scope | Status |
+|---|---|---|
+| P01 | Native + Dart ranges, nullable half-percent, false flags, unknown enums | Added; CI pending |
+| P02 | Endpoint zero and multiple sources through MethodChannel | Added; CI pending |
+| P03 | Initial read, unsupported hide, error/retry, late removal/replaced node, large text | Added; CI pending |
+| P04 | Existing feature regression + integrated Android/Matter build | Pending CI |
+| T07 | Real battery 0/half/full/null, low/replacement and wired status; resume/manual refresh | Pending hardware |
+
+M4 software scope closes after green P01–P04; hardware acceptance remains open for new sensors and power data. Next implementation milestone: M5 manual scenes. No automation/cloud/Thread claim in build 24.

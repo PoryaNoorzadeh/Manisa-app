@@ -13,6 +13,7 @@ import 'electrical_measurement.dart';
 import 'favorite_store.dart';
 import 'home_profile_store.dart';
 import 'level_control.dart';
+import 'power_source_widget.dart';
 import 'room_store.dart';
 import 'sensor_measurement.dart';
 import 'sensor_measurement_widget.dart';
@@ -1370,6 +1371,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             onRenameChannel: (endpoint) => _renameChannel(device, endpoint),
             electricalMeasurements: _electricalMeasurements,
             sensorObservations: _sensorObservations,
+            powerController: widget.controller is PowerSourceController
+                ? widget.controller as PowerSourceController : null,
             staleElectricalMetrics: _staleElectricalMetrics,
             busy: _busy,
             error: _deviceErrors[device.nodeId],
@@ -1514,6 +1517,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.onRenameChannel,
     required this.electricalMeasurements,
     required this.sensorObservations,
+    required this.powerController,
     required this.staleElectricalMetrics,
     required this.busy,
     required this.error,
@@ -1539,6 +1543,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final ValueChanged<int> onRenameChannel;
   final Map<String, DirectElectricalMeasurement> electricalMeasurements;
   final Map<String, SensorObservation> sensorObservations;
+  final PowerSourceController? powerController;
   final Map<String, Set<ElectricalMetric>> staleElectricalMetrics;
   final Set<String> busy;
   final String? error;
@@ -1782,6 +1787,9 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   level: levels[_key(endpoint)], enabled: !busy.contains(_key(endpoint)) && !unavailable,
                   onChanged: (value) => onLevelChanged(endpoint, value)),
               ],
+            if (powerController != null)
+              PowerSourcePanel(key: ValueKey('power-${device.nodeId}'),
+                nodeId: device.nodeId, controller: powerController!),
             for (final entry in device.sensorCapabilities.entries)
               SensorMeasurementPanel(
                 key: ValueKey('sensors-${device.nodeId}-${entry.key}'),
