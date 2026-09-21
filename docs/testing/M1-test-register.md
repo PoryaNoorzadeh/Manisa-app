@@ -595,10 +595,12 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 
 | Case | Scope | Status |
 |---|---|---|
-| P01 | Native + Dart ranges, nullable half-percent, false flags, unknown enums | Added; CI pending |
-| P02 | Endpoint zero and multiple sources through MethodChannel | Added; CI pending |
-| P03 | Initial read, unsupported hide, error/retry, late removal/replaced node, large text | Added; CI pending |
-| P04 | Existing feature regression + integrated Android/Matter build | Pending CI |
+| P01 | Native + Dart ranges, nullable half-percent, false flags, unknown enums | PASS — CI 35585490357 / 35585490249 |
+| P02 | Endpoint zero and multiple sources through MethodChannel | PASS — CI 35585490357 / 35585490249 |
+| P03 | Initial read, unsupported hide, error/retry, late removal/replaced node, large text | PASS — CI 35585490357 / 35585490249 |
+| P04 | Existing feature regression + integrated Android/Matter build | PASS — all existing gates |
 | T07 | Real battery 0/half/full/null, low/replacement and wired status; resume/manual refresh | Pending hardware |
 
 M4 software scope closes after green P01–P04; hardware acceptance remains open for new sensors and power data. Next implementation milestone: M5 manual scenes. No automation/cloud/Thread claim in build 24.
+
+Verified 2026-09-21: Flutter analyze clean, 107 tests passed, native policy checks passed, integrated release APK and generic/official Android builds passed. PR #14 merged. APK SHA256: 28921263751a2406c84327ca201df9b9f3201196726c11cbcc53d0eb296fc8f7. Hardware T04–T07 remains pending.
