@@ -13,10 +13,10 @@ import 'electrical_measurement.dart';
 import 'favorite_store.dart';
 import 'home_profile_store.dart';
 import 'level_control.dart';
+import 'power_source_widget.dart';
 import 'room_store.dart';
 import 'sensor_measurement.dart';
 import 'sensor_measurement_widget.dart';
-import 'power_source_widget.dart';
 
 final class ManisaDirectApp extends StatelessWidget {
   const ManisaDirectApp({

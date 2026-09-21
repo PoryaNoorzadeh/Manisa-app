@@ -5,8 +5,8 @@ import 'package:flutter/services.dart';
 
 import 'color_control.dart';
 import 'electrical_measurement.dart';
-import 'sensor_measurement.dart';
 import 'power_source.dart';
+import 'sensor_measurement.dart';
 
 abstract interface class PowerSourceController {
   Future<Map<int, PowerSource>> readPowerSources(int nodeId);
