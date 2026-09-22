@@ -604,3 +604,17 @@ Flutter Analyze و همهٔ تست‌های Flutter در job `103855617811` از
 M4 software scope closes after green P01–P04; hardware acceptance remains open for new sensors and power data. Next implementation milestone: M5 manual scenes. No automation/cloud/Thread claim in build 24.
 
 Verified 2026-09-21: Flutter analyze clean, 107 tests passed, native policy checks passed, integrated release APK and generic/official Android builds passed. PR #14 merged. APK SHA256: 28921263751a2406c84327ca201df9b9f3201196726c11cbcc53d0eb296fc8f7. Hardware T04–T07 remains pending.
+
+
+### M5.1 / build 25 — removal, RGB spectrum, manual scenes
+
+| Case | Scope | Status |
+|---|---|---|
+| S01 | Native removal timeout/retry, late callback and Activity cleanup tokens | CI pending |
+| S02 | Explicit local deletion and remote-success/room-store-failure | CI pending |
+| S03 | Spectrum drag sends once; saturation control removed; original device-color regression | CI pending |
+| S04 | Scene persistence, partial execution, retry only unconfirmed, duplicates, timeout/removed target, cancel | CI pending |
+| S05 | Editor save failure preserves draft; reopen does not run; delete definitions | CI pending |
+| T08 | Reproduce deletion on user's hardware; retry and local-only recovery | Hardware pending |
+| T09 | RGB spectrum on real touch switch; confirm color and independent brightness | Hardware pending |
+| T10 | Multi-output scene, disconnected device, explicit retry | Hardware pending |

@@ -63,7 +63,7 @@ void main() {
     expect(controller.colorCommands, isEmpty);
     hueSlider().onChangeEnd!(120);
     await tester.pumpAndSettle();
-    expect(controller.colorCommands.single, <Object>[7,1,'hs',85,127]);
+    expect(controller.colorCommands.single, <Object>[7,1,'hs',85,254]);
     expect(hueSlider().value, closeTo(42*360/254, 0.001)); // device clamps command
     controller.colorEvents.add(DirectColorEvent(nodeId: 7,endpoint: 9,
       report: DirectColorState.fromMap(<String,int>{'hue': 0})));
@@ -452,6 +452,36 @@ void main() {
         expect(find.textContaining('حذف تأیید نشد'), findsOneWidget);
     });
   }
+
+  testWidgets('failed removal offers explicitly confirmed local deletion', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    final store = _Store();
+    await tester.pumpWidget(ManisaDirectApp(controller:controller,deviceStore:store));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>)); await tester.pumpAndSettle();
+    await tester.tap(find.text('حذف وسیله')); await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton,'حذف وسیله')); await tester.pump();
+    controller.removal.completeError(PlatformException(code:'matter_remove_timeout'));
+    await tester.pumpAndSettle();
+    expect(store.removed,isFalse);
+    await tester.tap(find.text('حذف از این گوشی')); await tester.pumpAndSettle();
+    expect(find.text('حذف فقط از این گوشی؟'),findsOneWidget);
+    expect(find.textContaining('بازنشانی کارخانه'),findsOneWidget);
+    expect(store.removed,isFalse);
+    await tester.tap(find.widgetWithText(FilledButton,'حذف وسیله')); await tester.pumpAndSettle();
+    expect(store.removed,isTrue); expect(find.text('Saved switch'),findsNothing);
+  });
+  testWidgets('room metadata write failure cannot block confirmed device removal', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    final store = _Store();
+    await tester.pumpWidget(ManisaDirectApp(controller:controller,deviceStore:store,roomStore:_FailRoomStore()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>)); await tester.pumpAndSettle();
+    await tester.tap(find.text('حذف وسیله')); await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton,'حذف وسیله')); await tester.pump();
+    controller.removal.complete(); await tester.pumpAndSettle();
+    expect(store.removed,isTrue); expect(find.text('Saved switch'),findsNothing);
+  });
 
   testWidgets('discovery timeout is visible and permits retry', (tester) async {
     final controller = _Controller();
@@ -1318,4 +1348,11 @@ class _M3RegressionController extends _ColorController
       cumulativeEnergyImportedMilliwattHours: 1500000,
     ),
   };
+}
+
+class _FailRoomStore implements RoomStore {
+  @override
+  Future<RoomCatalog> load() async => const RoomCatalog();
+  @override
+  Future<void> save(RoomCatalog value) async => throw StateError('disk');
 }
