@@ -238,6 +238,16 @@ final class PreferencesDirectDeviceStore implements DirectDeviceStore {
 
   static const String _key = 'manisa_direct_matter_devices_v1';
   final SharedPreferencesAsync _preferences;
+  Future<void> _writeTail = Future<void>.value();
+
+  // Serialize each complete read-modify-write transaction. Otherwise an update
+  // to another device can write an older list and resurrect a removed node.
+  Future<void> _mutate(Future<void> Function() change) {
+    final result = _writeTail.then((_) => change());
+    _writeTail = result.then<void>((_) {}, onError: (Object error, StackTrace stack) {});
+    return result;
+  }
+
 
   @override
   Future<List<DirectMatterDevice>> load() async {
@@ -260,7 +270,7 @@ final class PreferencesDirectDeviceStore implements DirectDeviceStore {
   }
 
   @override
-  Future<void> save(DirectMatterDevice device) async {
+  Future<void> save(DirectMatterDevice device) => _mutate(() async {
     final devices = <DirectMatterDevice>[
       ...await load().then(
         (items) => items.where((item) => item.nodeId != device.nodeId),
@@ -268,15 +278,15 @@ final class PreferencesDirectDeviceStore implements DirectDeviceStore {
       device,
     ]..sort((a, b) => a.nodeId.compareTo(b.nodeId));
     await _write(devices);
-  }
+  });
 
   @override
-  Future<void> remove(int nodeId) async {
+  Future<void> remove(int nodeId) => _mutate(() async {
     final devices = (await load())
         .where((device) => device.nodeId != nodeId)
         .toList(growable: false);
     await _write(devices);
-  }
+  });
 
   Future<void> _write(List<DirectMatterDevice> devices) =>
       _preferences.setString(
