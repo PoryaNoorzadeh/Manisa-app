@@ -5,11 +5,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class PausedPreferences implements SharedPreferencesAsync {
+class PreferencesState {
   String? raw;
   Completer<String?>? pause;
   int reads = 0;
   bool failWrite = false;
+}
+class PausedPreferences implements SharedPreferencesAsync {
+  final _state = PreferencesState();
+  String? get raw => _state.raw;
+  set raw(String? value) => _state.raw = value;
+  Completer<String?>? get pause => _state.pause;
+  set pause(Completer<String?>? value) => _state.pause = value;
+  int get reads => _state.reads;
+  set reads(int value) => _state.reads = value;
+  bool get failWrite => _state.failWrite;
+  set failWrite(bool value) => _state.failWrite = value;
   @override
   Future<String?> getString(String key) async {
     reads++;
