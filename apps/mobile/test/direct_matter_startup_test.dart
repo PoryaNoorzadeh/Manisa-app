@@ -770,6 +770,8 @@ void main() {
   testWidgets('one offline device does not block another device', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(800,1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     controller.failingReadNodes.add(7);

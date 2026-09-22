@@ -91,7 +91,10 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
           const Text('چند خروجی را با یک لمس روشن یا خاموش کن.'),
           if (_error!=null) ...<Widget>[Text(_error!),TextButton(onPressed:_load,child:const Text('تلاش دوباره'))],
           if (_scenes.isEmpty && _error==null) const Padding(padding:EdgeInsets.all(24),child:Text('هنوز سناریویی نساخته‌ای.')),
-          if (_runner.running) const Padding(padding:EdgeInsets.all(12),child:Text('در حال اجرا؛ نتیجهٔ هر خروجی بررسی می‌شود…')),
+          if (_runner.running) ...<Widget>[
+            const Padding(padding:EdgeInsets.all(12),child:Text('در حال اجرا؛ نتیجهٔ هر خروجی بررسی می‌شود…')),
+            TextButton(onPressed:() { _runner.cancel(); },child:const Text('توقف ادامهٔ اجرا')),
+          ],
           for (final scene in _scenes) Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(
             crossAxisAlignment:CrossAxisAlignment.start,children:<Widget>[
               Text(scene.name,style:Theme.of(context).textTheme.titleLarge),
@@ -112,6 +115,7 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
   }
   String _status(SceneActionStatus status) => switch(status) {
     SceneActionStatus.confirmed => 'تأیید شد', SceneActionStatus.failed => 'تأیید نشد',
+    SceneActionStatus.cancelled => 'متوقف شد',
     SceneActionStatus.unknown => 'نتیجه نامشخص', SceneActionStatus.unavailable => 'در دسترس نیست',
   };
 }

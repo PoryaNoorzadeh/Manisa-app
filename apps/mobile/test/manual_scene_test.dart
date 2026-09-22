@@ -55,7 +55,7 @@ void main() {
     final pending=runner.run(scene(),available:(_)=>true,execute:(a){calls.add(a.key);return wait.future;});
     runner.cancel(); wait.complete(true);
     final result=await pending;
-    expect(calls,<String>['7:1']); expect(result[b.key],SceneActionStatus.unavailable);
+    expect(calls,<String>['7:1']); expect(result[b.key],SceneActionStatus.cancelled);
   });
   testWidgets('scene editor keeps draft on save failure, persists and never executes on reopen', (tester) async {
     final store=FailingSceneStore(); var calls=0;
@@ -81,6 +81,19 @@ void main() {
     await tester.tap(find.text('حذف')); await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton,'حذف')); await tester.pumpAndSettle();
     expect(store.scenes,isEmpty);
+  });
+  testWidgets('stop control cancels unsent actions without pretending to recall a sent command', (tester) async {
+    final store=MemorySceneStore(); store.scenes=<ManualScene>[scene()];
+    final pending=Completer<bool>(); final sent=<String>[];
+    await tester.pumpWidget(MaterialApp(home:ManualSceneScreen(store:store,
+      devices:()=>const <DirectMatterDevice>[
+        DirectMatterDevice(nodeId:7,name:'اول',onOffEndpoints:<int>[1]),
+        DirectMatterDevice(nodeId:8,name:'دوم',onOffEndpoints:<int>[2])],
+      execute:(action){sent.add(action.key);return pending.future;})));
+    await tester.pumpAndSettle(); await tester.tap(find.text('اجرا')); await tester.pump();
+    await tester.tap(find.text('توقف ادامهٔ اجرا')); await tester.pump();
+    pending.complete(true); await tester.pumpAndSettle();
+    expect(sent,<String>['7:1']); expect(find.textContaining('متوقف شد'),findsOneWidget);
   });
   testWidgets('spectrum has no saturation control and drag commits a saturated color once', (tester) async {
     final sent=<HSVColor>[];

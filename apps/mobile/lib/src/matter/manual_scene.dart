@@ -77,7 +77,7 @@ class MemorySceneStore implements SceneStore {
   Future<void> save(List<ManualScene> value) async { scenes = List<ManualScene>.of(value); }
 }
 
-enum SceneActionStatus { confirmed, failed, unknown, unavailable }
+enum SceneActionStatus { confirmed, failed, unknown, unavailable, cancelled }
 
 /// Explicit On/Off is idempotent. No toggles, automatic retries, persisted runs
 /// or command replay on restart. A timeout is unknown, never assumed failure.
@@ -98,7 +98,11 @@ final class SceneRunner {
     try {
       for (final action in scene.actions) {
         if (only != null && !only.contains(action.key)) continue;
-        if (_cancelled || !available(action)) {
+        if (_cancelled) {
+          result[action.key] = SceneActionStatus.cancelled;
+          continue;
+        }
+        if (!available(action)) {
           result[action.key] = SceneActionStatus.unavailable;
           continue;
         }
