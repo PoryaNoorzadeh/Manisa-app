@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
+
 import 'package:flutter/painting.dart';
+
 import 'color_control.dart';
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';

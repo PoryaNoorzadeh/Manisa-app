@@ -1,4 +1,3 @@
-import 'scene_lighting_executor.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -18,6 +17,7 @@ import 'manual_scene.dart';
 import 'manual_scene_screen.dart';
 import 'power_source_widget.dart';
 import 'room_store.dart';
+import 'scene_lighting_executor.dart';
 import 'sensor_measurement.dart';
 import 'sensor_measurement_widget.dart';
 

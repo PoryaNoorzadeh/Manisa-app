@@ -198,7 +198,10 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M5.1 manual scenes and control UX recovery
+          Manisa M5.2 manual lighting scenes
+          - Optional scene brightness and color, capability validation and actual readback
+          - Version 1 scenes retained; editing never sends commands
+          - One deadline prevents later scene commands after timeout
           - Bounded removal retry and explicitly confirmed local-only deletion
           - Touch RGB hue spectrum; no separate saturation control
           - Local manual On/Off scenes with actual readback and per-output results

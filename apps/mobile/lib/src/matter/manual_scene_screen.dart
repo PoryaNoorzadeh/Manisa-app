@@ -1,10 +1,10 @@
-import '../core/persian_digits.dart';
-import 'level_control.dart';
-import 'scene_lighting_executor.dart';
 import 'package:flutter/material.dart';
 
+import '../core/persian_digits.dart';
 import 'direct_device_store.dart';
+import 'level_control.dart';
 import 'manual_scene.dart';
+import 'scene_lighting_executor.dart';
 
 final class ManualSceneScreen extends StatefulWidget {
   const ManualSceneScreen({required this.store, required this.devices,
