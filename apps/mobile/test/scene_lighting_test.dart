@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,17 @@ import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
 import 'package:manisa_mobile/src/matter/manual_scene.dart';
 import 'package:manisa_mobile/src/matter/scene_lighting_executor.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class _StoredScenePreferences implements SharedPreferencesAsync {
+  final data = <String,String>{};
+  @override
+  Future<String?> getString(String key) async => data[key];
+  @override
+  Future<void> setString(String key,String value) async { data[key]=value; }
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +30,22 @@ void main() {
   const action = SceneAction(nodeId:7,endpoint:1,on:true,level:127,hue:85,saturation:254);
   final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   tearDown(()=>messenger.setMockMethodCallHandler(channel,null));
+  test('stored v1 scenes survive v2 save and reload without replacing identity',() async {
+    final preferences=_StoredScenePreferences();
+    preferences.data[PreferencesSceneStore.key]=jsonEncode(<String,Object?>{
+      'version':1,'scenes':<Object?>[<String,Object?>{'id':'old','name':'شب',
+        'actions':<Object?>[<String,Object?>{'nodeId':7,'endpoint':1,'on':false}]}],
+    });
+    final store=PreferencesSceneStore(preferences:preferences);
+    final old=await store.load();expect(old.single.actions.single.on,isFalse);
+    await store.save(<ManualScene>[...old,ManualScene(id:'light',name:'نور',actions:<SceneAction>[action])]);
+    final restored=await store.load();expect(restored.first.id,'old');
+    expect(restored.last.actions.single.level,127);expect(restored.last.actions.single.hue,85);
+    final raw=jsonDecode(preferences.data[PreferencesSceneStore.key]!) as Map<String,Object?>;
+    expect(raw['version'],2);
+    preferences.data[PreferencesSceneStore.key]='{"version":99,"scenes":[]}';
+    await expectLater(store.load(),throwsFormatException);
+  });
   test('legacy action loads unchanged; lighting roundtrip and invalid combinations',() {
     final old=SceneAction.fromJson(<String,Object?>{'nodeId':7,'endpoint':1,'on':false});
     expect(old.level,isNull); expect(old.hue,isNull);
