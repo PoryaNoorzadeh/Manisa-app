@@ -4,18 +4,34 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final class SceneAction {
-  const SceneAction({required this.nodeId, required this.endpoint, required this.on});
+  const SceneAction({required this.nodeId, required this.endpoint, required this.on,
+    this.level, this.hue, this.saturation});
   final int nodeId;
   final int endpoint;
   final bool on;
+  final int? level;
+  final int? hue;
+  final int? saturation;
   String get key => '$nodeId:$endpoint';
-  Map<String, Object?> toJson() => <String, Object?>{'nodeId':nodeId,'endpoint':endpoint,'on':on};
+  Map<String, Object?> toJson() => <String, Object?>{
+    'nodeId':nodeId,'endpoint':endpoint,'on':on,
+    if (level != null) 'level':level,
+    if (hue != null) 'hue':hue,
+    if (saturation != null) 'saturation':saturation,
+  };
   factory SceneAction.fromJson(Map<String,Object?> json) {
     final node = json['nodeId']; final endpoint = json['endpoint']; final on = json['on'];
-    if (node is! int || node <= 0 || endpoint is! int || endpoint < 1 || endpoint > 65534 || on is! bool) {
+    final level = json['level']; final hue = json['hue']; final saturation = json['saturation'];
+    if (node is! int || node <= 0 || endpoint is! int || endpoint < 1 || endpoint > 65534 || on is! bool ||
+        (level != null && (level is! int || level < 1 || level > 254)) ||
+        (hue != null && (hue is! int || hue < 0 || hue > 254)) ||
+        (saturation != null && (saturation is! int || saturation < 0 || saturation > 254)) ||
+        ((hue == null) != (saturation == null)) ||
+        (on == false && (level != null || hue != null))) {
       throw const FormatException('invalid scene action');
     }
-    return SceneAction(nodeId:node,endpoint:endpoint,on:on);
+    return SceneAction(nodeId:node,endpoint:endpoint,on:on,
+      level:level as int?,hue:hue as int?,saturation:saturation as int?);
   }
 }
 final class ManualScene {
@@ -55,7 +71,7 @@ final class PreferencesSceneStore implements SceneStore {
     final raw = await _preferences.getString(key);
     if (raw == null) return <ManualScene>[];
     final decoded = jsonDecode(raw);
-    if (decoded is! Map<String,Object?> || decoded['version'] != 1 || decoded['scenes'] is! List<Object?>) {
+    if (decoded is! Map<String,Object?> || (decoded['version'] != 1 && decoded['version'] != 2) || decoded['scenes'] is! List<Object?>) {
       throw const FormatException('invalid scene catalog');
     }
     final scenes = (decoded['scenes']! as List<Object?>).map((s) {
@@ -67,7 +83,7 @@ final class PreferencesSceneStore implements SceneStore {
   }
   @override
   Future<void> save(List<ManualScene> scenes) => _preferences.setString(key,
-    jsonEncode(<String,Object?>{'version':1,'scenes':scenes.map((s)=>s.toJson()).toList()}));
+    jsonEncode(<String,Object?>{'version':2,'scenes':scenes.map((s)=>s.toJson()).toList()}));
 }
 class MemorySceneStore implements SceneStore {
   List<ManualScene> scenes = <ManualScene>[];

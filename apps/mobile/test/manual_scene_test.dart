@@ -82,6 +82,33 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton,'حذف')); await tester.pumpAndSettle();
     expect(store.scenes,isEmpty);
   });
+  testWidgets('lighting editor saves targets without sending and preserves them on edit', (tester) async {
+    tester.view.physicalSize = const Size(900,1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final store=MemorySceneStore();var calls=0;
+    await tester.pumpWidget(MaterialApp(home:ManualSceneScreen(store:store,
+      devices:()=>const <DirectMatterDevice>[DirectMatterDevice(nodeId:7,name:'نور',
+        onOffEndpoints:<int>[1],levelEndpoints:<int>[1],colorCapabilities:<int,int>{1:1})],
+      execute:(_)async{calls++;return true;})));
+    await tester.pumpAndSettle();await tester.tap(find.text('سناریوی جدید'));await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField),'مطالعه');
+    await tester.tap(find.byType(CheckboxListTile));await tester.pumpAndSettle();
+    await tester.tap(find.text('تنظیم شدت نور'));await tester.pumpAndSettle();
+    await tester.tap(find.text('تنظیم رنگ'));await tester.pumpAndSettle();
+    await tester.tap(find.text('سفید'));await tester.pumpAndSettle();
+    await tester.tap(find.text('ذخیره'));await tester.pumpAndSettle();
+    expect(calls,0);expect(store.scenes.single.actions.single.level,127);
+    expect(store.scenes.single.actions.single.saturation,0);
+    await tester.tap(find.text('ویرایش'));await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('scene-level-7:1')),findsOneWidget);
+    expect(find.byKey(const ValueKey('scene-hue-7:1')),findsOneWidget);
+    await tester.tap(find.text('روشن شود'));await tester.pumpAndSettle();
+    await tester.tap(find.text('ذخیره'));await tester.pumpAndSettle();
+    final off=store.scenes.single.actions.single;
+    expect(off.on,isFalse);expect(off.level,isNull);expect(off.hue,isNull);expect(calls,0);
+  });
   testWidgets('stop control cancels unsent actions without pretending to recall a sent command', (tester) async {
     final store=MemorySceneStore(); store.scenes=<ManualScene>[scene()];
     final pending=Completer<bool>(); final sent=<String>[];
