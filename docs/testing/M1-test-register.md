@@ -610,11 +610,14 @@ Verified 2026-09-21: Flutter analyze clean, 107 tests passed, native policy chec
 
 | Case | Scope | Status |
 |---|---|---|
-| S01 | Native removal timeout/retry, late callback and Activity cleanup tokens | CI pending |
-| S02 | Explicit local deletion and remote-success/room-store-failure | CI pending |
-| S03 | Spectrum drag sends once; saturation control removed; original device-color regression | CI pending |
-| S04 | Scene persistence, partial execution, retry only unconfirmed, duplicates, timeout/removed target, cancel | CI pending |
-| S05 | Editor save failure preserves draft; reopen does not run; delete definitions | CI pending |
+| S01 | Native removal timeout/retry, late callback and Activity cleanup tokens | PASS — CI 35728632995 / 35728633119 |
+| S02 | Explicit local deletion and remote-success/room-store-failure | PASS — CI 35728632995 / 35728633119 |
+| S03 | Spectrum drag sends once; saturation control removed; original device-color regression | PASS — CI 35728632995 / 35728633119 |
+| S04 | Scene persistence, partial execution, retry only unconfirmed, duplicates, timeout/removed target, cancel | PASS — CI 35728632995 / 35728633119 |
+| S05 | Editor save failure preserves draft; reopen does not run; delete definitions | PASS — CI 35728632995 / 35728633119 |
+| S06 | Serialized device-store mutations prevent deletion resurrection; failed write does not poison queue | PASS — Flutter regression |
 | T08 | Reproduce deletion on user's hardware; retry and local-only recovery | Hardware pending |
 | T09 | RGB spectrum on real touch switch; confirm color and independent brightness | Hardware pending |
 | T10 | Multi-output scene, disconnected device, explicit retry | Hardware pending |
+
+Verified 2026-09-23: 118 Flutter tests, clean analysis, native Kotlin checks and all Android/Matter/Go CI gates passed. PR #15 merged. Tested source `0ad2863904917d3e9f0a27259855fa189e4cfc88`; APK SHA256 `dfd7106ddda991dd6829eb67bbe98f7c4005c90a5b44b8da9f5d5c75039d8b18`. T08–T10 remain pending hardware; no new physical test claim.
