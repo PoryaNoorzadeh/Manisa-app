@@ -621,3 +621,19 @@ Verified 2026-09-21: Flutter analyze clean, 107 tests passed, native policy chec
 | T10 | Multi-output scene, disconnected device, explicit retry | Hardware pending |
 
 Verified 2026-09-23: 118 Flutter tests, clean analysis, native Kotlin checks and all Android/Matter/Go CI gates passed. PR #15 merged. Tested source `0ad2863904917d3e9f0a27259855fa189e4cfc88`; APK SHA256 `dfd7106ddda991dd6829eb67bbe98f7c4005c90a5b44b8da9f5d5c75039d8b18`. T08–T10 remain pending hardware; no new physical test claim.
+
+
+### M5.2 / build 26 — lighting targets in manual scenes
+
+| Case | Scope | Status |
+|---|---|---|
+| L01 | Version 1 catalog migration, stable identity, optional target roundtrip, future schema rejection | PASS — Flutter CI 35833156442 |
+| L02 | Exact endpoint commands, complete readback, wrong/missing color, white and XY-only color | PASS — Flutter CI 35833156442 |
+| L03 | Capability validation before writes; timeout and removal prevent subsequent writes | PASS — Flutter CI 35833156442 |
+| L04 | Lighting editor persists without executing; Off clears lighting targets | PASS — Flutter CI 35833156442 |
+| T11 | Real RGB switch: scene On + brightness + selected spectrum color and white; verify independent targets | Hardware pending |
+| T12 | Multiple outputs with one disconnected target, explicit retry/stop; restart retains definitions without execution | Hardware pending |
+
+Final-source Flutter analysis clean; 127 tests passed. Existing hardware confirmations remain recorded; T11–T12 are new checks and have not been claimed as physically performed.
+
+Verified 2026-09-23: all CI gates and integrated Android/Matter release build passed; PR #16 merged. Source `94adf594d554c8a3478bb2653500112fb69b02f7`; APK SHA256 `24acacc0396b650d9e64cf6fcce71710d866573a55f603bfd104dcd9ef6c4fa8`. Main CI 35833156442; integrated APK 35833156553. Hardware T11–T12 remains pending.
