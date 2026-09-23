@@ -47,3 +47,19 @@ object ManisaPowerCodec {
         return name to raw
     }
 }
+
+/** Tokens stop a late completion from releasing a newer removal attempt. */
+class ManisaRemovalGate {
+    private val attempts = mutableMapOf<Long, Any>()
+    fun begin(node: Long): Any? {
+        if (attempts.containsKey(node)) return null
+        return Any().also { attempts[node] = it }
+    }
+    fun finish(node: Long, token: Any): Boolean {
+        if (attempts[node] !== token) return false
+        attempts.remove(node)
+        return true
+    }
+    fun cancel(node: Long) { attempts.remove(node) }
+    fun clear() { attempts.clear() }
+}

@@ -1,6 +1,21 @@
 package com.manisa.manisa_mobile
 
 fun main() {
+    val removals = ManisaRemovalGate()
+    val first = removals.begin(7)!!
+    check(removals.begin(7) == null)
+    check(removals.finish(7, first)) // timeout releases retry
+    val retry = removals.begin(7)!!
+    check(!removals.finish(7, first)) // late old callback cannot affect retry
+    check(removals.begin(7) == null)
+    check(removals.finish(7, retry))
+    val forgotten = removals.begin(7)!!
+    removals.cancel(7)
+    check(!removals.finish(7, forgotten))
+    removals.begin(8)
+    removals.clear()
+    check(removals.begin(8) != null)
+
     check(ManisaPowerCodec.decode(12L, 0L) == ("percent" to 0L))
     check(ManisaPowerCodec.decode(12L, 199L) == ("percent" to 199L))
     check(ManisaPowerCodec.decode(12L, 200L) == ("percent" to 200L))

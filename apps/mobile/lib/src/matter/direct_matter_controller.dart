@@ -8,6 +8,10 @@ import 'electrical_measurement.dart';
 import 'power_source.dart';
 import 'sensor_measurement.dart';
 
+abstract interface class LocalDeviceForgetter {
+  Future<void> forgetDeviceLocally(int nodeId);
+}
+
 abstract interface class PowerSourceController {
   Future<Map<int, PowerSource>> readPowerSources(int nodeId);
 }
@@ -168,6 +172,7 @@ final class PlatformDirectMatterController
         ColorControlController,
         SensorMeasurementController,
         PowerSourceController,
+        LocalDeviceForgetter,
         ElectricalMeasurementController,
         ElectricalMeasurementEventController {
   const PlatformDirectMatterController({
@@ -462,6 +467,10 @@ final class PlatformDirectMatterController
       .where((event) => event is Map<Object?, Object?>)
       .cast<Map<Object?, Object?>>()
       .map(DirectMatterLevelEvent.fromMap);
+
+  @override
+  Future<void> forgetDeviceLocally(int nodeId) => _methods.invokeMethod<void>(
+    'forgetDeviceLocally', <String, Object?>{'nodeId': nodeId});
 
   @override
   Future<void> removeDevice(int nodeId) => _methods.invokeMethod<void>(

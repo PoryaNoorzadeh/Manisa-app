@@ -13,6 +13,8 @@ import 'electrical_measurement.dart';
 import 'favorite_store.dart';
 import 'home_profile_store.dart';
 import 'level_control.dart';
+import 'manual_scene.dart';
+import 'manual_scene_screen.dart';
 import 'power_source_widget.dart';
 import 'room_store.dart';
 import 'sensor_measurement.dart';
@@ -25,6 +27,7 @@ final class ManisaDirectApp extends StatelessWidget {
     this.favoriteStore = const EmptyFavoriteStore(),
     this.homeStore = const EmptyHomeProfileStore(),
     this.roomStore = const EmptyRoomStore(),
+    this.sceneStore,
     super.key,
   });
 
@@ -33,6 +36,7 @@ final class ManisaDirectApp extends StatelessWidget {
   final FavoriteStore favoriteStore;
   final HomeProfileStore homeStore;
   final RoomStore roomStore;
+  final SceneStore? sceneStore;
 
   @override
   Widget build(BuildContext context) {
@@ -62,6 +66,7 @@ final class ManisaDirectApp extends StatelessWidget {
         favoriteStore: favoriteStore,
         homeStore: homeStore,
         roomStore: roomStore,
+        sceneStore: sceneStore,
       ),
     );
   }
@@ -74,6 +79,7 @@ final class DirectMatterHomeScreen extends StatefulWidget {
     required this.favoriteStore,
     required this.homeStore,
     required this.roomStore,
+    this.sceneStore,
     super.key,
   });
 
@@ -82,6 +88,7 @@ final class DirectMatterHomeScreen extends StatefulWidget {
   final FavoriteStore favoriteStore;
   final HomeProfileStore homeStore;
   final RoomStore roomStore;
+  final SceneStore? sceneStore;
 
   @override
   State<DirectMatterHomeScreen> createState() => _DirectMatterHomeScreenState();
@@ -117,6 +124,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   final Set<int> _refreshingNodes = <int>{};
   final Set<int> _readingCapabilities = <int>{};
   final Set<int> _removingNodes = <int>{};
+  final Set<int> _fabricRemovedNodes = <int>{};
   final Set<int> _unavailableNodes = <int>{};
   final Map<int, String> _deviceErrors = <int, String>{};
   static const _readTimeout = Duration(seconds: 15);
@@ -747,6 +755,35 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     await _refreshAllStates();
   }
 
+  Future<bool> _executeSceneAction(SceneAction action) async {
+    final key = _stateKey(action.nodeId, action.endpoint);
+    if (!_canUpdate(action.nodeId) || _busy.contains(key) ||
+        !_devices.any((d) => d.nodeId == action.nodeId && d.onOffEndpoints.contains(action.endpoint))) {
+      throw StateError('output unavailable');
+    }
+    setState(() => _busy.add(key));
+    try {
+      await widget.controller.setOnOff(nodeId:action.nodeId,endpoint:action.endpoint,value:action.on)
+          .timeout(_readTimeout);
+      final confirmed = await widget.controller.readOnOff(nodeId:action.nodeId,endpoint:action.endpoint)
+          .timeout(_readTimeout);
+      if (!_canUpdate(action.nodeId)) throw StateError('device removed');
+      setState(() {
+        _states[key] = confirmed;
+        _unavailableNodes.remove(action.nodeId);
+        _deviceErrors.remove(action.nodeId);
+      });
+      return confirmed == action.on;
+    } finally { if (mounted) setState(() => _busy.remove(key)); }
+  }
+
+  void _openScenes() {
+    Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) =>
+      ManualSceneScreen(store:widget.sceneStore ?? PreferencesSceneStore(),
+        devices:() => _devices.where((d)=>!_removingNodes.contains(d.nodeId)).toList(),
+        execute:_executeSceneAction)));
+  }
+
   Future<void> _setOnOff(
     DirectMatterDevice device,
     int endpoint,
@@ -1110,15 +1147,16 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-  Future<void> _removeDevice(DirectMatterDevice device) async {
+  Future<void> _removeDevice(DirectMatterDevice device, {bool localOnly = false}) async {
     if (_editingMetadata) return;
     if (_removingNodes.contains(device.nodeId)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('حذف وسیله از مانیسا؟'),
+        title: Text(localOnly ? 'حذف فقط از این گوشی؟' : 'حذف وسیله از مانیسا؟'),
         content: Text(
-          '«${device.name}» از مانیسا حذف شود؟ برای افزودن دوباره، وسیله باید آمادهٔ اتصال باشد.',
+          localOnly ? '«${device.name}» فقط از فهرست این گوشی پاک می‌شود. قطع اتصال روی خود دستگاه تأیید نشده است؛ برای اتصال دوباره ممکن است بازنشانی کارخانه لازم باشد.'
+              : '«${device.name}» از مانیسا حذف شود؟ برای افزودن دوباره، وسیله باید آمادهٔ اتصال باشد.',
         ),
         actions: <Widget>[
           TextButton(
@@ -1142,18 +1180,27 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
     });
     try {
-      // Only forget the device after the native RemoveCurrentFabric callback.
-      await widget.controller
+      // Remote removal is the default; local forgetting requires its own confirmation.
+      if (!localOnly && !_fabricRemovedNodes.contains(device.nodeId)) {
+        await widget.controller
           .removeDevice(device.nodeId)
           .timeout(
-            const Duration(seconds: 45),
+            const Duration(seconds: 35),
             onTimeout: () => throw TimeoutException(
               'Removal not confirmed; device kept in the list',
             ),
           );
+        _fabricRemovedNodes.add(device.nodeId);
+      }
       final nextRoomCatalog = _roomCatalog.assignDevice(device.nodeId, null);
-      await widget.roomStore.save(nextRoomCatalog);
-      await widget.deviceStore.remove(device.nodeId);
+      await widget.deviceStore.remove(device.nodeId).timeout(_readTimeout);
+      if (localOnly && widget.controller is LocalDeviceForgetter) {
+        try { await (widget.controller as LocalDeviceForgetter)
+            .forgetDeviceLocally(device.nodeId).timeout(_readTimeout); }
+        catch (_) { /* Local list removal remains valid; no remote success claimed. */ }
+      }
+      try { await widget.roomStore.save(nextRoomCatalog).timeout(_readTimeout); }
+      catch (_) { /* Stale room membership is filtered on reload. */ }
       final nextFavorites = _favorites.removeDevice(device.nodeId);
       try {
         await widget.favoriteStore.save(nextFavorites);
@@ -1169,6 +1216,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               .where((item) => item.nodeId != device.nodeId)
               .toList(growable: false);
           _unavailableNodes.remove(device.nodeId);
+          _fabricRemovedNodes.remove(device.nodeId);
           _sensorLifetimes.remove(device.nodeId);
           _readingSensors.remove(device.nodeId);
           _sensorObservations.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
@@ -1198,6 +1246,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         setState(() {
           _deviceErrors[device.nodeId] = 'Remove failed: $error';
         });
+        if (!localOnly && !_fabricRemovedNodes.contains(device.nodeId)) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            duration: const Duration(seconds: 20),
+            content: const Text('حذف روی وسیله تأیید نشد.'),
+            action: SnackBarAction(label: 'حذف از این گوشی',
+              onPressed: () => _removeDevice(device, localOnly: true))));
+        }
+
       }
     } finally {
       if (mounted) {
@@ -1463,6 +1519,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                       ],
                     ),
                   ],
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(onPressed:_openScenes,
+                    icon:const Icon(Icons.play_circle_outline), label:const Text('سناریوها')),
                   const SizedBox(height: 24),
                   if (_favorites.outputs.isNotEmpty)
                     ..._favoriteSection(context),

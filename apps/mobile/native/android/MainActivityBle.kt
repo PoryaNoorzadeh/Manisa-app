@@ -59,7 +59,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         // One controller per Android process, including Activity recreation.
         private var sharedPlatform: AndroidChipPlatform? = null
         private var sharedController: ChipDeviceController? = null
-        private val pendingRemovals = mutableSetOf<Long>()
         private const val TAG = "ManisaMatter"
         private const val METHODS = "com.manisa/matter/methods"
         private const val EVENTS = "com.manisa/matter/events"
@@ -108,6 +107,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var colorEventSink: EventChannel.EventSink? = null
     private var electricalEventSink: EventChannel.EventSink? = null
     private var sensorEventSink: EventChannel.EventSink? = null
+    private val pendingRemovals = mutableSetOf<Long>()
+    private val removalGate = ManisaRemovalGate()
     private val powerReadTokens = mutableMapOf<Long, Any>()
     private val sensorReadTokens = mutableMapOf<Long, Any>()
     private val sensorSubscriptionPaths = mutableMapOf<Long, List<Triple<Int, Long, Long>>>()
@@ -300,6 +301,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 }
                 "toggleOnOff" -> withNodeAndEndpoint(call, result) { nodeId, endpoint ->
                     invokeOnOff(nodeId, endpoint, OnOff.Command.Toggle, result)
+                }
+                "forgetDeviceLocally" -> withNodeId(call, result) { nodeId ->
+                    removalGate.cancel(nodeId)
+                    pendingRemovals.remove(nodeId)
+                    clearDeviceTracking(nodeId)
+                    result.success(null)
                 }
                 "removeDevice" -> withNodeId(call, result) { nodeId ->
                     removeDevice(nodeId, result)
@@ -542,45 +549,64 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
     }
 
+    private fun clearDeviceTracking(nodeId: Long) {
+        levelSubscriptionEndpoints.remove(nodeId)
+        onOffSubscriptionEndpoints.remove(nodeId)
+        subscriptionEpochs.keys.filter { it.first == nodeId }.toList()
+            .forEach { stopSubscription(it.first, it.second) }
+        colorCapabilities.remove(nodeId)
+        colorLifetimes.remove(nodeId)
+        colorSubscriptionTokens.remove(nodeId)
+        colorSubscriptionPaths.remove(nodeId)
+        electricalSubscriptionPaths.remove(nodeId)
+        powerReadTokens.remove(nodeId)
+        sensorReadTokens.remove(nodeId)
+        sensorSubscriptionPaths.remove(nodeId)
+    }
+
     private fun removeDevice(nodeId: Long, result: MethodChannel.Result) {
-        if (!pendingRemovals.add(nodeId)) {
+        val token = removalGate.begin(nodeId)
+        if (token == null) {
             result.error("removal_busy", "Device removal is already in progress", nodeId)
             return
         }
+        pendingRemovals.add(nodeId)
+        val timeout = Runnable {
+            if (removalGate.finish(nodeId, token)) {
+                pendingRemovals.remove(nodeId)
+                Log.w(TAG, "Fabric removal timed out nodeId=$nodeId; retry is allowed")
+                result.error("matter_remove_timeout", "Removal not confirmed; retry or explicitly forget locally", nodeId)
+            }
+        }
+        sensorHandler.postDelayed(timeout, 30000)
         Log.i(TAG, "Requesting removal of current fabric from nodeId=$nodeId")
         try {
             controller.unpairDeviceCallback(nodeId, object : UnpairDeviceCallback {
                 override fun onSuccess(remoteDeviceId: Long) {
                     runOnUiThread {
+                        if (!removalGate.finish(nodeId, token)) return@runOnUiThread
+                        sensorHandler.removeCallbacks(timeout)
                         pendingRemovals.remove(nodeId)
-                        levelSubscriptionEndpoints.remove(nodeId)
-                        onOffSubscriptionEndpoints.remove(nodeId)
-                        subscriptionEpochs.keys.filter { it.first == nodeId }.toList()
-                            .forEach { stopSubscription(it.first, it.second) }
-                        colorCapabilities.remove(nodeId)
-                        colorLifetimes.remove(nodeId)
-                        colorSubscriptionTokens.remove(nodeId)
-                        colorSubscriptionPaths.remove(nodeId)
-                        electricalSubscriptionPaths.remove(nodeId)
-                        powerReadTokens.remove(nodeId)
-                        sensorReadTokens.remove(nodeId)
-                        sensorSubscriptionPaths.remove(nodeId)
+                        clearDeviceTracking(nodeId)
                         Log.i(TAG, "Device confirmed fabric removal nodeId=$remoteDeviceId")
                         result.success(null)
                     }
                 }
-
                 override fun onError(status: Int, remoteDeviceId: Long) {
                     runOnUiThread {
+                        if (!removalGate.finish(nodeId, token)) return@runOnUiThread
+                        sensorHandler.removeCallbacks(timeout)
                         pendingRemovals.remove(nodeId)
-                        Log.e(TAG, "Fabric removal failed nodeId=$remoteDeviceId status=$status")
                         result.error("matter_remove_failed", "Device did not confirm removal (error $status)", remoteDeviceId)
                     }
                 }
             })
         } catch (error: Exception) {
-            pendingRemovals.remove(nodeId)
-            throw error
+            if (removalGate.finish(nodeId, token)) {
+                sensorHandler.removeCallbacks(timeout)
+                pendingRemovals.remove(nodeId)
+                result.error("matter_remove_failed", error.message, nodeId)
+            }
         }
     }
 
@@ -753,6 +779,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         colorEventSink = null
         electricalEventSink = null
         sensorEventSink = null
+        removalGate.clear()
+        pendingRemovals.clear()
         powerReadTokens.clear()
         sensorReadTokens.clear()
         sensorSubscriptionPaths.clear()

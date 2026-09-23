@@ -52,21 +52,29 @@ final class _ColorControlState extends State<ColorControl> {
           TextButton(onPressed: widget.onRefresh, child: const Text('دریافت رنگ')),
         ]),
         if (shown != null) ...<Widget>[
-          Slider(
-            key: const ValueKey('color-hue'), min: 0, max: 360,
-            value: shown.hue, label: 'رنگ ${toPersianDigits(shown.hue.round())}',
-            semanticFormatterCallback: (value) => 'رنگ ${toPersianDigits(value.round())}',
-            activeColor: HSVColor.fromAHSV(1, shown.hue, 1, 1).toColor(),
-            onChanged: active ? (value) => setState(() => _draft = shown.withHue(value)) : null,
-            onChangeEnd: active ? (value) => _send(shown.withHue(value % 360)) : null,
-          ),
-          Text('غلظت رنگ ${toPersianDigits((shown.saturation * 100).round())}٪'),
-          Slider(
-            key: const ValueKey('color-saturation'), value: shown.saturation,
-            semanticFormatterCallback: (value) => '${toPersianDigits((value*100).round())}٪',
-            onChanged: active ? (value) => setState(() => _draft = shown.withSaturation(value)) : null,
-            onChangeEnd: active ? (value) => _send(shown.withSaturation(value)) : null,
-          ),
+          Semantics(label: 'انتخاب رنگ از طیف', child: Stack(alignment: Alignment.center,
+            children: <Widget>[
+              Container(height: 18, margin: const EdgeInsets.symmetric(horizontal: 24),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(12),
+                  gradient: const LinearGradient(colors: <Color>[
+                    Color(0xffff0000), Color(0xffffff00), Color(0xff00ff00),
+                    Color(0xff00ffff), Color(0xff0000ff), Color(0xffff00ff), Color(0xffff0000),
+                  ]))),
+              // Physical spectrum and slider both run left-to-right, even in Persian.
+              Directionality(textDirection: TextDirection.ltr, child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(trackHeight: 18,
+                  activeTrackColor: Colors.transparent, inactiveTrackColor: Colors.transparent,
+                  disabledActiveTrackColor: Colors.transparent,
+                  disabledInactiveTrackColor: Colors.transparent,
+                  thumbColor: HSVColor.fromAHSV(1, shown.hue, 1, 1).toColor()),
+                child: Slider(key: const ValueKey('color-hue'), min: 0, max: 360,
+                  value: shown.hue,
+                  semanticFormatterCallback: (value) => 'رنگ ${toPersianDigits(value.round())}',
+                  onChanged: active ? (value) => setState(() =>
+                    _draft = HSVColor.fromAHSV(1,value % 360,1,1)) : null,
+                  onChangeEnd: active ? (value) =>
+                    _send(HSVColor.fromAHSV(1,value % 360,1,1)) : null))),
+            ])),
         ],
         Wrap(spacing: 6, runSpacing: 4, children: <Widget>[
           for (final entry in presets.entries)

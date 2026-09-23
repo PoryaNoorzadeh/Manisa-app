@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m4-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m5-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -189,7 +189,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M4"
+            echo "milestone=M5"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -198,7 +198,11 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M4.3 battery and power source candidate
+          Manisa M5.1 manual scenes and control UX recovery
+          - Bounded removal retry and explicitly confirmed local-only deletion
+          - Touch RGB hue spectrum; no separate saturation control
+          - Local manual On/Off scenes with actual readback and per-output results
+          - Explicit retry of unconfirmed actions; no automatic replay
           - Actual Power Source snapshots, including root endpoint and multiple sources
           - Half-percent battery values, low battery, replacement and charging state
           - Initial/foreground/manual reads; explicitly last-read, no periodic wakeups
