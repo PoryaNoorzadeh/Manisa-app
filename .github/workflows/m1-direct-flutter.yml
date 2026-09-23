@@ -5,6 +5,12 @@ on:
     paths:
       - 'apps/mobile/**'
       - '.github/workflows/m1-direct-flutter.yml'
+      - '.github/actions/matter-compiler-cache/**'
+  push:
+    branches: [develop]
+    paths:
+      - '.github/actions/matter-compiler-cache/**'
+      - '.github/workflows/m1-direct-flutter.yml'
   workflow_dispatch:
 
 permissions:
@@ -87,6 +93,9 @@ jobs:
           unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
 
+      - name: Restore Matter compiler cache
+        uses: ./.github/actions/matter-compiler-cache
+
       - name: Verify native sensor decoding rules
         run: |
           "$RUNNER_TEMP/kotlinc/bin/kotlinc" \
@@ -101,7 +110,11 @@ jobs:
           export PATH="$RUNNER_TEMP/kotlinc/bin:$PATH"
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
           source scripts/bootstrap.sh
-          ./scripts/build/build_examples.py --target android-arm64-chip-tool build
+          ./scripts/build/build_examples.py --target android-arm64-chip-tool --pw-command-launcher=/usr/bin/ccache build
+
+      - name: Report Matter compiler cache usage
+        if: always()
+        run: /usr/bin/ccache --show-stats --verbose
 
       - name: Generate Flutter Android shell
         working-directory: apps/mobile
