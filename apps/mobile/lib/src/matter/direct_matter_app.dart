@@ -1,3 +1,4 @@
+import 'scene_lighting_executor.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -763,18 +764,16 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
     setState(() => _busy.add(key));
     try {
-      await widget.controller.setOnOff(nodeId:action.nodeId,endpoint:action.endpoint,value:action.on)
-          .timeout(_readTimeout);
-      final confirmed = await widget.controller.readOnOff(nodeId:action.nodeId,endpoint:action.endpoint)
-          .timeout(_readTimeout);
-      if (!_canUpdate(action.nodeId)) throw StateError('device removed');
-      setState(() {
-        _states[key] = confirmed;
-        _unavailableNodes.remove(action.nodeId);
-        _deviceErrors.remove(action.nodeId);
-      });
-      return confirmed == action.on;
-    } finally { if (mounted) setState(() => _busy.remove(key)); }
+      final device = _devices.firstWhere((d) => d.nodeId == action.nodeId);
+      final confirmed = await executeSceneLighting(action:action,device:device,
+        controller:widget.controller,active:()=>_canUpdate(action.nodeId));
+      return confirmed;
+    } finally {
+      if (mounted) {
+        setState(() => _busy.remove(key));
+        unawaited(_refreshAllStates());
+      }
+    }
   }
 
   void _openScenes() {

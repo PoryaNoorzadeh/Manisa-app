@@ -1,3 +1,6 @@
+import '../core/persian_digits.dart';
+import 'level_control.dart';
+import 'scene_lighting_executor.dart';
 import 'package:flutter/material.dart';
 
 import 'direct_device_store.dart';
@@ -40,7 +43,7 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
     return 'خروجی حذف‌شده یا در دسترس نیست';
   }
   bool _available(SceneAction action) => widget.devices().any((d) =>
-      d.nodeId == action.nodeId && d.onOffEndpoints.contains(action.endpoint));
+      sceneActionSupported(action,d));
   Future<bool> _save(List<ManualScene> next) async {
     setState(() => _saving = true);
     try {
@@ -88,7 +91,7 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
         icon:const Icon(Icons.add),label:const Text('سناریوی جدید')),
       body:_loading ? const Center(child:CircularProgressIndicator()) : ListView(
         padding:const EdgeInsets.fromLTRB(16,16,16,100),children:<Widget>[
-          const Text('چند خروجی را با یک لمس روشن یا خاموش کن.'),
+          const Text('وضعیت خروجی‌ها، شدت نور و رنگ را با یک لمس تنظیم کن.'),
           if (_error!=null) ...<Widget>[Text(_error!),TextButton(onPressed:_load,child:const Text('تلاش دوباره'))],
           if (_scenes.isEmpty && _error==null) const Padding(padding:EdgeInsets.all(24),child:Text('هنوز سناریویی نساخته‌ای.')),
           if (_runner.running) ...<Widget>[
@@ -99,7 +102,7 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
             crossAxisAlignment:CrossAxisAlignment.start,children:<Widget>[
               Text(scene.name,style:Theme.of(context).textTheme.titleLarge),
               for (final action in scene.actions) Padding(padding:const EdgeInsets.symmetric(vertical:4),
-                child:Text('${_label(action)}: ${action.on ? 'روشن' : 'خاموش'}'
+                child:Text('${_label(action)}: ${action.on ? 'روشن' : 'خاموش'}${action.level == null ? '' : ' · نور ${toPersianDigits(matterLevelToPercent(action.level!))}٪'}${action.hue == null ? '' : action.saturation == 0 ? ' · سفید' : ' · رنگ انتخاب‌شده'}'
                   '${_results[scene.id]?[action.key] == null ? '' : ' — ${_status(_results[scene.id]![action.key]!)}'}')),
               Wrap(spacing:8,children:<Widget>[
                 FilledButton(onPressed:busy?null:()=>_run(scene),child:const Text('اجرا')),
@@ -109,7 +112,7 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
                 TextButton(onPressed:busy?null:()=>_delete(scene),child:const Text('حذف')),
               ]),
               if (_results[scene.id]?.values.contains(SceneActionStatus.unknown)==true)
-                const Text('برای نتیجهٔ نامشخص، ممکن است فرمان اجرا شده باشد. تلاش مجدد همان وضعیت روشن/خاموش را درخواست می‌کند.'),
+                const Text('برای نتیجهٔ نامشخص، ممکن است فرمان اجرا شده باشد. تلاش مجدد همان تنظیمات ذخیره‌شده را درخواست می‌کند.'),
             ]))),
         ])));
   }
@@ -137,25 +140,77 @@ final class _SceneEditorState extends State<_SceneEditor> {
     _actions=<String,SceneAction>{for(final a in widget.scene?.actions??<SceneAction>[]) a.key:a}; }
   @override
   void dispose() { _name.dispose(); super.dispose(); }
+  Widget _lighting(DirectMatterDevice device,int endpoint) {
+    final key = '${device.nodeId}:$endpoint';
+    final action = _actions[key]!;
+    void change({int? level,int? hue,int? saturation}) => setState(() =>
+      _actions[key] = SceneAction(nodeId:device.nodeId,endpoint:endpoint,on:true,
+        level:level,hue:hue,saturation:saturation));
+    final color = HSVColor.fromAHSV(1,(action.hue ?? 0)*360/254 % 360,
+      (action.saturation ?? 254)/254,1).toColor();
+    return Column(children:<Widget>[
+      if (device.levelEndpoints.contains(endpoint)) ...<Widget>[
+        SwitchListTile(title:const Text('تنظیم شدت نور'),
+          subtitle:const Text('اگر خاموش باشد، شدت نور تغییر نمی‌کند.'),
+          value:action.level != null,onChanged:_saving ? null : (enabled)=>change(
+            level:enabled ? 127 : null,hue:action.hue,saturation:action.saturation)),
+        if (action.level != null) Slider(key:ValueKey('scene-level-$key'),
+          min:1,max:100,divisions:99,value:matterLevelToPercent(action.level!).toDouble(),
+          label:'${toPersianDigits(matterLevelToPercent(action.level!))}٪',
+          onChanged:_saving ? null : (v)=>change(level:percentToMatterLevel(v.round()),
+            hue:action.hue,saturation:action.saturation)),
+      ],
+      if (((device.colorCapabilities[endpoint] ?? 0) & 9) != 0) ...<Widget>[
+        SwitchListTile(title:const Text('تنظیم رنگ'),
+          subtitle:const Text('رنگ دلخواه سناریو؛ فقط هنگام اجرا اعمال می‌شود.'),
+          value:action.hue != null,onChanged:_saving ? null : (enabled)=>change(
+            level:action.level,hue:enabled ? 0 : null,saturation:enabled ? 254 : null)),
+        if (action.hue != null) ...<Widget>[
+          Semantics(label:'رنگ انتخاب‌شده برای سناریو',child:CircleAvatar(backgroundColor:color)),
+          Stack(alignment:Alignment.center,children:<Widget>[
+            Container(height:18,margin:const EdgeInsets.symmetric(horizontal:24),
+              decoration:BoxDecoration(borderRadius:BorderRadius.circular(12),
+                gradient:const LinearGradient(colors:<Color>[Colors.red,Colors.yellow,
+                  Colors.green,Colors.cyan,Colors.blue,Colors.purple,Colors.red]))),
+            Directionality(textDirection:TextDirection.ltr,child:SliderTheme(
+              data:SliderTheme.of(context).copyWith(activeTrackColor:Colors.transparent,
+                inactiveTrackColor:Colors.transparent,thumbColor:color),
+              child:Slider(key:ValueKey('scene-hue-$key'),min:0,max:254,
+                value:action.hue!.toDouble(),
+                semanticFormatterCallback:(v)=>'رنگ ${toPersianDigits(v.round())}',
+                onChanged:_saving ? null : (v)=>change(level:action.level,hue:v.round(),saturation:254)))),
+          ]),
+          ActionChip(label:const Text('سفید'),onPressed:_saving ? null : ()=>change(
+            level:action.level,hue:0,saturation:0)),
+        ],
+      ],
+      if ((action.level != null && !device.levelEndpoints.contains(endpoint)) ||
+          (action.hue != null && ((device.colorCapabilities[endpoint] ?? 0) & 9) == 0))
+        TextButton(onPressed:_saving ? null : ()=>change(),
+          child:const Text('قابلیت نور تغییر کرده؛ حذف تنظیمات نور از این خروجی')),
+    ]);
+  }
   @override
   Widget build(BuildContext context) {
     final available=<String>{for(final d in widget.devices) for(final ep in d.onOffEndpoints) '${d.nodeId}:$ep'};
     return PopScope(canPop:!_saving,child:Scaffold(appBar:AppBar(title:Text(widget.scene==null?'سناریوی جدید':'ویرایش سناریو')),
       body:ListView(padding:const EdgeInsets.all(16),children:<Widget>[
-        TextField(controller:_name,maxLength:60,decoration:const InputDecoration(labelText:'نام سناریو')),
+        TextField(controller:_name,enabled:!_saving,maxLength:60,decoration:const InputDecoration(labelText:'نام سناریو')),
         const Text('خروجی‌ها را انتخاب کن و وضعیت دلخواه هرکدام را مشخص کن.'),
         for(final device in widget.devices) for(final endpoint in device.onOffEndpoints)
           Column(children:<Widget>[
             CheckboxListTile(value:_actions.containsKey('${device.nodeId}:$endpoint'),
               title:Text('${device.name} · ${device.channelName(endpoint,device.onOffEndpoints.indexOf(endpoint))}'),
-              onChanged:(checked)=>setState(() {
+              onChanged:_saving ? null : (checked)=>setState(() {
                 final action=SceneAction(nodeId:device.nodeId,endpoint:endpoint,on:true);
                 if(checked==true) { _actions[action.key]=action; } else { _actions.remove(action.key); }
               })),
             if(_actions.containsKey('${device.nodeId}:$endpoint')) SwitchListTile(
               title:Text(_actions['${device.nodeId}:$endpoint']!.on?'روشن شود':'خاموش شود'),
               value:_actions['${device.nodeId}:$endpoint']!.on,
-              onChanged:(on)=>setState(()=>_actions['${device.nodeId}:$endpoint']=SceneAction(nodeId:device.nodeId,endpoint:endpoint,on:on))),
+              onChanged:_saving ? null : (on)=>setState(()=>_actions['${device.nodeId}:$endpoint']=SceneAction(nodeId:device.nodeId,endpoint:endpoint,on:on))),
+            if (_actions['${device.nodeId}:$endpoint']?.on == true)
+              _lighting(device,endpoint),
           ]),
         for(final action in _actions.values.where((a)=>!available.contains(a.key)).toList())
           ListTile(title:const Text('خروجی حذف‌شده یا در دسترس نیست'),
