@@ -771,16 +771,16 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     } finally {
       if (mounted) {
         setState(() => _busy.remove(key));
-        unawaited(_refreshAllStates());
       }
     }
   }
 
-  void _openScenes() {
-    Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) =>
+  void _openScenes() async {
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) =>
       ManualSceneScreen(store:widget.sceneStore ?? PreferencesSceneStore(),
         devices:() => _devices.where((d)=>!_removingNodes.contains(d.nodeId)).toList(),
         execute:_executeSceneAction)));
+    if (mounted) unawaited(_refreshAllStates());
   }
 
   Future<void> _setOnOff(
