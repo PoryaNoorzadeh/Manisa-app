@@ -308,6 +308,15 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                     clearDeviceTracking(nodeId)
                     result.success(null)
                 }
+                "resetConnection" -> withNodeId(call, result) { nodeId ->
+                    try {
+                        controller.shutdownSubscriptions(controller.fabricIndex, nodeId)
+                    } catch (error: Exception) {
+                        Log.w(TAG, "Could not close old subscriptions for nodeId=$nodeId", error)
+                    }
+                    clearDeviceTracking(nodeId)
+                    result.success(null)
+                }
                 "removeDevice" -> withNodeId(call, result) { nodeId ->
                     removeDevice(nodeId, result)
                 }

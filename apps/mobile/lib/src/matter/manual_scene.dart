@@ -63,8 +63,10 @@ abstract interface class SceneStore {
   Future<void> save(List<ManualScene> scenes);
 }
 final class PreferencesSceneStore implements SceneStore {
-  PreferencesSceneStore({SharedPreferencesAsync? preferences}) : _preferences = preferences ?? SharedPreferencesAsync();
-  final SharedPreferencesAsync _preferences;
+  PreferencesSceneStore({SharedPreferencesAsync? preferences}) : _injectedPreferences = preferences;
+  SharedPreferencesAsync? _injectedPreferences;
+  SharedPreferencesAsync get _preferences =>
+      _injectedPreferences ??= SharedPreferencesAsync();
   static const key = 'manisa_manual_scenes_v1';
   @override
   Future<List<ManualScene>> load() async {

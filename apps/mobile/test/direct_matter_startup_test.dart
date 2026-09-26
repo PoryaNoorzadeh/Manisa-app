@@ -669,6 +669,32 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('unavailable device reconnects automatically without app restart', (
+    tester,
+  ) async {
+    final controller = _RecoveringController()..readFails = true;
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(
+      ManisaDirectApp(controller: controller, deviceStore: _Store()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('وضعیت دریافت نشده'), findsOneWidget);
+    expect(controller.resetCalls, 0);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    expect(controller.resetCalls, 1);
+    expect(find.text('وضعیت دریافت نشده'), findsNothing);
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged,
+      isNotNull,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
   testWidgets('resuming the app refreshes saved Matter state', (tester) async {
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
@@ -1190,6 +1216,17 @@ class _Controller implements DirectMatterController {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _RecoveringController extends _Controller
+    implements ConnectionRecoveryController {
+  int resetCalls = 0;
+
+  @override
+  Future<void> resetConnection(int nodeId) async {
+    resetCalls++;
+    readFails = false;
+  }
 }
 
 class _Store implements DirectDeviceStore {

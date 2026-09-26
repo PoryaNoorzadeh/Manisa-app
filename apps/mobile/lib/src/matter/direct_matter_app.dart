@@ -17,6 +17,8 @@ import 'manual_scene.dart';
 import 'manual_scene_screen.dart';
 import 'power_source_widget.dart';
 import 'room_store.dart';
+import 'scene_automation.dart';
+import 'scene_automation_screen.dart';
 import 'scene_lighting_executor.dart';
 import 'sensor_measurement.dart';
 import 'sensor_measurement_widget.dart';
@@ -29,6 +31,8 @@ final class ManisaDirectApp extends StatelessWidget {
     this.homeStore = const EmptyHomeProfileStore(),
     this.roomStore = const EmptyRoomStore(),
     this.sceneStore,
+    this.automationStore,
+    this.clock = DateTime.now,
     super.key,
   });
 
@@ -38,6 +42,8 @@ final class ManisaDirectApp extends StatelessWidget {
   final HomeProfileStore homeStore;
   final RoomStore roomStore;
   final SceneStore? sceneStore;
+  final AutomationStore? automationStore;
+  final DateTime Function() clock;
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +74,8 @@ final class ManisaDirectApp extends StatelessWidget {
         homeStore: homeStore,
         roomStore: roomStore,
         sceneStore: sceneStore,
+        automationStore: automationStore,
+        clock: clock,
       ),
     );
   }
@@ -81,6 +89,8 @@ final class DirectMatterHomeScreen extends StatefulWidget {
     required this.homeStore,
     required this.roomStore,
     this.sceneStore,
+    this.automationStore,
+    this.clock = DateTime.now,
     super.key,
   });
 
@@ -90,6 +100,8 @@ final class DirectMatterHomeScreen extends StatefulWidget {
   final HomeProfileStore homeStore;
   final RoomStore roomStore;
   final SceneStore? sceneStore;
+  final AutomationStore? automationStore;
+  final DateTime Function() clock;
 
   @override
   State<DirectMatterHomeScreen> createState() => _DirectMatterHomeScreenState();
@@ -132,12 +144,23 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   bool _loading = true;
   bool _editingMetadata = false;
   bool _retrying = false;
+  bool _foreground = true;
+  bool _checkingAutomations = false;
+  bool _automationScreenOpen = false;
+  int _connectionRetryAttempt = 0;
+  Timer? _connectionRetryTimer;
+  Timer? _automationTimer;
+  late final SceneStore _sceneStore;
+  late final AutomationStore _automationStore;
+  final SceneRunner _sceneRunner = SceneRunner();
   DateTime? _lastResumeRefresh;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _sceneStore = widget.sceneStore ?? PreferencesSceneStore();
+    _automationStore = widget.automationStore ?? PreferencesAutomationStore();
     WidgetsBinding.instance.addObserver(this);
     _initialize();
   }
@@ -151,14 +174,24 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     unawaited(_electricalEvents?.cancel());
     unawaited(_sensorEvents?.cancel());
     _sensorFreshnessTimer?.cancel();
+    _connectionRetryTimer?.cancel();
+    _automationTimer?.cancel();
+    _sceneRunner.cancel();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed || _loading || _devices.isEmpty) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) {
+      _connectionRetryTimer?.cancel();
+      _connectionRetryTimer = null;
       return;
     }
+    if (_loading || _devices.isEmpty) {
+      return;
+    }
+    unawaited(_checkAutomations());
     final now = DateTime.now();
     final previous = _lastResumeRefresh;
     if (previous != null &&
@@ -166,12 +199,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       return;
     }
     _lastResumeRefresh = now;
-    unawaited(_refreshAllStates());
+    unawaited(_unavailableNodes.isEmpty ? _refreshAllStates() : _recoverConnections());
   }
 
   String _stateKey(int nodeId, int endpoint) => '$nodeId:$endpoint';
 
   Future<void> _initialize() async {
+    var initialized = false;
     try {
       final supported = await widget.controller.isSupported();
       if (!supported) {
@@ -347,6 +381,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
       // Restore live state without blocking the home screen or onboarding.
       unawaited(_refreshAllStates());
+      _automationTimer = Timer.periodic(
+        const Duration(minutes: 1),
+        (_) => unawaited(_checkAutomations()),
+      );
+      initialized = true;
     } catch (error) {
       if (mounted) {
         setState(() => _error = error.toString());
@@ -354,6 +393,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     } finally {
       if (mounted) {
         setState(() => _loading = false);
+        if (initialized) unawaited(_checkAutomations());
       }
     }
   }
@@ -367,6 +407,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     await Future.wait(
       List<DirectMatterDevice>.of(_devices).map(_refreshDevice),
     );
+    if (_unavailableNodes.isEmpty) {
+      _connectionRetryTimer?.cancel();
+      _connectionRetryTimer = null;
+      _connectionRetryAttempt = 0;
+    } else {
+      _scheduleConnectionRetry();
+    }
   }
 
   Future<void> _refreshDevice(DirectMatterDevice device) async {
@@ -717,12 +764,52 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   Future<void> _retryConnections() async {
-    if (_retrying) return;
+    await _recoverConnections();
+  }
+
+  void _scheduleConnectionRetry() {
+    if (!mounted || !_foreground || _unavailableNodes.isEmpty ||
+        _connectionRetryTimer?.isActive == true || _retrying) return;
+    const delays = <Duration>[
+      Duration(seconds: 2),
+      Duration(seconds: 5),
+      Duration(seconds: 10),
+      Duration(seconds: 20),
+      Duration(seconds: 30),
+    ];
+    final index = _connectionRetryAttempt < delays.length
+        ? _connectionRetryAttempt
+        : delays.length - 1;
+    final delay = delays[index];
+    _connectionRetryAttempt++;
+    _connectionRetryTimer = Timer(delay, () => unawaited(_recoverConnections()));
+  }
+
+  Future<void> _recoverConnections() async {
+    if (!mounted || !_foreground || _retrying) return;
+    _connectionRetryTimer?.cancel();
+    _connectionRetryTimer = null;
     setState(() => _retrying = true);
     try {
+      final controller = widget.controller;
+      if (controller is ConnectionRecoveryController) {
+        for (final nodeId in List<int>.of(_unavailableNodes)) {
+          try {
+            await (controller as ConnectionRecoveryController)
+                .resetConnection(nodeId)
+                .timeout(const Duration(seconds: 5));
+          } catch (_) {
+            // A normal read below remains the authoritative recovery check.
+          }
+        }
+      }
+      if (mounted) setState(() => _error = null);
       await _refreshAllStates();
     } finally {
-      if (mounted) setState(() => _retrying = false);
+      if (mounted) {
+        setState(() => _retrying = false);
+        if (_unavailableNodes.isNotEmpty) _scheduleConnectionRetry();
+      }
     }
   }
 
@@ -777,10 +864,66 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   void _openScenes() async {
     await Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) =>
-      ManualSceneScreen(store:widget.sceneStore ?? PreferencesSceneStore(),
+      ManualSceneScreen(store:_sceneStore,
         devices:() => _devices.where((d)=>!_removingNodes.contains(d.nodeId)).toList(),
-        execute:_executeSceneAction)));
+        execute:_executeSceneAction, runner:_sceneRunner)));
     if (mounted) unawaited(_refreshAllStates());
+  }
+
+  void _openAutomations() async {
+    _automationScreenOpen = true;
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) =>
+      SceneAutomationScreen(store:_automationStore,sceneStore:_sceneStore)));
+    _automationScreenOpen = false;
+    if (mounted) unawaited(_checkAutomations());
+  }
+
+  Future<void> _checkAutomations() async {
+    if (!mounted || !_foreground || _loading || _checkingAutomations ||
+        _automationScreenOpen || _sceneRunner.running) return;
+    _checkingAutomations = true;
+    try {
+      final now = widget.clock();
+      var claims = <AutomationClaim>[];
+      await _automationStore.mutate((current) {
+        claims = claimDueAutomations(current, now);
+        if (claims.isEmpty) return current;
+        final claimed = <String, SceneAutomation>{
+          for (final claim in claims) claim.automation.id: claim.automation,
+        };
+        return current.map((item) => claimed[item.id] ?? item).toList();
+      });
+      if (claims.isEmpty || !mounted) return;
+      final scenes = await _sceneStore.load();
+      for (final claim in claims.where((item) => item.shouldRun)) {
+        if (!mounted || _sceneRunner.running) break;
+        final matches = scenes.where(
+          (scene) => scene.id == claim.automation.sceneId,
+        );
+        if (matches.isEmpty) continue;
+        final scene = matches.first;
+        final results = await _sceneRunner.run(
+          scene,
+          available: (action) => _devices.any(
+            (device) => sceneActionSupported(action, device),
+          ),
+          execute: _executeSceneAction,
+        );
+        if (!mounted) return;
+        final confirmed = results.values.every(
+          (status) => status == SceneActionStatus.confirmed,
+        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(confirmed
+              ? 'زمان‌بندی «${scene.name}» اجرا و تأیید شد.'
+              : 'زمان‌بندی «${scene.name}» کامل تأیید نشد؛ وضعیت خروجی‌ها را بررسی کن.'),
+        ));
+      }
+    } catch (_) {
+      // A storage/read failure must never execute an unclaimed automation.
+    } finally {
+      _checkingAutomations = false;
+    }
   }
 
   Future<void> _setOnOff(
@@ -814,6 +957,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           _unavailableNodes.add(device.nodeId);
           _deviceErrors[device.nodeId] = 'Command failed: $error';
         });
+        _scheduleConnectionRetry();
       }
     } finally {
       if (mounted) {
@@ -1519,8 +1663,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                     ),
                   ],
                   const SizedBox(height: 16),
-                  OutlinedButton.icon(onPressed:_openScenes,
-                    icon:const Icon(Icons.play_circle_outline), label:const Text('سناریوها')),
+                  Row(children: <Widget>[
+                    Expanded(child: OutlinedButton.icon(onPressed:_openScenes,
+                      icon:const Icon(Icons.play_circle_outline), label:const Text('سناریوها'))),
+                    const SizedBox(width: 8),
+                    Expanded(child: OutlinedButton.icon(onPressed:_openAutomations,
+                      icon:const Icon(Icons.schedule_outlined), label:const Text('زمان‌بندی‌ها'))),
+                  ]),
                   const SizedBox(height: 24),
                   if (_favorites.outputs.isNotEmpty)
                     ..._favoriteSection(context),

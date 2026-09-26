@@ -61,7 +61,7 @@ void main() {
     final store=FailingSceneStore(); var calls=0;
     Widget app()=>MaterialApp(home:ManualSceneScreen(store:store,
       devices:()=>const <DirectMatterDevice>[DirectMatterDevice(nodeId:7,name:'اتاق',onOffEndpoints:<int>[1])],
-      execute:(_)async{calls++;return true;}));
+      execute:(_)async{calls++;return true;},runner:SceneRunner()));
     await tester.pumpWidget(app()); await tester.pumpAndSettle();
     await tester.tap(find.text('سناریوی جدید')); await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField),'شب');
@@ -91,7 +91,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home:ManualSceneScreen(store:store,
       devices:()=>const <DirectMatterDevice>[DirectMatterDevice(nodeId:7,name:'نور',
         onOffEndpoints:<int>[1],levelEndpoints:<int>[1],colorCapabilities:<int,int>{1:1})],
-      execute:(_)async{calls++;return true;})));
+      execute:(_)async{calls++;return true;},runner:SceneRunner())));
     await tester.pumpAndSettle();await tester.tap(find.text('سناریوی جدید'));await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField),'مطالعه');
     await tester.tap(find.byType(CheckboxListTile));await tester.pumpAndSettle();
@@ -116,7 +116,7 @@ void main() {
       devices:()=>const <DirectMatterDevice>[
         DirectMatterDevice(nodeId:7,name:'اول',onOffEndpoints:<int>[1]),
         DirectMatterDevice(nodeId:8,name:'دوم',onOffEndpoints:<int>[2])],
-      execute:(action){sent.add(action.key);return pending.future;})));
+      execute:(action){sent.add(action.key);return pending.future;},runner:SceneRunner())));
     await tester.pumpAndSettle(); await tester.tap(find.text('اجرا')); await tester.pump();
     await tester.tap(find.text('توقف ادامهٔ اجرا')); await tester.pump();
     pending.complete(true); await tester.pumpAndSettle();
