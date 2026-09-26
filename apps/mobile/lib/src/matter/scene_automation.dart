@@ -150,10 +150,12 @@ abstract interface class AutomationStore {
 
 final class PreferencesAutomationStore implements AutomationStore {
   PreferencesAutomationStore({SharedPreferencesAsync? preferences})
-    : _preferences = preferences ?? SharedPreferencesAsync();
+    : _injectedPreferences = preferences;
 
   static const key = 'manisa_scene_automations_v1';
-  final SharedPreferencesAsync _preferences;
+  SharedPreferencesAsync? _injectedPreferences;
+  SharedPreferencesAsync get _preferences =>
+      _injectedPreferences ??= SharedPreferencesAsync();
   Future<void> _tail = Future<void>.value();
 
   Future<List<SceneAutomation>> _load() async {
