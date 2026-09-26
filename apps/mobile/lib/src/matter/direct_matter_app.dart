@@ -1663,11 +1663,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                     ),
                   ],
                   const SizedBox(height: 16),
-                  OutlinedButton.icon(onPressed:_openScenes,
-                    icon:const Icon(Icons.play_circle_outline), label:const Text('سناریوها')),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(onPressed:_openAutomations,
-                    icon:const Icon(Icons.schedule_outlined), label:const Text('زمان‌بندی‌ها')),
+                  Row(children: <Widget>[
+                    Expanded(child: OutlinedButton.icon(onPressed:_openScenes,
+                      icon:const Icon(Icons.play_circle_outline), label:const Text('سناریوها'))),
+                    const SizedBox(width: 8),
+                    Expanded(child: OutlinedButton.icon(onPressed:_openAutomations,
+                      icon:const Icon(Icons.schedule_outlined), label:const Text('زمان‌بندی‌ها'))),
+                  ]),
                   const SizedBox(height: 24),
                   if (_favorites.outputs.isNotEmpty)
                     ..._favoriteSection(context),
