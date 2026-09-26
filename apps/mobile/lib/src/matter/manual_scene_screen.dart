@@ -8,16 +8,16 @@ import 'scene_lighting_executor.dart';
 
 final class ManualSceneScreen extends StatefulWidget {
   const ManualSceneScreen({required this.store, required this.devices,
-    required this.execute, super.key});
+    required this.execute, required this.runner, super.key});
   final SceneStore store;
   final List<DirectMatterDevice> Function() devices;
   final Future<bool> Function(SceneAction) execute;
+  final SceneRunner runner;
   @override
   State<ManualSceneScreen> createState() => _ManualSceneScreenState();
 }
 final class _ManualSceneScreenState extends State<ManualSceneScreen> {
   List<ManualScene> _scenes = <ManualScene>[];
-  final _runner = SceneRunner();
   final _results = <String,Map<String,SceneActionStatus>>{};
   bool _loading = true;
   bool _saving = false;
@@ -25,7 +25,7 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
   @override
   void initState() { super.initState(); _load(); }
   @override
-  void dispose() { _runner.cancel(); super.dispose(); }
+  void dispose() { widget.runner.cancel(); super.dispose(); }
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
@@ -72,10 +72,10 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
     }
   }
   Future<void> _run(ManualScene scene, {bool retry = false}) async {
-    if (_runner.running) return;
+    if (widget.runner.running) return;
     final only = retry ? _results[scene.id]?.entries.where((e)=>e.value!=SceneActionStatus.confirmed).map((e)=>e.key).toSet() : null;
     // run sets its guard synchronously, before the UI rebuild.
-    final pending = _runner.run(scene,available:_available,execute:widget.execute,only:only);
+    final pending = widget.runner.run(scene,available:_available,execute:widget.execute,only:only);
     setState(() {});
     final result = await pending;
     if (mounted) setState(() => _results[scene.id] = <String,SceneActionStatus>{
@@ -83,8 +83,8 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
   }
   @override
   Widget build(BuildContext context) {
-    final busy = _saving || _runner.running;
-    return PopScope(canPop:!_runner.running,child:Scaffold(
+    final busy = _saving || widget.runner.running;
+    return PopScope(canPop:!widget.runner.running,child:Scaffold(
       appBar:AppBar(title:const Text('سناریوها')),
       floatingActionButton:FloatingActionButton.extended(
         onPressed:busy || _loading || _error!=null ? null : () => _edit(),
@@ -94,9 +94,9 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
           const Text('وضعیت خروجی‌ها، شدت نور و رنگ را با یک لمس تنظیم کن.'),
           if (_error!=null) ...<Widget>[Text(_error!),TextButton(onPressed:_load,child:const Text('تلاش دوباره'))],
           if (_scenes.isEmpty && _error==null) const Padding(padding:EdgeInsets.all(24),child:Text('هنوز سناریویی نساخته‌ای.')),
-          if (_runner.running) ...<Widget>[
+          if (widget.runner.running) ...<Widget>[
             const Padding(padding:EdgeInsets.all(12),child:Text('در حال اجرا؛ نتیجهٔ هر خروجی بررسی می‌شود…')),
-            TextButton(onPressed:() { _runner.cancel(); },child:const Text('توقف ادامهٔ اجرا')),
+            TextButton(onPressed:() { widget.runner.cancel(); },child:const Text('توقف ادامهٔ اجرا')),
           ],
           for (final scene in _scenes) Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(
             crossAxisAlignment:CrossAxisAlignment.start,children:<Widget>[

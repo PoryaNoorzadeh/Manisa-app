@@ -12,6 +12,10 @@ abstract interface class LocalDeviceForgetter {
   Future<void> forgetDeviceLocally(int nodeId);
 }
 
+abstract interface class ConnectionRecoveryController {
+  Future<void> resetConnection(int nodeId);
+}
+
 abstract interface class PowerSourceController {
   Future<Map<int, PowerSource>> readPowerSources(int nodeId);
 }
@@ -174,7 +178,8 @@ final class PlatformDirectMatterController
         PowerSourceController,
         LocalDeviceForgetter,
         ElectricalMeasurementController,
-        ElectricalMeasurementEventController {
+        ElectricalMeasurementEventController,
+        ConnectionRecoveryController {
   const PlatformDirectMatterController({
     MethodChannel methods = const MethodChannel(_methodChannelName),
     EventChannel events = const EventChannel(_eventChannelName),
@@ -471,6 +476,10 @@ final class PlatformDirectMatterController
   @override
   Future<void> forgetDeviceLocally(int nodeId) => _methods.invokeMethod<void>(
     'forgetDeviceLocally', <String, Object?>{'nodeId': nodeId});
+
+  @override
+  Future<void> resetConnection(int nodeId) => _methods.invokeMethod<void>(
+    'resetConnection', <String, Object?>{'nodeId': nodeId});
 
   @override
   Future<void> removeDevice(int nodeId) => _methods.invokeMethod<void>(

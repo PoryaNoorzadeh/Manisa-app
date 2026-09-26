@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m5-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m6-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -189,7 +189,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M5"
+            echo "milestone=M6"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -198,7 +198,12 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M5.2 manual lighting scenes
+          Manisa M6.1 local scene schedules and connection recovery
+          - Phone-owned weekday/time schedules for persisted manual scenes
+          - At-most-once slot claim before commands; ten-minute catch-up window
+          - No late replay, automatic command retry, cloud or closed-app execution claim
+          - Automatic unavailable-node recovery with bounded 2–30 second backoff
+          - Stale subscriptions and local read tracking reset without unpairing
           - Optional scene brightness and color, capability validation and actual readback
           - Version 1 scenes retained; editing never sends commands
           - One deadline prevents later scene commands after timeout
