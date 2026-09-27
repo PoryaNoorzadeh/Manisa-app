@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'data/models.dart';
+import 'design/manisa_theme.dart';
 import 'state/app_controller.dart';
 
 final class ManisaApp extends StatefulWidget {
@@ -25,11 +26,7 @@ final class _ManisaAppState extends State<ManisaApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Manisa',
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF324A3D),
-        brightness: Brightness.light,
-        useMaterial3: true,
-      ),
+      theme: ManisaTheme.light,
       home: DashboardScreen(controller: widget.controller),
     );
   }

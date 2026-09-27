@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../core/persian_digits.dart';
+import '../design/manisa_theme.dart';
 import 'color_control.dart';
 import 'color_control_widget.dart';
 import 'direct_device_store.dart';
@@ -53,20 +54,7 @@ final class ManisaDirectApp extends StatelessWidget {
       locale: const Locale('fa'),
       supportedLocales: const <Locale>[Locale('fa')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF006C70),
-        scaffoldBackgroundColor: const Color(0xFFF3F7F6),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(minimumSize: const Size(48, 56)),
-        ),
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
-          filled: true,
-          fillColor: Colors.white,
-        ),
-        brightness: Brightness.light,
-        useMaterial3: true,
-      ),
+      theme: ManisaTheme.light,
       home: DirectMatterHomeScreen(
         controller: controller,
         deviceStore: deviceStore,
@@ -145,6 +133,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   bool _editingMetadata = false;
   bool _retrying = false;
   bool _foreground = true;
+  int _selectedDestination = 0;
   bool _checkingAutomations = false;
   bool _automationScreenOpen = false;
   int _connectionRetryAttempt = 0;
@@ -1592,55 +1581,72 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final titles = <String>[
+      _homeProfile.name,
+      'کارها',
+      'تنظیمات',
+    ];
     return Scaffold(
       appBar: AppBar(
-        title: const Text('مانیسا'),
-        actions: <Widget>[
-          IconButton(
-            tooltip: 'افزودن اتاق',
-            onPressed: _loading || _editingMetadata ? null : _createRoom,
-            icon: const Icon(Icons.add_home_outlined),
+        title: Text(titles[_selectedDestination]),
+        actions: _selectedDestination == 0
+            ? <Widget>[
+                IconButton(
+                  tooltip: 'افزودن اتاق',
+                  onPressed: _loading || _editingMetadata ? null : _createRoom,
+                  icon: const Icon(Icons.add_home_outlined),
+                ),
+                IconButton(
+                  tooltip: 'بررسی وضعیت',
+                  onPressed: _loading ? null : _refreshAllStates,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ]
+            : const <Widget>[],
+      ),
+      floatingActionButton: _selectedDestination == 0
+          ? FloatingActionButton.extended(
+              onPressed: _loading ? null : _addDevice,
+              icon: const Icon(Icons.add),
+              label: const Text('افزودن وسیله'),
+            )
+          : null,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedDestination,
+        onDestinationSelected: (index) {
+          if (index == _selectedDestination) return;
+          setState(() => _selectedDestination = index);
+        },
+        destinations: const <NavigationDestination>[
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
+            label: 'خانه',
           ),
-          IconButton(
-            tooltip: 'بررسی وضعیت',
-            onPressed: _loading ? null : _refreshAllStates,
-            icon: const Icon(Icons.refresh),
+          NavigationDestination(
+            icon: Icon(Icons.auto_awesome_motion_outlined),
+            selectedIcon: Icon(Icons.auto_awesome_motion_rounded),
+            label: 'کارها',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.tune_outlined),
+            selectedIcon: Icon(Icons.tune_rounded),
+            label: 'تنظیمات',
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _loading ? null : _addDevice,
-        icon: const Icon(Icons.add),
-        label: const Text('افزودن وسیله'),
-      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          : switch (_selectedDestination) {
+              0 => RefreshIndicator(
               onRefresh: _refreshAllStates,
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          _homeProfile.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.headlineMedium,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'تغییر نام خانه',
-                        onPressed: _editingMetadata ? null : _renameHome,
-                        icon: const Icon(Icons.edit_outlined),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'وسایل خانه را از همین‌جا کنترل کن',
-                    style: Theme.of(context).textTheme.bodyMedium,
+                  _HomeHealthCard(
+                    deviceCount: _devices.length,
+                    unavailableCount: _unavailableNodes.length,
+                    recovering: _retrying,
                   ),
                   if (_error != null) ...<Widget>[
                     const SizedBox(height: 16),
@@ -1662,14 +1668,6 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                       ],
                     ),
                   ],
-                  const SizedBox(height: 16),
-                  Row(children: <Widget>[
-                    Expanded(child: OutlinedButton.icon(onPressed:_openScenes,
-                      icon:const Icon(Icons.play_circle_outline), label:const Text('سناریوها'))),
-                    const SizedBox(width: 8),
-                    Expanded(child: OutlinedButton.icon(onPressed:_openAutomations,
-                      icon:const Icon(Icons.schedule_outlined), label:const Text('زمان‌بندی‌ها'))),
-                  ]),
                   const SizedBox(height: 24),
                   if (_favorites.outputs.isNotEmpty)
                     ..._favoriteSection(context),
@@ -1680,8 +1678,286 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                 ],
               ),
             ),
+              1 => _RoutinesHub(
+                  onOpenScenes: _openScenes,
+                  onOpenSchedules: _openAutomations,
+                ),
+              _ => _SettingsHub(
+                  homeName: _homeProfile.name,
+                  roomCount: _roomCatalog.rooms.length,
+                  deviceCount: _devices.length,
+                  onRenameHome: _editingMetadata ? null : _renameHome,
+                  onAddRoom: _editingMetadata ? null : _createRoom,
+                ),
+            },
     );
   }
+}
+
+final class _HomeHealthCard extends StatelessWidget {
+  const _HomeHealthCard({
+    required this.deviceCount,
+    required this.unavailableCount,
+    required this.recovering,
+  });
+
+  final int deviceCount;
+  final int unavailableCount;
+  final bool recovering;
+
+  @override
+  Widget build(BuildContext context) {
+    final healthy = unavailableCount == 0;
+    final icon = healthy ? Icons.check_circle_rounded : Icons.wifi_off_rounded;
+    final title = deviceCount == 0
+        ? 'خانه برای اولین وسیله آماده است'
+        : healthy
+            ? 'همه‌چیز آماده است'
+            : recovering
+                ? 'در حال بازیابی ارتباط'
+                : '${toPersianDigits(unavailableCount)} وسیله در دسترس نیست';
+    final subtitle = deviceCount == 0
+        ? 'وسیله را اضافه کن و اولین کنترل را همین‌جا ببین.'
+        : healthy
+            ? '${toPersianDigits(deviceCount)} وسیله در شبکهٔ خانه در دسترس است.'
+            : 'آخرین وضعیت معتبر حفظ شده و مانیسا دوباره تلاش می‌کند.';
+    final background = healthy
+        ? ManisaColors.mint
+        : ManisaColors.warningSurface;
+    final foreground = healthy
+        ? ManisaColors.tealPressed
+        : ManisaColors.warning;
+
+    return Semantics(
+      container: true,
+      label: '$title. $subtitle',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(icon, color: foreground, size: 28),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: ManisaColors.ink,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _RoutinesHub extends StatelessWidget {
+  const _RoutinesHub({
+    required this.onOpenScenes,
+    required this.onOpenSchedules,
+  });
+
+  final VoidCallback onOpenScenes;
+  final VoidCallback onOpenSchedules;
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+    children: <Widget>[
+      Text('خانه با سبک زندگی تو هماهنگ می‌شود',
+        style: Theme.of(context).textTheme.headlineMedium),
+      const SizedBox(height: 8),
+      const Text('چند وسیله را با یک لمس کنترل کن یا زمان اجرای آن را مشخص کن.'),
+      const SizedBox(height: 24),
+      _RoutineEntryCard(
+        icon: Icons.play_circle_outline_rounded,
+        title: 'سناریوها',
+        description: 'حالت دلخواه چند وسیله را ذخیره و با یک لمس اجرا کن.',
+        actionLabel: 'دیدن سناریوها',
+        onTap: onOpenScenes,
+      ),
+      const SizedBox(height: 12),
+      _RoutineEntryCard(
+        icon: Icons.schedule_rounded,
+        title: 'زمان‌بندی‌ها',
+        description: 'یک سناریو را در روزها و ساعت مشخص روی همین گوشی اجرا کن.',
+        actionLabel: 'دیدن زمان‌بندی‌ها',
+        onTap: onOpenSchedules,
+      ),
+      const SizedBox(height: 16),
+      const _LocalTrustNotice(),
+    ],
+  );
+}
+
+final class _RoutineEntryCard extends StatelessWidget {
+  const _RoutineEntryCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.actionLabel,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final String actionLabel;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(22),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          children: <Widget>[
+            CircleAvatar(
+              radius: 24,
+              backgroundColor: ManisaColors.mint,
+              foregroundColor: ManisaColors.tealPressed,
+              child: Icon(icon),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(title, style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(description),
+                  const SizedBox(height: 10),
+                  Text(actionLabel,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: ManisaColors.tealPressed,
+                    )),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_left_rounded),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+final class _LocalTrustNotice extends StatelessWidget {
+  const _LocalTrustNotice();
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: ManisaColors.surface,
+      border: Border.all(color: ManisaColors.outline),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: const Padding(
+      padding: EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.phone_android_rounded, color: ManisaColors.teal),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text('زمان‌بندی‌های فعلی روی همین گوشی اجرا می‌شوند. فرمان ناموفق خودکار تکرار نمی‌شود.'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+final class _SettingsHub extends StatelessWidget {
+  const _SettingsHub({
+    required this.homeName,
+    required this.roomCount,
+    required this.deviceCount,
+    required this.onRenameHome,
+    required this.onAddRoom,
+  });
+
+  final String homeName;
+  final int roomCount;
+  final int deviceCount;
+  final VoidCallback? onRenameHome;
+  final VoidCallback? onAddRoom;
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+    children: <Widget>[
+      Text('خانه و مانیسا', style: Theme.of(context).textTheme.headlineMedium),
+      const SizedBox(height: 8),
+      const Text('تنظیمات کم‌استفاده اینجا می‌مانند تا صفحهٔ کنترل ساده بماند.'),
+      const SizedBox(height: 24),
+      Card(
+        child: Column(
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.home_outlined),
+              title: const Text('نام خانه'),
+              subtitle: Text(homeName),
+              trailing: const Icon(Icons.chevron_left_rounded),
+              onTap: onRenameHome,
+            ),
+            const Divider(indent: 56),
+            ListTile(
+              leading: const Icon(Icons.meeting_room_outlined),
+              title: const Text('اتاق‌ها'),
+              subtitle: Text('${toPersianDigits(roomCount)} اتاق'),
+              trailing: const Icon(Icons.add_rounded),
+              onTap: onAddRoom,
+            ),
+            const Divider(indent: 56),
+            ListTile(
+              leading: const Icon(Icons.devices_other_outlined),
+              title: const Text('وسایل ثبت‌شده'),
+              subtitle: Text('${toPersianDigits(deviceCount)} وسیله'),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      const Card(
+        child: ListTile(
+          leading: Icon(Icons.router_outlined),
+          title: Text('اتصال محلی'),
+          subtitle: Text('کنترل داخل خانه از شبکهٔ خانه استفاده می‌کند؛ اینترنت و شبکهٔ خانه یکسان نیستند.'),
+        ),
+      ),
+      const SizedBox(height: 12),
+      const Card(
+        child: ListTile(
+          leading: Icon(Icons.support_agent_rounded),
+          title: Text('راهنما و پشتیبانی'),
+          subtitle: Text('جزئیات فنی فقط هنگام نیاز به پشتیبانی نمایش داده می‌شود.'),
+        ),
+      ),
+    ],
+  );
 }
 
 final class _EmptyDirectMatterState extends StatelessWidget {
@@ -2574,7 +2850,7 @@ final class _MatterErrorNotice extends StatelessWidget {
     if (error.startsWith('Could not refresh') || error.startsWith('Realtime'))
       return 'وضعیت تازه دریافت نشد. برق وسیله و اتصال به وای‌فای خانه را بررسی کن.';
     if (error.contains('initialization') || error.contains('not available'))
-      return 'ارتباط مانیسا راه‌اندازی نشد. اپ را ببند و دوباره باز کن.';
+      return 'ارتباط مانیسا راه‌اندازی نشد. دسترسی‌ها را بررسی کن و دوباره تلاش کن.';
     if (error.contains('PlatformException') ||
         error.contains('Exception') ||
         error.contains('Error'))

@@ -22,6 +22,7 @@ void main() {
     await tester.pumpAndSettle();
     final edit = find.byKey(const ValueKey('rename-output-7-1'));
     await tester.ensureVisible(edit);
+    await tester.pumpAndSettle();
     await tester.tap(edit);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '   ');
@@ -936,7 +937,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('خانهٔ من'), findsOneWidget);
-    await tester.tap(find.byTooltip('تغییر نام خانه'));
+    await tester.tap(find.text('تنظیمات'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('نام خانه'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'خانهٔ پوریا');
     await tester.tap(find.widgetWithText(FilledButton, 'ذخیره'));

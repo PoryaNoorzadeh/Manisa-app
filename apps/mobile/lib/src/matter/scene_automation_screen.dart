@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/persian_digits.dart';
+import '../design/manisa_theme.dart';
 import 'manual_scene.dart';
 import 'scene_automation.dart';
 
@@ -137,11 +138,14 @@ final class _SceneAutomationScreenState extends State<SceneAutomationScreen> {
         : ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
             children: <Widget>[
-              const Text(
-                'زمان‌بندی‌ها روی همین گوشی اجرا می‌شوند. اگر برنامه بسته باشد، '
-                'اجرای عقب‌افتاده فقط تا ۱۰ دقیقه پس از بازگشت انجام می‌شود و '
-                'هیچ فرمانی دوبار پخش نمی‌شود.',
+              Text(
+                'روال‌های قابل پیش‌بینی',
+                style: Theme.of(context).textTheme.headlineMedium,
               ),
+              const SizedBox(height: 8),
+              const Text('برای سناریوهای آماده، روز و ساعت اجرا را مشخص کن.'),
+              const SizedBox(height: 20),
+              const _ScheduleTrustNotice(),
               if (_error != null) ...<Widget>[
                 const SizedBox(height: 12),
                 Text(_error!),
@@ -149,17 +153,29 @@ final class _SceneAutomationScreenState extends State<SceneAutomationScreen> {
               ],
               if (_scenes.isEmpty && _error == null)
                 const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text('ابتدا یک سناریو بساز، سپس برای آن زمان تعیین کن.'),
+                  padding: EdgeInsets.only(top: 16),
+                  child: Card(child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('ابتدا یک سناریو بساز، سپس برای آن زمان تعیین کن.'),
+                  )),
                 ),
               if (_automations.isEmpty && _scenes.isNotEmpty)
                 const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text('هنوز زمان‌بندی‌ای نساخته‌ای.'),
+                  padding: EdgeInsets.only(top: 16),
+                  child: Card(child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('هنوز زمان‌بندی‌ای نساخته‌ای.'),
+                  )),
                 ),
               for (final automation in _automations)
-                Card(
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Card(
                   child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     title: Text(_sceneName(automation)),
                     subtitle: Text(
                       '${toPersianDigits(automation.hour.toString().padLeft(2, '0'))}:'
@@ -202,8 +218,36 @@ final class _SceneAutomationScreenState extends State<SceneAutomationScreen> {
                     ),
                   ),
                 ),
+                ),
             ],
           ),
+  );
+}
+
+final class _ScheduleTrustNotice extends StatelessWidget {
+  const _ScheduleTrustNotice();
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: ManisaColors.mint,
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: const Padding(
+      padding: EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.verified_user_outlined, color: ManisaColors.tealPressed),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'زمان‌بندی روی همین گوشی اجرا می‌شود. اجرای عقب‌افتاده فقط تا ۱۰ دقیقه جبران می‌شود و فرمان دوبار پخش نمی‌شود.',
+            ),
+          ),
+        ],
+      ),
+    ),
   );
 }
 

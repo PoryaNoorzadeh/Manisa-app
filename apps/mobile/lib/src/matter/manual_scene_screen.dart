@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/persian_digits.dart';
+import '../design/manisa_theme.dart';
 import 'direct_device_store.dart';
 import 'level_control.dart';
 import 'manual_scene.dart';
@@ -91,19 +92,34 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
         icon:const Icon(Icons.add),label:const Text('سناریوی جدید')),
       body:_loading ? const Center(child:CircularProgressIndicator()) : ListView(
         padding:const EdgeInsets.fromLTRB(16,16,16,100),children:<Widget>[
-          const Text('وضعیت خروجی‌ها، شدت نور و رنگ را با یک لمس تنظیم کن.'),
+          Text('یک لمس، چند تغییر', style:Theme.of(context).textTheme.headlineMedium),
+          const SizedBox(height:8),
+          const Text('وضعیت خروجی‌ها، شدت نور و رنگ را ذخیره کن و نتیجهٔ واقعی هرکدام را ببین.'),
+          const SizedBox(height:20),
           if (_error!=null) ...<Widget>[Text(_error!),TextButton(onPressed:_load,child:const Text('تلاش دوباره'))],
-          if (_scenes.isEmpty && _error==null) const Padding(padding:EdgeInsets.all(24),child:Text('هنوز سناریویی نساخته‌ای.')),
+          if (_scenes.isEmpty && _error==null) const Card(child:Padding(
+            padding:EdgeInsets.all(24),child:Column(children:<Widget>[
+              Icon(Icons.auto_awesome_motion_outlined,size:40,color:ManisaColors.teal),
+              SizedBox(height:12),
+              Text('هنوز سناریویی نساخته‌ای.'),
+              SizedBox(height:4),
+              Text('برای نمونه، چراغ‌های موردنیاز مطالعه را در یک سناریو ذخیره کن.'),
+            ]))),
           if (widget.runner.running) ...<Widget>[
-            const Padding(padding:EdgeInsets.all(12),child:Text('در حال اجرا؛ نتیجهٔ هر خروجی بررسی می‌شود…')),
+            const DecoratedBox(decoration:BoxDecoration(color:ManisaColors.mint,
+              borderRadius:BorderRadius.all(Radius.circular(16))),child:Padding(
+              padding:EdgeInsets.all(14),child:Text('در حال اجرا؛ نتیجهٔ هر خروجی بررسی می‌شود…'))),
             TextButton(onPressed:() { widget.runner.cancel(); },child:const Text('توقف ادامهٔ اجرا')),
           ],
-          for (final scene in _scenes) Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(
+          for (final scene in _scenes) Padding(padding:const EdgeInsets.only(bottom:12),
+            child:Card(child:Padding(padding:const EdgeInsets.all(18),child:Column(
             crossAxisAlignment:CrossAxisAlignment.start,children:<Widget>[
               Text(scene.name,style:Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height:10),
               for (final action in scene.actions) Padding(padding:const EdgeInsets.symmetric(vertical:4),
                 child:Text('${_label(action)}: ${action.on ? 'روشن' : 'خاموش'}${action.level == null ? '' : ' · نور ${toPersianDigits(matterLevelToPercent(action.level!))}٪'}${action.hue == null ? '' : action.saturation == 0 ? ' · سفید' : ' · رنگ انتخاب‌شده'}'
                   '${_results[scene.id]?[action.key] == null ? '' : ' — ${_status(_results[scene.id]![action.key]!)}'}')),
+              const SizedBox(height:12),
               Wrap(spacing:8,children:<Widget>[
                 FilledButton(onPressed:busy?null:()=>_run(scene),child:const Text('اجرا')),
                 if (_results[scene.id]?.values.any((s)=>s!=SceneActionStatus.confirmed)==true)
@@ -113,7 +129,7 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
               ]),
               if (_results[scene.id]?.values.contains(SceneActionStatus.unknown)==true)
                 const Text('برای نتیجهٔ نامشخص، ممکن است فرمان اجرا شده باشد. تلاش مجدد همان تنظیمات ذخیره‌شده را درخواست می‌کند.'),
-            ]))),
+            ])))),
         ])));
   }
   String _status(SceneActionStatus status) => switch(status) {
@@ -194,11 +210,13 @@ final class _SceneEditorState extends State<_SceneEditor> {
   Widget build(BuildContext context) {
     final available=<String>{for(final d in widget.devices) for(final ep in d.onOffEndpoints) '${d.nodeId}:$ep'};
     return PopScope(canPop:!_saving,child:Scaffold(appBar:AppBar(title:Text(widget.scene==null?'سناریوی جدید':'ویرایش سناریو')),
-      body:ListView(padding:const EdgeInsets.all(16),children:<Widget>[
+      body:ListView(padding:const EdgeInsets.fromLTRB(16,16,16,32),children:<Widget>[
         TextField(controller:_name,enabled:!_saving,maxLength:60,decoration:const InputDecoration(labelText:'نام سناریو')),
+        const SizedBox(height:8),
         const Text('خروجی‌ها را انتخاب کن و وضعیت دلخواه هرکدام را مشخص کن.'),
+        const SizedBox(height:16),
         for(final device in widget.devices) for(final endpoint in device.onOffEndpoints)
-          Column(children:<Widget>[
+          Padding(padding:const EdgeInsets.only(bottom:12),child:Card(child:Column(children:<Widget>[
             CheckboxListTile(value:_actions.containsKey('${device.nodeId}:$endpoint'),
               title:Text('${device.name} · ${device.channelName(endpoint,device.onOffEndpoints.indexOf(endpoint))}'),
               onChanged:_saving ? null : (checked)=>setState(() {
@@ -211,12 +229,12 @@ final class _SceneEditorState extends State<_SceneEditor> {
               onChanged:_saving ? null : (on)=>setState(()=>_actions['${device.nodeId}:$endpoint']=SceneAction(nodeId:device.nodeId,endpoint:endpoint,on:on))),
             if (_actions['${device.nodeId}:$endpoint']?.on == true)
               _lighting(device,endpoint),
-          ]),
+          ]))),
         for(final action in _actions.values.where((a)=>!available.contains(a.key)).toList())
           ListTile(title:const Text('خروجی حذف‌شده یا در دسترس نیست'),
             trailing:IconButton(tooltip:'حذف خروجی از سناریو',icon:const Icon(Icons.close),
               onPressed:()=>setState(()=>_actions.remove(action.key)))),
-        if(_error!=null) Text(_error!),
+        if(_error!=null) ...<Widget>[Text(_error!,style:TextStyle(color:Theme.of(context).colorScheme.error)),const SizedBox(height:8)],
         FilledButton(onPressed:_saving ? null : () async {
           try {
             final scene=ManualScene(id:widget.scene?.id??DateTime.now().microsecondsSinceEpoch.toString(),
