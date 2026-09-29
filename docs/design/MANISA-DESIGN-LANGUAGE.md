@@ -32,6 +32,9 @@ Vazirmatn-first with Noto Sans Arabic/Roboto fallback. Headlines are bold but co
 - **Home health:** one concise status line. Healthy, recovering and needs-attention variants.
 - **Section header:** icon + label + optional count/action. Never a decorative heading alone.
 - **Device card:** identity → truthful availability → primary control → progressive details → contextual menu.
+- **Capability disclosure:** daily actions remain visible; RGB, dimmer and energy
+  controls are grouped under one in-context disclosure labeled in household
+  language. Collapsing details must never hide the current state or on/off action.
 - **State badge:** icon + text. «روشن»، «خاموش»، «در دسترس نیست»، «نیاز به به‌روزرسانی».
 - **Trust notice:** short surface for local execution/recovery rules, with technical detail behind support.
 - **Empty state:** one explanation and one next action; no dead-end illustration requirement.
