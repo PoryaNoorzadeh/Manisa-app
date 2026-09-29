@@ -13,13 +13,29 @@ import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  Future<void> openOutputDetails(
+    WidgetTester tester, {
+    int index = 0,
+  }) async {
+    final advanced = find.text('نور و مصرف');
+    final details = advanced.evaluate().isNotEmpty
+        ? advanced.at(index)
+        : find.text('تنظیمات خروجی').at(index);
+    await tester.ensureVisible(details);
+    await tester.tap(details);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('direct output edit persists by endpoint and preserves other names', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller()..discovery.complete(<int>[2,1]);
     final store = _RenameStore()..fail = false;
     store.device = store.device.copyWith(onOffEndpoints: <int>[2,1],
       channelNames: <int,String>{2: 'راهرو'});
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester, index: 1);
     final edit = find.byKey(const ValueKey('rename-output-7-1'));
     await tester.ensureVisible(edit);
     await tester.pumpAndSettle();
@@ -54,6 +70,8 @@ void main() {
     final store = _RenameStore()..fail = false;
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    expect(find.text('رنگ نور'), findsNothing);
+    await openOutputDetails(tester);
     expect(find.text('رنگ نور'), findsOneWidget);
     expect(controller.colorCommands, isEmpty);
     expect(store.device.colorCapabilities, <int,int>{1: 1});
@@ -98,6 +116,7 @@ void main() {
     await tester.pumpWidget(ManisaDirectApp(controller: controller,
       deviceStore: _RenameStore()..fail = false));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     final pending = Completer<Map<int, DirectColorState>>();
     controller.pendingColorRead = pending;
     await tester.tap(find.byTooltip('بررسی وضعیت'));
@@ -124,6 +143,7 @@ void main() {
     await tester.pumpWidget(ManisaDirectApp(controller: controller,
       deviceStore: _RenameStore()..fail = false));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('رنگ فعلی دریافت نشده'), findsOneWidget);
     expect(find.byKey(const ValueKey('color-hue')), findsNothing);
     expect(find.byKey(const ValueKey('confirmed-color')), findsNothing);
@@ -145,6 +165,7 @@ void main() {
       ManisaDirectApp(controller: controller, deviceStore: store),
     );
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
 
     expect(find.text('مصرف برق'), findsOneWidget);
     expect(find.text('توان فعلی'), findsOneWidget);
@@ -221,6 +242,7 @@ void main() {
 
       await showApp();
       await tester.pumpAndSettle();
+      await openOutputDetails(tester);
       expect(store.device.onOffEndpoints, <int>[2, 1]);
       expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
       expect(find.text('راهرو'), findsWidgets);
@@ -307,6 +329,7 @@ void main() {
     final store = _RenameStore()..fail = false;
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('شدت نور'), findsOneWidget);
     expect(find.text('۵۰٪'), findsOneWidget);
     expect(store.device.levelEndpoints, <int>[1]);
@@ -342,6 +365,7 @@ void main() {
     controller.discovery.complete(<int>[1]);
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('شدت نور دریافت نشده'), findsOneWidget);
     expect(find.byType(Slider), findsNothing);
     expect(controller.levelCommands, isEmpty);

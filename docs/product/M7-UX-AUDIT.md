@@ -78,6 +78,30 @@ Choose outputs → set desired state → optionally set brightness/color → rev
 - Existing commissioning, readback, deletion, recovery and automation safety behavior remains intact.
 - Text scaling to 200% does not hide primary actions.
 
+## Physical-device review — 2026-09-29
+
+Ten screenshots from the Android build confirmed that the three-destination
+architecture works in Persian and that Home, Routines and Settings no longer
+compete with each other. The QR, preparation and Wi-Fi stages are also complete
+and understandable without Matter terminology.
+
+The main remaining hierarchy defect was inside a capable device card: channel
+rename, RGB, dimmer and energy controls were all expanded on Home. A three-output
+device therefore occupied several screens and made the primary on/off action
+harder to scan. The accepted correction is progressive disclosure:
+
+- The device header exposes identity, room/output count and an explicit
+  availability badge.
+- Each output always exposes its name, truthful state, favorite action and
+  switch/retry action.
+- Lighting and energy controls start collapsed behind «نور و مصرف» and expand
+  in place. No capability or safety behavior is removed.
+- The add-device flow gains a persistent three-segment progress indicator so
+  users know where they are before granting permissions or entering Wi-Fi.
+
+This closes the visual-hierarchy issue found during M7.2; final acceptance still
+requires a build on the physical phone and 200% text-scale screenshots.
+
 ## Sources
 
 - Apple Home user guide: https://support.apple.com/guide/iphone/intro-to-home-iph22d98bbca/ios

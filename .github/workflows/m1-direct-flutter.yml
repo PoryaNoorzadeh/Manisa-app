@@ -198,7 +198,11 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M7.1 product experience foundation
+          Manisa M7.2 physical-device UX refinement
+          - Compact daily device controls based on Android screenshot review
+          - Explicit available, pending and unavailable device badges
+          - RGB, dimmer and energy details disclosed only when requested
+          - Three-stage commissioning progress indicator
           - Product-wide Persian-first navigation and Manisa visual language
           - Dedicated Home, routines and settings responsibilities
           - Truthful home health for healthy, unavailable and recovering states
