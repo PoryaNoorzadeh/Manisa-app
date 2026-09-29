@@ -2370,13 +2370,14 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: value == true && !widget.unavailable
-              ? ManisaColors.mint.withValues(alpha: .32)
-              : ManisaColors.canvas,
+      child: Material(
+        color: value == true && !widget.unavailable
+            ? ManisaColors.mint.withValues(alpha: .32)
+            : ManisaColors.canvas,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(
+          side: BorderSide(
             color: widget.unavailable
                 ? ManisaColors.warning.withValues(alpha: .4)
                 : ManisaColors.outline,
