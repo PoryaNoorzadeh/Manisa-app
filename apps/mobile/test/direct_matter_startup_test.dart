@@ -27,6 +27,8 @@ void main() {
   }
 
   testWidgets('direct output edit persists by endpoint and preserves other names', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller()..discovery.complete(<int>[2,1]);
     final store = _RenameStore()..fail = false;
     store.device = store.device.copyWith(onOffEndpoints: <int>[2,1],
