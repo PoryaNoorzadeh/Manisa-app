@@ -2082,6 +2082,12 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
+                        device.productLabel,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: ManisaColors.mutedInk,
+                        ),
+                      ),
+                      Text(
                         device.onOffEndpoints.isEmpty && device.sensorCapabilities.isNotEmpty
                             ? (roomName ?? 'بدون اتاق')
                             : roomName == null
@@ -2340,7 +2346,7 @@ final class _DeviceOutputControl extends StatefulWidget {
 final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
   bool _detailsOpen = false;
 
-  bool get _hasDetails =>
+  bool get _hasAdvancedDetails =>
       widget.device.colorCapabilities.containsKey(widget.endpoint) ||
       widget.device.levelEndpoints.contains(widget.endpoint) ||
       widget.device.measurementCapabilities.containsKey(widget.endpoint);
@@ -2413,7 +2419,7 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                 onChanged: enabled ? widget.onChanged : null,
                 secondary: _favoriteButton(),
               ),
-            if (_hasDetails) ...<Widget>[
+            ...<Widget>[
               const Divider(),
               Semantics(
                 button: true,
@@ -2435,7 +2441,9 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'نور و مصرف',
+                            _hasAdvancedDetails
+                                ? 'نور و مصرف'
+                                : 'تنظیمات خروجی',
                             style: Theme.of(context).textTheme.labelLarge?.copyWith(
                               color: ManisaColors.tealPressed,
                             ),
@@ -2451,13 +2459,11 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                   ),
                 ),
               ),
-              AnimatedCrossFade(
+              AnimatedSize(
                 duration: const Duration(milliseconds: 180),
-                crossFadeState: _detailsOpen
-                    ? CrossFadeState.showSecond
-                    : CrossFadeState.showFirst,
-                firstChild: const SizedBox(width: double.infinity),
-                secondChild: Padding(
+                child: !_detailsOpen
+                    ? const SizedBox(width: double.infinity)
+                    : Padding(
                   padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 12, 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

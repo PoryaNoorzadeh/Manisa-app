@@ -14,7 +14,10 @@ import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
   Future<void> openOutputDetails(WidgetTester tester) async {
-    final details = find.text('نور و مصرف').first;
+    final advanced = find.text('نور و مصرف');
+    final details = advanced.evaluate().isNotEmpty
+        ? advanced.first
+        : find.text('تنظیمات خروجی').first;
     await tester.ensureVisible(details);
     await tester.tap(details);
     await tester.pumpAndSettle();
