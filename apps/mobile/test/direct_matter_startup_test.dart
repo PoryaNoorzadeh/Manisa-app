@@ -13,11 +13,14 @@ import 'package:manisa_mobile/src/matter/home_profile_store.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
-  Future<void> openOutputDetails(WidgetTester tester) async {
+  Future<void> openOutputDetails(
+    WidgetTester tester, {
+    int index = 0,
+  }) async {
     final advanced = find.text('نور و مصرف');
     final details = advanced.evaluate().isNotEmpty
-        ? advanced.first
-        : find.text('تنظیمات خروجی').first;
+        ? advanced.at(index)
+        : find.text('تنظیمات خروجی').at(index);
     await tester.ensureVisible(details);
     await tester.tap(details);
     await tester.pumpAndSettle();
@@ -30,7 +33,7 @@ void main() {
       channelNames: <int,String>{2: 'راهرو'});
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
-    await openOutputDetails(tester);
+    await openOutputDetails(tester, index: 1);
     final edit = find.byKey(const ValueKey('rename-output-7-1'));
     await tester.ensureVisible(edit);
     await tester.pumpAndSettle();
