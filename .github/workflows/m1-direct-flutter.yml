@@ -130,6 +130,8 @@ jobs:
           mkdir -p apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile
           cp apps/mobile/native/android/MainActivityBle.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/MainActivity.kt
+          cp apps/mobile/native/android/ManisaDiscovery.kt \
+            apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/
           cp apps/mobile/native/android/ManisaSensorCodec.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/ManisaSensorCodec.kt
           cp apps/mobile/native/android/GenericChipDeviceListener.kt \
@@ -163,6 +165,9 @@ jobs:
               if token not in text:
                   raise SystemExit('Unexpected Flutter AndroidManifest format')
               text = text.replace(token, token + permissions, 1)
+          text = text.replace('android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"', 'android.permission.ACCESS_FINE_LOCATION"')
+          text = text.replace('<application', '<uses-permission android:name="android.permission.NFC" /><uses-feature android:name="android.hardware.nfc" android:required="false" /><application', 1)
+          text = text.replace('<application', '<application android:allowBackup="false"', 1)
           manifest.write_text(text)
           PY
 

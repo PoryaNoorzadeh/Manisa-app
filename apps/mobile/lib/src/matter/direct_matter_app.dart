@@ -8,6 +8,7 @@ import '../core/persian_digits.dart';
 import '../design/manisa_theme.dart';
 import 'color_control.dart';
 import 'color_control_widget.dart';
+import 'device_share_screen.dart';
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
 import 'electrical_measurement.dart';
@@ -16,6 +17,7 @@ import 'home_profile_store.dart';
 import 'level_control.dart';
 import 'manual_scene.dart';
 import 'manual_scene_screen.dart';
+import 'onboarding_services.dart';
 import 'power_source_widget.dart';
 import 'room_store.dart';
 import 'scene_automation.dart';
@@ -1572,6 +1574,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             onRename: () => _renameDevice(device),
             onAssignRoom: () => _assignRoom(device),
             onManageChannels: () => _manageChannels(device),
+            onShare: () => Navigator.of(context).push<void>(MaterialPageRoute(
+              builder: (_) => DeviceShareScreen(nodeId: device.nodeId, name: device.name))),
             onRefresh: () => _refreshDevice(device),
             onToggleFavorite: (endpoint) => _toggleFavorite(device, endpoint),
           ),
@@ -2012,6 +2016,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.onRename,
     required this.onAssignRoom,
     required this.onManageChannels,
+    required this.onShare,
     required this.onRefresh,
     required this.onToggleFavorite,
   });
@@ -2038,6 +2043,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final VoidCallback onRename;
   final VoidCallback onAssignRoom;
   final VoidCallback onManageChannels;
+  final VoidCallback onShare;
   final VoidCallback onRefresh;
   final void Function(int endpoint) onToggleFavorite;
 
@@ -2112,6 +2118,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                     if (value == 'rename') onRename();
                     if (value == 'room') onAssignRoom();
                     if (value == 'channels') onManageChannels();
+                    if (value == 'share') onShare();
                   },
                   itemBuilder: (_) => <PopupMenuEntry<String>>[
                     const PopupMenuItem(
@@ -2119,6 +2126,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                       child: Text('تغییر نام وسیله'),
                     ),
                     PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
+                    PopupMenuItem(value: 'share', enabled: !unavailable, child: Text('اشتراک‌گذاری')),
                     if (device.onOffEndpoints.isNotEmpty) const PopupMenuItem(
                       value: 'channels',
                       child: Text('نام خروجی‌ها'),
@@ -2807,10 +2815,84 @@ final class _DirectMatterAddDeviceScreenState
   String _stage = 'کد روی وسیله را اسکن کن';
   int _step = 0;
   bool _showPassword = false;
+  final _credentials = const WifiCredentialStore();
+  bool _rememberWifi = true;
+  bool _discovering = false;
+  bool _sharedDevice = false;
+  int? _bleDiscriminator;
+  String? _bleName;
+  String? _discoveryNotice;
   DirectMatterDevice? _pendingDevice;
 
   @override
+  void initState() { super.initState(); _restoreWifi(); }
+
+  Future<void> _restoreWifi() async {
+    try {
+      final ssid = await _credentials.lastSsid();
+      if (ssid == null || !mounted || _ssid.text.isNotEmpty) return;
+      await _selectWifi(ssid);
+    } catch (_) { /* Secure storage failure must not block manual commissioning. */ }
+  }
+
+  Future<void> _selectWifi(String ssid) async {
+    _ssid.text = ssid;
+    _password.clear();
+    try {
+      final password = await _credentials.password(ssid);
+      if (mounted && _ssid.text == ssid) setState(() => _password.text = password ?? '');
+    } catch (_) {
+      if (mounted) setState(() => _discoveryNotice = 'رمز ذخیره‌شده خوانده نشد؛ رمز را وارد کن.');
+    }
+  }
+
+  Future<void> _discover(String method) async {
+    if (_discovering) return;
+    setState(() { _discovering = true; _error = null;
+      _discoveryNotice = method == 'readMatterNfc' ? 'گوشی را نزدیک تگ NFC وسیله نگه دار…' : 'در حال جست‌وجو…'; });
+    try {
+      final response = await onboardingChannel.invokeMethod<Object?>(method);
+      if (!mounted) return;
+      if (method == 'readMatterNfc') {
+        setState(() { _payload.text = response as String; _discoveryNotice = 'کد NFC دریافت شد.'; });
+        return;
+      }
+      final isWifi = method == 'scanWifi';
+      final wifiResponse = isWifi ? response as Map<Object?, Object?> : null;
+      final rawItems = (isWifi ? wifiResponse!['networks'] : response) as List<Object?>;
+      final items = rawItems.cast<Map<Object?, Object?>>();
+      setState(() => _discoveryNotice = items.isEmpty
+          ? (isWifi ? 'شبکه‌ای پیدا نشد؛ دوباره جست‌وجو کن یا نام را دستی وارد کن.' : 'وسیله‌ای پیدا نشد؛ آن را در حالت اتصال قرار بده.')
+          : isWifi && wifiResponse!['fresh'] != true ? 'آخرین شبکه‌های دیده‌شده؛ اسکن تازه فعلاً در دسترس نیست.' : null);
+      if (items.isEmpty) return;
+      final selected = await showModalBottomSheet<Map<Object?, Object?>>(
+        context: context, isScrollControlled: true,
+        builder: (context) => SafeArea(child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * .6,
+          child: Column(children: [
+            Padding(padding: const EdgeInsets.all(16), child: Text(isWifi ? 'انتخاب وای‌فای' : 'وسایل Matter نزدیک')),
+            Expanded(child: ListView(children: [for (final item in items)
+              ListTile(leading: Icon(isWifi ? Icons.wifi : Icons.bluetooth),
+                title: Text((isWifi ? item['ssid'] : item['name']) as String),
+                subtitle: Text(isWifi ? ((item['frequency'] as int) < 3000 ? '۲٫۴ گیگاهرتز' : '۵ یا ۶ گیگاهرتز؛ سازگاری وسیله را بررسی کن')
+                    : 'شناسهٔ اتصال: ${toPersianDigits(item['discriminator'] as int)}'),
+                onTap: () => Navigator.pop(context, item)),
+            ])),
+          ]),
+        )),
+      );
+      if (selected == null || !mounted) return;
+      if (isWifi) { await _selectWifi(selected['ssid'] as String); }
+      else { setState(() { _bleDiscriminator = selected['discriminator'] as int;
+        _bleName = selected['name'] as String;
+        _discoveryNotice = 'وسیله انتخاب شد؛ برای تأیید امن، QR یا تگ NFC همان وسیله را بخوان.'; }); }
+    } catch (error) { if (mounted) setState(() => _error = onboardingError(error)); }
+    finally { if (mounted) setState(() => _discovering = false); }
+  }
+
+  @override
   void dispose() {
+    if (_discovering) unawaited(onboardingChannel.invokeMethod<void>('cancelDiscovery').catchError((Object _) {}));
     _name.dispose();
     _payload.dispose();
     _ssid.dispose();
@@ -2835,7 +2917,7 @@ final class _DirectMatterAddDeviceScreenState
     final name = _name.text.trim();
     final payload = _payload.text.trim();
     final ssid = _ssid.text.trim();
-    if (name.isEmpty || !payload.startsWith('MT:') || ssid.isEmpty) {
+    if (name.isEmpty || !payload.startsWith('MT:') || (!_sharedDevice && ssid.isEmpty)) {
       setState(() {
         _error = 'نام وسیله، کد اتصال و نام وای‌فای را بررسی کن.';
       });
@@ -2851,11 +2933,23 @@ final class _DirectMatterAddDeviceScreenState
     });
     try {
       if (_pendingDevice == null) {
-        final result = await widget.controller.commissionWifi(
+        final DirectMatterCommissionResult result;
+        if (_sharedDevice || _bleDiscriminator != null) {
+          final response = await onboardingChannel.invokeMapMethod<Object?, Object?>('commissionWifi', {
+            'setupPayload': payload, 'ssid': _sharedDevice ? '' : ssid,
+            'password': _sharedDevice ? '' : _password.text,
+            'onNetwork': _sharedDevice,
+            if (!_sharedDevice) 'expectedDiscriminator': _bleDiscriminator,
+          });
+          if (response == null) throw const FormatException('Missing commissioning result');
+          result = DirectMatterCommissionResult.fromMap(response);
+        } else {
+          result = await widget.controller.commissionWifi(
           setupPayload: payload,
           ssid: ssid,
           password: _password.text,
         );
+        }
         _pendingDevice = DirectMatterDevice(
           nodeId: result.nodeId,
           name: name,
@@ -2864,6 +2958,14 @@ final class _DirectMatterAddDeviceScreenState
       }
       final device = _pendingDevice!;
       await widget.deviceStore.save(device);
+      if (!_sharedDevice) {
+        try {
+          if (_rememberWifi) { await _credentials.remember(ssid, _password.text); }
+          else { await _credentials.forget(ssid); }
+        } catch (_) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('وسیله اضافه شد؛ ذخیرهٔ امن رمز انجام نشد.')));
+        }
+      }
       if (mounted) {
         setState(() {
           _stage = 'وسیله اضافه شد';
@@ -2900,6 +3002,7 @@ final class _DirectMatterAddDeviceScreenState
       _step++;
       _error = null;
     });
+    if (_step == 2 && !_sharedDevice) unawaited(_discover('scanWifi'));
   }
 
   @override
@@ -2942,11 +3045,26 @@ final class _DirectMatterAddDeviceScreenState
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _scan,
+                onPressed: _discovering ? null : _scan,
                 icon: const Icon(Icons.qr_code_scanner),
                 label: const Text('اسکن کد وسیله'),
               ),
               const SizedBox(height: 16),
+              SwitchListTile(contentPadding: EdgeInsets.zero,
+                title: const Text('وسیلهٔ اشتراکی'),
+                subtitle: const Text('اسکن QR موقت از گوشی صاحب وسیله؛ بدون ورود رمز وای‌فای'),
+                value: _sharedDevice, onChanged: _discovering ? null : (value) => setState(() {
+                  _sharedDevice = value; _bleDiscriminator = null; _bleName = null;
+                })),
+              if (!_sharedDevice) ...[
+                OutlinedButton.icon(onPressed: _discovering ? null : () => _discover('readMatterNfc'),
+                  icon: const Icon(Icons.nfc), label: const Text('خواندن تگ NFC')),
+                OutlinedButton.icon(onPressed: _discovering ? null : () => _discover('scanMatterBle'),
+                  icon: const Icon(Icons.bluetooth_searching), label: const Text('یافتن با بلوتوث')),
+                if (_bleName != null) ListTile(title: Text(_bleName!),
+                  trailing: IconButton(tooltip: 'لغو انتخاب', icon: const Icon(Icons.close),
+                    onPressed: () => setState(() { _bleName = null; _bleDiscriminator = null; }))),
+              ],
               TextField(
                 controller: _payload,
                 textDirection: TextDirection.ltr,
@@ -2962,23 +3080,27 @@ final class _DirectMatterAddDeviceScreenState
             if (_step == 1) ...<Widget>[
               const Icon(Icons.bluetooth_searching, size: 64),
               const SizedBox(height: 16),
-              const Text('وسیله روشن باشد و گوشی نزدیک آن بماند.'),
+              Text(_sharedDevice ? 'به همان شبکهٔ وسیله وصل باش؛ کد اشتراک‌گذاری باید هنوز معتبر باشد. نیازی به بازنشانی وسیله نیست.' : 'وسیله روشن باشد و گوشی نزدیک آن بماند.'),
               const SizedBox(height: 16),
-              const Text(
+              if (!_sharedDevice) const Text(
                 'طبق راهنمای وسیله، آن را در حالت اتصال قرار بده. بازنشانی کارخانه با حالت اتصال فرق دارد.',
               ),
               const SizedBox(height: 16),
-              const Text(
+              if (!_sharedDevice) const Text(
                 'بلوتوث و وای‌فای را روشن کن. هنگام درخواست دسترسی به دستگاه‌های نزدیک، اجازه بده؛ در نسخه‌های قدیمی Android ممکن است اجازهٔ موقعیت لازم باشد.',
               ),
             ],
             if (_step == 2) ...<Widget>[
+              if (!_sharedDevice) ...[
               const Text(
-                'نام و رمز شبکه‌ای را وارد کن که وسیله باید به آن وصل شود.',
+                'شبکهٔ خانه را انتخاب کن. برای بیشتر وسایل، شبکهٔ ۲٫۴ گیگاهرتز مناسب است.',
               ),
+              OutlinedButton.icon(onPressed: _discovering || _adding ? null : () => _discover('scanWifi'),
+                icon: const Icon(Icons.wifi_find), label: const Text('نمایش شبکه‌های وای‌فای')),
               const SizedBox(height: 20),
               TextField(
                 controller: _ssid,
+                onChanged: (_) { _password.clear(); },
                 enabled: !_adding && _pendingDevice == null,
                 textDirection: TextDirection.ltr,
                 autocorrect: false,
@@ -3005,6 +3127,16 @@ final class _DirectMatterAddDeviceScreenState
                   ),
                 ),
               ),
+              CheckboxListTile(contentPadding: EdgeInsets.zero, value: _rememberWifi,
+                title: const Text('رمز روی این گوشی به‌خاطر سپرده شود'),
+                onChanged: _adding ? null : (value) => setState(() => _rememberWifi = value ?? false)),
+              TextButton(onPressed: _adding ? null : () async {
+                try {
+                  await _credentials.forget(_ssid.text);
+                  if (mounted) setState(() { _password.clear(); _rememberWifi = false; _discoveryNotice = 'رمز ذخیره‌شده پاک شد.'; });
+                } catch (_) { if (mounted) setState(() => _error = 'حذف رمز انجام نشد؛ دوباره تلاش کن.'); }
+              }, child: const Text('پاک‌کردن رمز ذخیره‌شدهٔ این شبکه')),
+              ],
               const SizedBox(height: 20),
               TextField(
                 controller: _name,
@@ -3019,6 +3151,11 @@ final class _DirectMatterAddDeviceScreenState
               const SizedBox(height: 12),
               Semantics(liveRegion: true, child: Text(_stage)),
             ],
+            if (_discovering) ...[
+              const LinearProgressIndicator(),
+              TextButton(onPressed: () => onboardingChannel.invokeMethod<void>('cancelDiscovery'), child: const Text('لغو جست‌وجو')),
+            ],
+            if (_discoveryNotice != null) Text(_discoveryNotice!),
             if (_error != null) ...<Widget>[
               const SizedBox(height: 16),
               _MatterErrorNotice(error: _error!),
@@ -3026,7 +3163,7 @@ final class _DirectMatterAddDeviceScreenState
             const SizedBox(height: 24),
             if (_step < 2)
               OutlinedButton(
-                onPressed: _next,
+                onPressed: _discovering ? null : _next,
                 child: const Padding(
                   padding: EdgeInsets.all(14),
                   child: Text('ادامه'),
@@ -3034,7 +3171,7 @@ final class _DirectMatterAddDeviceScreenState
               )
             else
               FilledButton.icon(
-                onPressed: _adding ? null : _commission,
+                onPressed: _adding || _discovering ? null : _commission,
                 icon: const Icon(Icons.add_link),
                 label: Text(
                   _adding

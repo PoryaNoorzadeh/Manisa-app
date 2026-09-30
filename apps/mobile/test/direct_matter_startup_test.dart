@@ -556,13 +556,16 @@ void main() {
     );
     await tester.tap(find.text('افزودن وسیله'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.textContaining('کد QR معتبر'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'MT:TEST');
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.text('آماده‌کردن وسیله'), findsOneWidget);
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.text('نام وای‌فای'), findsOneWidget);
