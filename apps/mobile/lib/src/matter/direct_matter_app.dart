@@ -2865,6 +2865,9 @@ final class _DirectMatterAddDeviceScreenState
           ? (isWifi ? 'شبکه‌ای پیدا نشد؛ دوباره جست‌وجو کن یا نام را دستی وارد کن.' : 'وسیله‌ای پیدا نشد؛ آن را در حالت اتصال قرار بده.')
           : isWifi && wifiResponse!['fresh'] != true ? 'آخرین شبکه‌های دیده‌شده؛ اسکن تازه فعلاً در دسترس نیست.' : null);
       if (items.isEmpty) return;
+      // Radio discovery is finished; choosing a result must not leave a spinner
+      // animating behind the modal or block the next stage indefinitely.
+      setState(() => _discovering = false);
       final selected = await showModalBottomSheet<Map<Object?, Object?>>(
         context: context, isScrollControlled: true,
         builder: (context) => SafeArea(child: SizedBox(

@@ -585,6 +585,12 @@ void main() {
   testWidgets('Persian onboarding validates QR before asking for Wi-Fi', (
     tester,
   ) async {
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, (call) async =>
+            call.method == 'scanWifi' ? <String, Object?>{'fresh': true, 'networks': <Object?>[]} : null);
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, null));
     await tester.binding.setSurfaceSize(const Size(800, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller();
