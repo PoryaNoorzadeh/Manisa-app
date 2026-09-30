@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/color_control.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
@@ -10,9 +11,49 @@ import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
 import 'package:manisa_mobile/src/matter/electrical_measurement.dart';
 import 'package:manisa_mobile/src/matter/favorite_store.dart';
 import 'package:manisa_mobile/src/matter/home_profile_store.dart';
+import 'package:manisa_mobile/src/matter/onboarding_services.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  testWidgets('NFC payload and Wi-Fi selection reuse securely stored password', (tester) async {
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    const credentials = WifiCredentialStore();
+    await credentials.remember('Home-24', 'saved-password');
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, (call) async {
+      if (call.method == 'readMatterNfc') return 'MT:TEST';
+      if (call.method == 'scanWifi') return <String, Object?>{
+        'fresh': true, 'networks': <Object?>[
+          <String, Object?>{'ssid': 'Home-24', 'frequency': 2412, 'rssi': -40, 'secured': true},
+        ],
+      };
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, null));
+    final controller = _Controller();
+    await tester.pumpWidget(MaterialApp(home: DirectMatterAddDeviceScreen(
+      controller: controller, deviceStore: _Store())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('خواندن تگ NFC'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, 'MT:TEST');
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home-24').last);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField).at(0)).controller!.text, 'Home-24');
+    final password = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(password.controller!.text, 'saved-password');
+    expect(password.obscureText, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
   Future<void> openOutputDetails(
     WidgetTester tester, {
     int index = 0,
@@ -544,6 +585,8 @@ void main() {
   testWidgets('Persian onboarding validates QR before asking for Wi-Fi', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     await tester.pumpWidget(

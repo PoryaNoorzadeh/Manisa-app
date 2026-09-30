@@ -203,7 +203,13 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M7.2 physical-device UX refinement
+          Manisa M8 onboarding and sharing candidate - physical acceptance pending
+          - Wi-Fi network list with runtime permissions and hidden-network fallback
+          - Secure on-device Wi-Fi password memory and explicit forget action
+          - NFC Matter NDEF tag reading and filtered Matter BLE discovery
+          - BLE choice requires QR/NFC proof and matching discriminator
+          - Temporary Matter multi-admin QR and on-network receiver onboarding
+          - Full Persian weekday labels; prioritized screenshot audit in docs/product
           - Compact daily device controls based on Android screenshot review
           - Explicit available, pending and unavailable device badges
           - RGB, dimmer and energy details disclosed only when requested
