@@ -130,6 +130,8 @@ jobs:
           mkdir -p apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile
           cp apps/mobile/native/android/MainActivityBle.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/MainActivity.kt
+          cp apps/mobile/native/android/ManisaDiscovery.kt \
+            apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/
           cp apps/mobile/native/android/ManisaSensorCodec.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/ManisaSensorCodec.kt
           cp apps/mobile/native/android/GenericChipDeviceListener.kt \
@@ -163,6 +165,9 @@ jobs:
               if token not in text:
                   raise SystemExit('Unexpected Flutter AndroidManifest format')
               text = text.replace(token, token + permissions, 1)
+          text = text.replace('android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"', 'android.permission.ACCESS_FINE_LOCATION"')
+          text = text.replace('<application', '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" /><uses-permission android:name="android.permission.NFC" /><uses-feature android:name="android.hardware.nfc" android:required="false" /><application', 1)
+          text = text.replace('<application', '<application android:allowBackup="false"', 1)
           manifest.write_text(text)
           PY
 
@@ -198,7 +203,17 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M7.1 product experience foundation
+          Manisa M8 onboarding and sharing candidate - physical acceptance pending
+          - Wi-Fi network list with runtime permissions and hidden-network fallback
+          - Secure on-device Wi-Fi password memory and explicit forget action
+          - NFC Matter NDEF tag reading and filtered Matter BLE discovery
+          - BLE choice requires QR/NFC proof and matching discriminator
+          - Temporary Matter multi-admin QR and on-network receiver onboarding
+          - Full Persian weekday labels; prioritized screenshot audit in docs/product
+          - Compact daily device controls based on Android screenshot review
+          - Explicit available, pending and unavailable device badges
+          - RGB, dimmer and energy details disclosed only when requested
+          - Three-stage commissioning progress indicator
           - Product-wide Persian-first navigation and Manisa visual language
           - Dedicated Home, routines and settings responsibilities
           - Truthful home health for healthy, unavailable and recovering states

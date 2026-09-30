@@ -17,6 +17,7 @@ import chip.devicecontroller.DeviceAttestation
 import chip.devicecontroller.GetConnectedDeviceCallbackJni.GetConnectedDeviceCallback
 import chip.devicecontroller.InvokeCallback
 import chip.devicecontroller.NetworkCredentials
+import chip.devicecontroller.OpenCommissioningCallback
 import chip.devicecontroller.UnpairDeviceCallback
 import chip.devicecontroller.ReportCallback
 import chip.devicecontroller.ResubscriptionAttemptCallback
@@ -96,6 +97,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         val ssid: String,
         val password: String,
         val result: MethodChannel.Result,
+        val onNetwork: Boolean = false,
+        val expectedDiscriminator: Int? = null,
     )
 
     private lateinit var platform: AndroidChipPlatform
@@ -126,6 +129,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private var pendingCommission: MethodChannel.Result? = null
     private var pendingCommissionNodeId: Long = 0
     private var pendingPermissionCommission: CommissionRequest? = null
+    private val discovery by lazy { ManisaDiscovery(this) }
+    private val sharingNodes = mutableSetOf<Long>()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -237,6 +242,11 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             when (call.method) {
                 "isSupported" -> result.success(true)
                 "commissionWifi" -> commissionWifi(call, result)
+                "scanWifi" -> discovery.wifi(result)
+                "scanMatterBle" -> discovery.bluetooth(result)
+                "readMatterNfc" -> discovery.nfc(result)
+                "cancelDiscovery" -> { discovery.cancel(); result.success(null) }
+                "openSharingWindow" -> withNodeId(call, result) { nodeId -> openSharingWindow(nodeId, result) }
                 "discoverOnOffEndpoints" -> withNodeId(call, result) { nodeId ->
                     discoverOnOffEndpoints(nodeId, result, subscribe = true)
                 }
@@ -342,7 +352,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         val setupPayload = call.argument<String>("setupPayload")?.trim().orEmpty()
         val ssid = call.argument<String>("ssid")?.trim().orEmpty()
         val password = call.argument<String>("password").orEmpty()
-        if (!setupPayload.startsWith("MT:", ignoreCase = true) || ssid.isEmpty()) {
+        val onNetwork = call.argument<Boolean>("onNetwork") == true
+        if (!setupPayload.startsWith("MT:", ignoreCase = true) || (!onNetwork && ssid.isEmpty())) {
             result.error(
                 "invalid_args",
                 "Valid Matter setup payload and Wi-Fi SSID are required",
@@ -351,8 +362,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             return
         }
 
-        val request = CommissionRequest(setupPayload, ssid, password, result)
-        val missingPermissions = requiredMatterPermissions().filter {
+        val request = CommissionRequest(setupPayload, ssid, password, result, onNetwork,
+            call.argument<Number>("expectedDiscriminator")?.toInt())
+        val missingPermissions = (if (onNetwork) emptyList() else requiredMatterPermissions()).filter {
             checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
         }
         if (missingPermissions.isNotEmpty()) {
@@ -369,6 +381,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (discovery.permissionsResult(requestCode, grantResults)) return
         if (requestCode != PERMISSION_REQUEST_MATTER) return
 
         val pending = pendingPermissionCommission ?: return
@@ -410,6 +423,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
 
         val nodeId = nextNodeId()
+        if (request.expectedDiscriminator != null && payload.getLongDiscriminatorValue() != request.expectedDiscriminator) {
+            request.result.error("device_mismatch", "کد اسکن‌شده با وسیلهٔ انتخاب‌شده هماهنگ نیست.", null)
+            return
+        }
         val network = NetworkCredentials.forWiFi(
             NetworkCredentials.WiFiCredentials(request.ssid, request.password),
         )
@@ -422,6 +439,18 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         pendingCommission = request.result
         pendingCommissionNodeId = nodeId
         controller.setCompletionListener(commissioningListener)
+
+        if (request.onNetwork) {
+            try {
+                controller.pairDeviceWithCode(nodeId, request.setupPayload, false, true,
+                    CommissionParameters.Builder().build())
+            } catch (_: Exception) {
+                pendingCommission = null
+                pendingCommissionNodeId = 0
+                request.result.error("network_commission_failed", "اتصال انجام نشد؛ هر دو گوشی و وسیله باید روی یک شبکه باشند.", null)
+            }
+            return
+        }
 
         val discriminator = payload.getLongDiscriminatorValue()
         val isShortDiscriminator = payload.hasShortDiscriminator
@@ -782,7 +811,46 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
     }
 
+    private fun openSharingWindow(nodeId: Long, result: MethodChannel.Result) {
+        if (!sharingNodes.add(nodeId)) { result.error("sharing_busy", "در حال آماده‌سازی اشتراک‌گذاری.", null); return }
+        var completed = false
+        fun complete(value: Any?, code: String? = null) {
+            runOnUiThread {
+                if (!completed) {
+                    completed = true
+                    sharingNodes.remove(nodeId)
+                    if (code == null) result.success(value)
+                    else result.error(code, "اشتراک‌گذاری انجام نشد؛ اتصال و ظرفیت کاربران وسیله را بررسی کن.", null)
+                }
+            }
+        }
+        sensorHandler.postDelayed({ complete(null, "sharing_timeout") }, 25000)
+        controller.getConnectedDevicePointer(nodeId, object : GetConnectedDeviceCallback {
+            override fun onDeviceConnected(devicePointer: Long) {
+                if (completed) return
+                try {
+                    val started = controller.openPairingWindowWithPINCallback(devicePointer, 180, 1000L,
+                        java.security.SecureRandom().nextInt(4096), null,
+                        object : OpenCommissioningCallback {
+                            override fun onError(status: Int, deviceId: Long) { complete(null, "sharing_failed") }
+                            override fun onSuccess(deviceId: Long, manualPairingCode: String, qrCode: String) {
+                                complete(mapOf("qrCode" to qrCode, "expiresAt" to (System.currentTimeMillis() + 170000L)))
+                            }
+                        })
+                    if (!started) complete(null, "sharing_failed")
+                } catch (_: Exception) { complete(null, "sharing_failed") }
+            }
+            override fun onConnectionFailure(nodeId: Long, error: Exception) { complete(null, "sharing_unreachable") }
+        })
+    }
+
+    override fun onStop() {
+        discovery.cancel()
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        discovery.cancel()
         eventSink = null
         levelEventSink = null
         colorEventSink = null

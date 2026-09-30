@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/color_control.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
@@ -10,16 +11,72 @@ import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
 import 'package:manisa_mobile/src/matter/electrical_measurement.dart';
 import 'package:manisa_mobile/src/matter/favorite_store.dart';
 import 'package:manisa_mobile/src/matter/home_profile_store.dart';
+import 'package:manisa_mobile/src/matter/onboarding_services.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  testWidgets('NFC payload and Wi-Fi selection reuse securely stored password', (tester) async {
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    const credentials = WifiCredentialStore();
+    await credentials.remember('Home-24', 'saved-password');
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, (call) async {
+      if (call.method == 'readMatterNfc') return 'MT:TEST';
+      if (call.method == 'scanWifi') return <String, Object?>{
+        'fresh': true, 'networks': <Object?>[
+          <String, Object?>{'ssid': 'Home-24', 'frequency': 2412, 'rssi': -40, 'secured': true},
+        ],
+      };
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, null));
+    final controller = _Controller();
+    await tester.pumpWidget(MaterialApp(home: DirectMatterAddDeviceScreen(
+      controller: controller, deviceStore: _Store())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('خواندن تگ NFC'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, 'MT:TEST');
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home-24').last);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField).at(0)).controller!.text, 'Home-24');
+    final password = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(password.controller!.text, 'saved-password');
+    expect(password.obscureText, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  Future<void> openOutputDetails(
+    WidgetTester tester, {
+    int index = 0,
+  }) async {
+    final advanced = find.text('نور و مصرف');
+    final details = advanced.evaluate().isNotEmpty
+        ? advanced.at(index)
+        : find.text('تنظیمات خروجی').at(index);
+    await tester.ensureVisible(details);
+    await tester.tap(details);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('direct output edit persists by endpoint and preserves other names', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller()..discovery.complete(<int>[2,1]);
     final store = _RenameStore()..fail = false;
     store.device = store.device.copyWith(onOffEndpoints: <int>[2,1],
       channelNames: <int,String>{2: 'راهرو'});
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester, index: 1);
     final edit = find.byKey(const ValueKey('rename-output-7-1'));
     await tester.ensureVisible(edit);
     await tester.pumpAndSettle();
@@ -54,6 +111,8 @@ void main() {
     final store = _RenameStore()..fail = false;
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    expect(find.text('رنگ نور'), findsNothing);
+    await openOutputDetails(tester);
     expect(find.text('رنگ نور'), findsOneWidget);
     expect(controller.colorCommands, isEmpty);
     expect(store.device.colorCapabilities, <int,int>{1: 1});
@@ -98,6 +157,7 @@ void main() {
     await tester.pumpWidget(ManisaDirectApp(controller: controller,
       deviceStore: _RenameStore()..fail = false));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     final pending = Completer<Map<int, DirectColorState>>();
     controller.pendingColorRead = pending;
     await tester.tap(find.byTooltip('بررسی وضعیت'));
@@ -124,6 +184,7 @@ void main() {
     await tester.pumpWidget(ManisaDirectApp(controller: controller,
       deviceStore: _RenameStore()..fail = false));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('رنگ فعلی دریافت نشده'), findsOneWidget);
     expect(find.byKey(const ValueKey('color-hue')), findsNothing);
     expect(find.byKey(const ValueKey('confirmed-color')), findsNothing);
@@ -145,6 +206,7 @@ void main() {
       ManisaDirectApp(controller: controller, deviceStore: store),
     );
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
 
     expect(find.text('مصرف برق'), findsOneWidget);
     expect(find.text('توان فعلی'), findsOneWidget);
@@ -221,6 +283,7 @@ void main() {
 
       await showApp();
       await tester.pumpAndSettle();
+      await openOutputDetails(tester);
       expect(store.device.onOffEndpoints, <int>[2, 1]);
       expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
       expect(find.text('راهرو'), findsWidgets);
@@ -307,6 +370,7 @@ void main() {
     final store = _RenameStore()..fail = false;
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('شدت نور'), findsOneWidget);
     expect(find.text('۵۰٪'), findsOneWidget);
     expect(store.device.levelEndpoints, <int>[1]);
@@ -342,6 +406,7 @@ void main() {
     controller.discovery.complete(<int>[1]);
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('شدت نور دریافت نشده'), findsOneWidget);
     expect(find.byType(Slider), findsNothing);
     expect(controller.levelCommands, isEmpty);
@@ -520,6 +585,14 @@ void main() {
   testWidgets('Persian onboarding validates QR before asking for Wi-Fi', (
     tester,
   ) async {
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, (call) async =>
+            call.method == 'scanWifi' ? <String, Object?>{'fresh': true, 'networks': <Object?>[]} : null);
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, null));
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     await tester.pumpWidget(
@@ -532,13 +605,16 @@ void main() {
     );
     await tester.tap(find.text('افزودن وسیله'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.textContaining('کد QR معتبر'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'MT:TEST');
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.text('آماده‌کردن وسیله'), findsOneWidget);
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.text('نام وای‌فای'), findsOneWidget);
