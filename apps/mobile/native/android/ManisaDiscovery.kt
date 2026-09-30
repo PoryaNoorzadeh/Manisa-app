@@ -83,7 +83,8 @@ internal class ManisaDiscovery(private val activity: Activity) {
     fun cancel() { finishError("discovery_cancelled", "جست‌وجو لغو شد.") }
 
     @Suppress("DEPRECATION")
-    fun wifi(result: MethodChannel.Result) = begin(result, listOf(Manifest.permission.ACCESS_FINE_LOCATION)) {
+    fun wifi(result: MethodChannel.Result) = begin(result, listOf(
+        Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)) {
         val requestGeneration = generation
         val wifi = activity.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         val location = activity.getSystemService(Context.LOCATION_SERVICE) as LocationManager
