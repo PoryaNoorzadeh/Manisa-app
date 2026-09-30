@@ -31,6 +31,7 @@ internal class ManisaDiscovery(private val activity: Activity) {
     private var pending: MethodChannel.Result? = null
     private var permissionAction: (() -> Unit)? = null
     private var cleanup: (() -> Unit)? = null
+    private var generation = 0L
     private val timeout = Runnable { finishError("discovery_timeout", "جست‌وجو تمام شد؛ دوباره تلاش کن.") }
 
     fun permissionsResult(code: Int, results: IntArray): Boolean {
@@ -46,6 +47,7 @@ internal class ManisaDiscovery(private val activity: Activity) {
     private fun begin(result: MethodChannel.Result, permissions: List<String>, action: () -> Unit) {
         if (pending != null) { result.error("discovery_busy", "جست‌وجوی دیگری در حال اجراست.", null); return }
         pending = result
+        generation++
         handler.postDelayed(timeout, 30000)
         val missing = permissions.filter { activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         try {
@@ -71,6 +73,7 @@ internal class ManisaDiscovery(private val activity: Activity) {
     }
 
     private fun clear() {
+        generation++
         handler.removeCallbacksAndMessages(null)
         permissionAction = null
         try { cleanup?.invoke() } catch (_: Exception) { }
@@ -81,6 +84,7 @@ internal class ManisaDiscovery(private val activity: Activity) {
 
     @Suppress("DEPRECATION")
     fun wifi(result: MethodChannel.Result) = begin(result, listOf(Manifest.permission.ACCESS_FINE_LOCATION)) {
+        val requestGeneration = generation
         val wifi = activity.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         val location = activity.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         if (!wifi.isWifiEnabled || !location.isLocationEnabled) {
@@ -96,7 +100,7 @@ internal class ManisaDiscovery(private val activity: Activity) {
         }
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                if (pending == null) return
+                if (pending == null || generation != requestGeneration) return
                 try { respond(intent?.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false) == true) }
                 catch (_: Exception) { finishError("wifi_scan_failed", "دریافت شبکه‌ها ناموفق بود.") }
             }
@@ -112,6 +116,7 @@ internal class ManisaDiscovery(private val activity: Activity) {
     fun bluetooth(result: MethodChannel.Result) = begin(result,
         if (Build.VERSION.SDK_INT >= 31) listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         else listOf(Manifest.permission.ACCESS_FINE_LOCATION)) {
+        val requestGeneration = generation
         val adapter = (activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         val scanner = adapter?.bluetoothLeScanner
         if (scanner == null) { finishError("bluetooth_disabled", "بلوتوث گوشی را روشن کن."); return@begin }
@@ -119,6 +124,7 @@ internal class ManisaDiscovery(private val activity: Activity) {
         val found = linkedMapOf<String, Map<String, Any>>()
         val callback = object : ScanCallback() {
             override fun onScanResult(type: Int, item: ScanResult) {
+                if (generation != requestGeneration) return
                 val bytes = item.scanRecord?.getServiceData(uuid) ?: return
                 if (bytes.size < 3) return
                 val discriminator = (bytes[1].toInt() and 255) or ((bytes[2].toInt() and 15) shl 8)
@@ -126,7 +132,9 @@ internal class ManisaDiscovery(private val activity: Activity) {
                     "name" to (item.scanRecord?.deviceName ?: "وسیلهٔ Matter"),
                     "discriminator" to discriminator, "rssi" to item.rssi)
             }
-            override fun onScanFailed(code: Int) { finishError("ble_scan_failed", "جست‌وجوی بلوتوث ناموفق بود؛ دوباره تلاش کن.") }
+            override fun onScanFailed(code: Int) {
+                if (generation == requestGeneration) finishError("ble_scan_failed", "جست‌وجوی بلوتوث ناموفق بود؛ دوباره تلاش کن.")
+            }
         }
         cleanup = { scanner.stopScan(callback) }
         scanner.startScan(listOf(ScanFilter.Builder().setServiceUuid(uuid).build()),
@@ -135,6 +143,7 @@ internal class ManisaDiscovery(private val activity: Activity) {
     }
 
     fun nfc(result: MethodChannel.Result) = begin(result, emptyList()) {
+        val requestGeneration = generation
         val adapter = NfcAdapter.getDefaultAdapter(activity)
         if (adapter == null || !adapter.isEnabled) {
             finishError("nfc_unavailable", "این گوشی NFC فعال ندارد؛ از QR استفاده کن."); return@begin
@@ -157,10 +166,13 @@ internal class ManisaDiscovery(private val activity: Activity) {
                     } else record.toUri()?.toString()
                 }?.firstOrNull { it.startsWith("MT:", ignoreCase = true) }
                 handler.post {
+                    if (generation != requestGeneration) return@post
                     if (payload == null) finishError("invalid_nfc", "این تگ کد اتصال Matter ندارد.")
                     else finish(payload.uppercase())
                 }
-            } catch (_: Exception) { handler.post { finishError("nfc_read_failed", "تگ خوانده نشد؛ دوباره نزدیک کن.") } }
+            } catch (_: Exception) { handler.post {
+                if (generation == requestGeneration) finishError("nfc_read_failed", "تگ خوانده نشد؛ دوباره نزدیک کن.")
+            } }
             finally { try { ndef?.close() } catch (_: Exception) { } }
         }, NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_NFC_B or NfcAdapter.FLAG_READER_NFC_F or NfcAdapter.FLAG_READER_NFC_V, null)
     }
