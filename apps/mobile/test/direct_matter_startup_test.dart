@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manisa_mobile/src/matter/color_control.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
@@ -10,16 +11,138 @@ import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
 import 'package:manisa_mobile/src/matter/electrical_measurement.dart';
 import 'package:manisa_mobile/src/matter/favorite_store.dart';
 import 'package:manisa_mobile/src/matter/home_profile_store.dart';
+import 'package:manisa_mobile/src/matter/onboarding_services.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  testWidgets('NFC payload and Wi-Fi selection reuse securely stored password', (tester) async {
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    const credentials = WifiCredentialStore();
+    await credentials.remember('Home-24', 'saved-password');
+    await credentials.remember('Old-network', 'old-password');
+    var currentSsid = 'Home-24';
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, (call) async {
+      if (call.method == 'readMatterNfc') return 'MT:TEST';
+      if (call.method == 'currentWifi') return <String, Object?>{'ssid': currentSsid, 'frequency': 2412};
+      if (call.method == 'scanWifi') return <String, Object?>{
+        'fresh': true, 'networks': <Object?>[
+          <String, Object?>{'ssid': 'Home-24', 'frequency': 2412, 'rssi': -40, 'secured': true},
+        ],
+      };
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, null));
+    final controller = _Controller();
+    await tester.pumpWidget(MaterialApp(home: DirectMatterAddDeviceScreen(
+      controller: controller, deviceStore: _Store())));
+    await tester.pumpAndSettle();
+    expect(find.text('یافتن با بلوتوث'), findsNothing);
+    await tester.tap(find.text('خواندن تگ NFC'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, 'MT:TEST');
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ادامه'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField).at(0)).controller!.text, 'Home-24');
+    final password = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(password.controller!.text, 'saved-password');
+    expect(password.obscureText, isTrue);
+    await tester.tap(find.text('نمایش شبکه‌های وای‌فای'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home-24').last);
+    await tester.pumpAndSettle();
+    currentSsid = 'Other-network';
+    await tester.tap(find.text('استفاده از وای‌فای متصل گوشی'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField).at(0)).controller!.text, 'Other-network');
+    expect(tester.widget<TextField>(find.byType(TextField).at(1)).controller!.text, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('late OnOff read cannot overwrite a change from another phone', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    controller.pendingRead = Completer<bool>();
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pump();
+    controller.events.add(const DirectMatterOnOffEvent(nodeId: 7, endpoint: 1, value: false));
+    await tester.pump();
+    controller.pendingRead!.complete(true);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('terminal report error repairs only affected node without replaying commands', (tester) async {
+    final controller = _RecoveringController()..discovery.complete(<int>[1]);
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _MultiDeviceStore()));
+    await tester.pumpAndSettle();
+    controller.nodeValues[7] = false;
+    controller.events.addError(PlatformException(code: 'matter_subscription_lost',
+        details: <String, Object?>{'nodeId': 7, 'kind': 'onoff'}));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(controller.resetNodes, <int>[7]);
+    expect(controller.commandCalls, 0);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile).first).value, isFalse);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile).last).value, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('silent report gap reconciles state only while app is foreground', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    controller.nodeValues[7] = false;
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+    expect(controller.commandCalls, 0);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pumpAndSettle();
+    final reads = controller.readCalls;
+    await tester.pump(const Duration(seconds: 60));
+    expect(controller.readCalls, reads);
+    await tester.pumpWidget(const SizedBox.shrink());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await controller.events.close();
+  });
+
+  Future<void> openOutputDetails(
+    WidgetTester tester, {
+    int index = 0,
+  }) async {
+    final advanced = find.text('نور و مصرف');
+    final details = advanced.evaluate().isNotEmpty
+        ? advanced.at(index)
+        : find.text('تنظیمات خروجی').at(index);
+    await tester.ensureVisible(details);
+    await tester.tap(details);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('direct output edit persists by endpoint and preserves other names', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller()..discovery.complete(<int>[2,1]);
     final store = _RenameStore()..fail = false;
     store.device = store.device.copyWith(onOffEndpoints: <int>[2,1],
       channelNames: <int,String>{2: 'راهرو'});
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester, index: 1);
     final edit = find.byKey(const ValueKey('rename-output-7-1'));
     await tester.ensureVisible(edit);
     await tester.pumpAndSettle();
@@ -54,6 +177,8 @@ void main() {
     final store = _RenameStore()..fail = false;
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    expect(find.text('رنگ نور'), findsNothing);
+    await openOutputDetails(tester);
     expect(find.text('رنگ نور'), findsOneWidget);
     expect(controller.colorCommands, isEmpty);
     expect(store.device.colorCapabilities, <int,int>{1: 1});
@@ -98,6 +223,7 @@ void main() {
     await tester.pumpWidget(ManisaDirectApp(controller: controller,
       deviceStore: _RenameStore()..fail = false));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     final pending = Completer<Map<int, DirectColorState>>();
     controller.pendingColorRead = pending;
     await tester.tap(find.byTooltip('بررسی وضعیت'));
@@ -124,6 +250,7 @@ void main() {
     await tester.pumpWidget(ManisaDirectApp(controller: controller,
       deviceStore: _RenameStore()..fail = false));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('رنگ فعلی دریافت نشده'), findsOneWidget);
     expect(find.byKey(const ValueKey('color-hue')), findsNothing);
     expect(find.byKey(const ValueKey('confirmed-color')), findsNothing);
@@ -145,6 +272,7 @@ void main() {
       ManisaDirectApp(controller: controller, deviceStore: store),
     );
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
 
     expect(find.text('مصرف برق'), findsOneWidget);
     expect(find.text('توان فعلی'), findsOneWidget);
@@ -221,6 +349,7 @@ void main() {
 
       await showApp();
       await tester.pumpAndSettle();
+      await openOutputDetails(tester);
       expect(store.device.onOffEndpoints, <int>[2, 1]);
       expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
       expect(find.text('راهرو'), findsWidgets);
@@ -307,6 +436,7 @@ void main() {
     final store = _RenameStore()..fail = false;
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('شدت نور'), findsOneWidget);
     expect(find.text('۵۰٪'), findsOneWidget);
     expect(store.device.levelEndpoints, <int>[1]);
@@ -342,6 +472,7 @@ void main() {
     controller.discovery.complete(<int>[1]);
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
     await tester.pumpAndSettle();
+    await openOutputDetails(tester);
     expect(find.text('شدت نور دریافت نشده'), findsOneWidget);
     expect(find.byType(Slider), findsNothing);
     expect(controller.levelCommands, isEmpty);
@@ -520,6 +651,14 @@ void main() {
   testWidgets('Persian onboarding validates QR before asking for Wi-Fi', (
     tester,
   ) async {
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, (call) async =>
+            call.method == 'scanWifi' ? <String, Object?>{'fresh': true, 'networks': <Object?>[]} : null);
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(onboardingChannel, null));
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _Controller();
     controller.discovery.complete(<int>[1]);
     await tester.pumpWidget(
@@ -532,13 +671,16 @@ void main() {
     );
     await tester.tap(find.text('افزودن وسیله'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.textContaining('کد QR معتبر'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'MT:TEST');
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.text('آماده‌کردن وسیله'), findsOneWidget);
+    await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
     expect(find.text('نام وای‌فای'), findsOneWidget);
@@ -1157,6 +1299,7 @@ class _Controller implements DirectMatterController {
   _Controller({this.initializationFails = false, this.readFails = false});
   bool readFails;
   bool commandFails = false;
+  int commandCalls = 0;
   Completer<bool>? pendingRead;
   int readCalls = 0;
   final Set<int> failingReadNodes = <int>{};
@@ -1212,6 +1355,7 @@ class _Controller implements DirectMatterController {
     required int endpoint,
     required bool value,
   }) async {
+    commandCalls++;
     if (commandFails) {
       throw PlatformException(code: 'matter_command_failed');
     }
@@ -1224,10 +1368,12 @@ class _Controller implements DirectMatterController {
 class _RecoveringController extends _Controller
     implements ConnectionRecoveryController {
   int resetCalls = 0;
+  final List<int> resetNodes = <int>[];
 
   @override
   Future<void> resetConnection(int nodeId) async {
     resetCalls++;
+    resetNodes.add(nodeId);
     readFails = false;
   }
 }
