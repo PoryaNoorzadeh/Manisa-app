@@ -2,11 +2,6 @@ package com.manisa.manisa_mobile
 
 import android.Manifest
 import android.app.Activity
-import android.bluetooth.BluetoothManager
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
-import android.bluetooth.le.ScanResult
-import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -21,9 +16,7 @@ import android.nfc.tech.Ndef
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.ParcelUuid
 import io.flutter.plugin.common.MethodChannel
-import java.util.UUID
 
 /** Foreground, bounded discovery. Never exposes Wi-Fi credentials or unrelated BLE devices. */
 internal class ManisaDiscovery(private val activity: Activity) {
@@ -114,33 +107,20 @@ internal class ManisaDiscovery(private val activity: Activity) {
         else handler.postDelayed({ if (pending != null) respond(false) }, 10000)
     }
 
-    fun bluetooth(result: MethodChannel.Result) = begin(result,
-        if (Build.VERSION.SDK_INT >= 31) listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        else listOf(Manifest.permission.ACCESS_FINE_LOCATION)) {
-        val requestGeneration = generation
-        val adapter = (activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-        val scanner = adapter?.bluetoothLeScanner
-        if (scanner == null) { finishError("bluetooth_disabled", "بلوتوث گوشی را روشن کن."); return@begin }
-        val uuid = ParcelUuid(UUID.fromString("0000FFF6-0000-1000-8000-00805F9B34FB"))
-        val found = linkedMapOf<String, Map<String, Any>>()
-        val callback = object : ScanCallback() {
-            override fun onScanResult(type: Int, item: ScanResult) {
-                if (generation != requestGeneration) return
-                val bytes = item.scanRecord?.getServiceData(uuid) ?: return
-                if (bytes.size < 3) return
-                val discriminator = (bytes[1].toInt() and 255) or ((bytes[2].toInt() and 15) shl 8)
-                found[item.device.address] = mapOf("id" to item.device.address,
-                    "name" to (item.scanRecord?.deviceName ?: "وسیلهٔ Matter"),
-                    "discriminator" to discriminator, "rssi" to item.rssi)
-            }
-            override fun onScanFailed(code: Int) {
-                if (generation == requestGeneration) finishError("ble_scan_failed", "جست‌وجوی بلوتوث ناموفق بود؛ دوباره تلاش کن.")
-            }
+    @Suppress("DEPRECATION")
+    fun currentWifi(result: MethodChannel.Result) = begin(result, listOf(
+        Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)) {
+        val wifi = activity.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val info = wifi.connectionInfo
+        val raw = info?.ssid
+        if (!wifi.isWifiEnabled || raw == null || raw == WifiManager.UNKNOWN_SSID || info.networkId < 0) {
+            finishError("current_wifi_unavailable", "شبکهٔ متصل قابل دریافت نیست؛ شبکه را انتخاب کن.")
+            return@begin
         }
-        cleanup = { scanner.stopScan(callback) }
-        scanner.startScan(listOf(ScanFilter.Builder().setServiceUuid(uuid).build()),
-            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
-        handler.postDelayed({ finish(found.values.sortedByDescending { it["rssi"] as Int }) }, 8000)
+        // Android surrounds ordinary SSIDs with quotes. Preserve SSID whitespace.
+        val ssid = if (raw.length >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) raw.substring(1, raw.length - 1) else raw
+        if (ssid.isEmpty()) { finishError("current_wifi_unavailable", "نام شبکه قابل دریافت نیست."); return@begin }
+        finish(mapOf("ssid" to ssid, "frequency" to info.frequency))
     }
 
     fun nfc(result: MethodChannel.Result) = begin(result, emptyList()) {

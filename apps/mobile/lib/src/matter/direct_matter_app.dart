@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -109,7 +110,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   StreamSubscription<DirectSensorEvent>? _sensorEvents;
   Timer? _sensorFreshnessTimer;
   final Map<String, bool> _states = <String, bool>{};
+  final Map<String, int> _stateRevisions = <String, int>{};
   final Map<String, int> _levels = <String, int>{};
+  final Map<String, int> _levelRevisions = <String, int>{};
+  final Set<int> _reconcilingNodes = <int>{};
+  final Map<int, Timer> _subscriptionRepairs = <int, Timer>{};
+  final Set<int> _repairingSubscriptions = <int>{};
+  Timer? _sharedStateTimer;
   final Map<String, DirectColorState> _colors = <String, DirectColorState>{};
   final Set<String> _staleColors = <String>{};
   final Set<int> _readingColors = <int>{};
@@ -167,6 +174,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     _sensorFreshnessTimer?.cancel();
     _connectionRetryTimer?.cancel();
     _automationTimer?.cancel();
+    _sharedStateTimer?.cancel();
+    for (final timer in _subscriptionRepairs.values) { timer.cancel(); }
+    _subscriptionRepairs.clear();
     _sceneRunner.cancel();
     super.dispose();
   }
@@ -175,6 +185,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) {
+      _sharedStateTimer?.cancel();
+      _sharedStateTimer = null;
+      for (final timer in _subscriptionRepairs.values) { timer.cancel(); }
+      _subscriptionRepairs.clear();
       _connectionRetryTimer?.cancel();
       _connectionRetryTimer = null;
       return;
@@ -182,6 +196,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     if (_loading || _devices.isEmpty) {
       return;
     }
+    _startSharedStateWatchdog();
     unawaited(_checkAutomations());
     final now = DateTime.now();
     final previous = _lastResumeRefresh;
@@ -230,13 +245,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           if (!_canUpdate(event.nodeId)) return;
           setState(() {
             _states[_stateKey(event.nodeId, event.endpoint)] = event.value;
+            final key = _stateKey(event.nodeId, event.endpoint);
+            _stateRevisions[key] = (_stateRevisions[key] ?? 0) + 1;
             _unavailableNodes.remove(event.nodeId);
             _deviceErrors.remove(event.nodeId);
           });
         },
         onError: (Object error, StackTrace stackTrace) {
-          if (!mounted) return;
-          setState(() => _error = 'Realtime Matter update failed: $error');
+          _onRealtimeFailure(error);
         },
       );
       final controller = widget.controller;
@@ -250,6 +266,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             if (!device.levelEndpoints.contains(event.endpoint)) return;
             setState(() {
               final key = _stateKey(event.nodeId, event.endpoint);
+              _levelRevisions[key] = (_levelRevisions[key] ?? 0) + 1;
               if (event.level == null) {
                 _levels.remove(key);
               } else {
@@ -260,8 +277,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             });
           },
           onError: (Object error, StackTrace stackTrace) {
-            if (!mounted) return;
-            setState(() => _error = 'Realtime dimmer update failed: $error');
+            _onRealtimeFailure(error);
           },
         );
       }
@@ -274,6 +290,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           setState(() {
             if (event.stale) {
               _staleColors.add(key);
+              _scheduleSubscriptionRepair(event.nodeId);
             } else {
               final previous = _colors[key] ?? DirectColorState.fromMap(
                   <String, int>{'capabilities': device.colorCapabilities[event.endpoint]!});
@@ -377,6 +394,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         (_) => unawaited(_checkAutomations()),
       );
       initialized = true;
+      _startSharedStateWatchdog();
     } catch (error) {
       if (mounted) {
         setState(() => _error = error.toString());
@@ -393,6 +411,101 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       mounted &&
       !_removingNodes.contains(nodeId) &&
       _devices.any((device) => device.nodeId == nodeId);
+
+  void _onRealtimeFailure(Object error) {
+    if (!mounted) return;
+    final details = error is PlatformException ? error.details : null;
+    final nodeId = details is Map<Object?, Object?> ? details['nodeId'] : null;
+    if (nodeId is int) {
+      _scheduleSubscriptionRepair(nodeId);
+    } else {
+      for (final device in _devices) { _scheduleSubscriptionRepair(device.nodeId); }
+    }
+  }
+
+  void _scheduleSubscriptionRepair(int nodeId) {
+    if (!_foreground || !_canUpdate(nodeId) || _subscriptionRepairs.containsKey(nodeId) ||
+        _repairingSubscriptions.contains(nodeId)) return;
+    _subscriptionRepairs[nodeId] = Timer(const Duration(seconds: 2), () async {
+      _subscriptionRepairs.remove(nodeId);
+      if (!_foreground || !_canUpdate(nodeId)) return;
+      if (_refreshingNodes.contains(nodeId) || _reconcilingNodes.contains(nodeId)) {
+        _scheduleSubscriptionRepair(nodeId);
+        return;
+      }
+      _repairingSubscriptions.add(nodeId);
+      try {
+        final controller = widget.controller;
+        try {
+          if (controller is ConnectionRecoveryController) {
+            await (controller as ConnectionRecoveryController).resetConnection(nodeId)
+                .timeout(const Duration(seconds: 5));
+          }
+        } catch (_) { /* The read remains the authoritative connectivity check. */ }
+        if (!_foreground || !_canUpdate(nodeId)) return;
+        await _refreshDevice(_devices.firstWhere((device) => device.nodeId == nodeId));
+        if (_unavailableNodes.contains(nodeId)) _scheduleConnectionRetry();
+      } finally { _repairingSubscriptions.remove(nodeId); }
+    });
+  }
+
+  void _startSharedStateWatchdog() {
+    if (!_foreground || _sharedStateTimer != null) return;
+    // Reports remain the primary path. Reconcile controls only while foreground
+    // to cover a silent report gap; never replay writes or poll battery sensors.
+    _sharedStateTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!_foreground || _loading) return;
+      for (final device in List<DirectMatterDevice>.of(_devices)) {
+        if (device.onOffEndpoints.isNotEmpty && !_unavailableNodes.contains(device.nodeId)) {
+          unawaited(_reconcileControls(device));
+        }
+      }
+    });
+  }
+
+  Future<void> _readSyncedOnOff(int nodeId, int endpoint) async {
+    final key = _stateKey(nodeId, endpoint);
+    final revision = _stateRevisions[key];
+    final value = await widget.controller.readOnOff(nodeId: nodeId, endpoint: endpoint)
+        .timeout(_readTimeout);
+    if (!_canUpdate(nodeId) || _stateRevisions[key] != revision) return;
+    setState(() => _states[key] = value);
+  }
+
+  Future<void> _reconcileControls(DirectMatterDevice device) async {
+    final nodeId = device.nodeId;
+    if (!_canUpdate(nodeId) || _refreshingNodes.contains(nodeId) ||
+        _repairingSubscriptions.contains(nodeId) ||
+        !_reconcilingNodes.add(nodeId)) return;
+    try {
+      for (final endpoint in device.onOffEndpoints) {
+        if (!_foreground || !_canUpdate(nodeId)) return;
+        if (!_busy.contains(_stateKey(nodeId, endpoint))) await _readSyncedOnOff(nodeId, endpoint);
+      }
+      final controller = widget.controller;
+      if (_foreground && _canUpdate(nodeId) && device.levelEndpoints.isNotEmpty &&
+          controller is LevelControlController && !_readingCapabilities.contains(nodeId)) {
+        final revisions = Map<String, int>.of(_levelRevisions);
+        final levels = await (controller as LevelControlController).readLevels(nodeId).timeout(_readTimeout);
+        if (!_canUpdate(nodeId)) return;
+        setState(() {
+          for (final endpoint in device.levelEndpoints) {
+            final key = _stateKey(nodeId, endpoint);
+            if (_levelRevisions[key] != revisions[key] || _busy.contains(key)) continue;
+            if (levels[endpoint] == null) { _levels.remove(key); }
+            else { _levels[key] = levels[endpoint]!; }
+          }
+        });
+      }
+      if (_foreground && _canUpdate(nodeId) && device.colorCapabilities.isNotEmpty) {
+        await _refreshColors(nodeId);
+      }
+    } catch (_) {
+      // A failed watchdog read should repair reports and confirm reachability,
+      // rather than display an invented Off value.
+      _scheduleSubscriptionRepair(nodeId);
+    } finally { _reconcilingNodes.remove(nodeId); }
+  }
 
   Future<void> _refreshAllStates() async {
     await Future.wait(
@@ -415,13 +528,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       // Known endpoints are read before discovery so a discovery failure never
       // hides values that were already confirmed.
       for (final endpoint in device.onOffEndpoints) {
-        final value = await widget.controller
-            .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
-            .timeout(_readTimeout);
+        await _readSyncedOnOff(device.nodeId, endpoint);
         if (!_canUpdate(device.nodeId)) return;
-        setState(() {
-          _states[_stateKey(device.nodeId, endpoint)] = value;
-        });
       }
       if (!_canUpdate(device.nodeId)) return;
       final discovered = await widget.controller
@@ -452,13 +560,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         for (final endpoint in discovered.where(
           (e) => !device.onOffEndpoints.contains(e),
         )) {
-          final value = await widget.controller
-              .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
-              .timeout(_readTimeout);
+          await _readSyncedOnOff(device.nodeId, endpoint);
           if (!_canUpdate(device.nodeId)) return;
-          setState(() {
-            _states[_stateKey(device.nodeId, endpoint)] = value;
-          });
         }
       }
       if (_canUpdate(device.nodeId)) {
@@ -568,6 +671,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       final values = await (controller as ColorControlController).readColors(nodeId).timeout(_readTimeout);
       if (!active()) return;
       final current = _devices.firstWhere((item) => item.nodeId == nodeId);
+      final capabilitiesChanged = current.colorCapabilities.length != values.length ||
+          values.entries.any((entry) => current.colorCapabilities[entry.key] != entry.value.capabilities);
       final updated = current.copyWith(colorCapabilities:
           values.map((endpoint, color) => MapEntry(endpoint, color.capabilities)));
       setState(() {
@@ -580,7 +685,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           _staleColors.remove(key);
         }
       });
-      if (!_editingMetadata) {
+      if (capabilitiesChanged && !_editingMetadata) {
         setState(() => _editingMetadata = true);
         try { await widget.deviceStore.save(updated); }
         catch (_) { /* Keep a successfully read color usable; retry metadata later. */ }
@@ -661,6 +766,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     final controller = widget.controller;
     if (!_readingCapabilities.add(nodeId)) return;
     try {
+      final levelRevisions = Map<String, int>.of(_levelRevisions);
       Map<int, List<int>>? types;
       Map<int, int?>? levels;
       Map<int, DirectElectricalMeasurement>? measurements;
@@ -726,6 +832,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           if (levels != null) {
             for (final entry in levels.entries) {
               final key = _stateKey(nodeId, entry.key);
+              if (_levelRevisions[key] != levelRevisions[key]) continue;
               if (entry.value == null) {
                 _levels.remove(key);
               } else {
@@ -926,18 +1033,16 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     if (_busy.contains(key) || !_canUpdate(device.nodeId)) return;
     setState(() {
       _busy.add(key);
+      _stateRevisions[key] = (_stateRevisions[key] ?? 0) + 1;
       _deviceErrors.remove(device.nodeId);
     });
     try {
       await widget.controller
           .setOnOff(nodeId: device.nodeId, endpoint: endpoint, value: value)
           .timeout(_readTimeout);
-      final confirmed = await widget.controller
-          .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
-          .timeout(_readTimeout);
+      await _readSyncedOnOff(device.nodeId, endpoint);
       if (_canUpdate(device.nodeId)) {
         setState(() {
-          _states[key] = confirmed;
           _unavailableNodes.remove(device.nodeId);
           _deviceErrors.remove(device.nodeId);
         });
@@ -966,24 +1071,24 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     final requested = level.clamp(1, 254);
     setState(() {
       _busy.add(key);
+      _levelRevisions[key] = (_levelRevisions[key] ?? 0) + 1;
+      _stateRevisions[key] = (_stateRevisions[key] ?? 0) + 1;
       _deviceErrors.remove(device.nodeId);
     });
     try {
       await levelController
           .setLevel(nodeId: device.nodeId, endpoint: endpoint, level: requested)
           .timeout(_readTimeout);
+      final levelRevision = _levelRevisions[key];
       final levels = await levelController.readLevels(device.nodeId).timeout(_readTimeout);
       final confirmed = levels[endpoint];
       if (confirmed == null) {
         throw const FormatException('LevelControl state was not returned');
       }
-      final confirmedOnOff = await widget.controller
-          .readOnOff(nodeId: device.nodeId, endpoint: endpoint)
-          .timeout(_readTimeout);
+      await _readSyncedOnOff(device.nodeId, endpoint);
       if (_canUpdate(device.nodeId)) {
         setState(() {
-          _levels[key] = confirmed;
-          _states[key] = confirmedOnOff;
+          if (_levelRevisions[key] == levelRevision) _levels[key] = confirmed;
           _unavailableNodes.remove(device.nodeId);
           _deviceErrors.remove(device.nodeId);
         });
@@ -2819,8 +2924,6 @@ final class _DirectMatterAddDeviceScreenState
   bool _rememberWifi = true;
   bool _discovering = false;
   bool _sharedDevice = false;
-  int? _bleDiscriminator;
-  String? _bleName;
   String? _discoveryNotice;
   DirectMatterDevice? _pendingDevice;
 
@@ -2846,6 +2949,26 @@ final class _DirectMatterAddDeviceScreenState
     }
   }
 
+  Future<void> _useCurrentWifi() async {
+    if (_discovering || _adding) return;
+    setState(() { _discovering = true; _error = null; _discoveryNotice = 'در حال دریافت وای‌فای متصل گوشی…'; });
+    try {
+      final network = await onboardingChannel.invokeMapMethod<String, Object?>('currentWifi');
+      if (!mounted) return;
+      final ssid = network?['ssid'];
+      if (ssid is! String || ssid.isEmpty) throw const FormatException('Missing connected SSID');
+      await _selectWifi(ssid);
+      if (!mounted) return;
+      final saved = await _credentials.password(ssid);
+      if (!mounted || _ssid.text != ssid) return;
+      setState(() => _discoveryNotice = saved == null
+          ? 'وای‌فای متصل انتخاب شد؛ رمز را فقط بار اول وارد کن.'
+          : 'وای‌فای متصل و رمز ذخیره‌شده آماده‌اند.');
+    } catch (_) {
+      if (mounted) setState(() => _discoveryNotice = 'وای‌فای متصل قابل دریافت نیست؛ شبکه را انتخاب یا نامش را وارد کن.');
+    } finally { if (mounted) setState(() => _discovering = false); }
+  }
+
   Future<void> _discover(String method) async {
     if (_discovering) return;
     setState(() { _discovering = true; _error = null;
@@ -2857,13 +2980,12 @@ final class _DirectMatterAddDeviceScreenState
         setState(() { _payload.text = response as String; _discoveryNotice = 'کد NFC دریافت شد.'; });
         return;
       }
-      final isWifi = method == 'scanWifi';
-      final wifiResponse = isWifi ? response as Map<Object?, Object?> : null;
-      final rawItems = (isWifi ? wifiResponse!['networks'] : response) as List<Object?>;
+      final wifiResponse = response as Map<Object?, Object?>;
+      final rawItems = wifiResponse['networks'] as List<Object?>;
       final items = rawItems.cast<Map<Object?, Object?>>();
       setState(() => _discoveryNotice = items.isEmpty
-          ? (isWifi ? 'شبکه‌ای پیدا نشد؛ دوباره جست‌وجو کن یا نام را دستی وارد کن.' : 'وسیله‌ای پیدا نشد؛ آن را در حالت اتصال قرار بده.')
-          : isWifi && wifiResponse!['fresh'] != true ? 'آخرین شبکه‌های دیده‌شده؛ اسکن تازه فعلاً در دسترس نیست.' : null);
+          ? 'شبکه‌ای پیدا نشد؛ دوباره جست‌وجو کن یا نام را دستی وارد کن.'
+          : wifiResponse['fresh'] != true ? 'آخرین شبکه‌های دیده‌شده؛ اسکن تازه فعلاً در دسترس نیست.' : null);
       if (items.isEmpty) return;
       // Radio discovery is finished; choosing a result must not leave a spinner
       // animating behind the modal or block the next stage indefinitely.
@@ -2873,22 +2995,18 @@ final class _DirectMatterAddDeviceScreenState
         builder: (context) => SafeArea(child: SizedBox(
           height: MediaQuery.sizeOf(context).height * .6,
           child: Column(children: [
-            Padding(padding: const EdgeInsets.all(16), child: Text(isWifi ? 'انتخاب وای‌فای' : 'وسایل Matter نزدیک')),
+            const Padding(padding: EdgeInsets.all(16), child: Text('انتخاب وای‌فای')),
             Expanded(child: ListView(children: [for (final item in items)
-              ListTile(leading: Icon(isWifi ? Icons.wifi : Icons.bluetooth),
-                title: Text((isWifi ? item['ssid'] : item['name']) as String),
-                subtitle: Text(isWifi ? ((item['frequency'] as int) < 3000 ? '۲٫۴ گیگاهرتز' : '۵ یا ۶ گیگاهرتز؛ سازگاری وسیله را بررسی کن')
-                    : 'شناسهٔ اتصال: ${toPersianDigits(item['discriminator'] as int)}'),
+              ListTile(leading: const Icon(Icons.wifi),
+                title: Text(item['ssid'] as String),
+                subtitle: Text((item['frequency'] as int) < 3000 ? '۲٫۴ گیگاهرتز' : '۵ یا ۶ گیگاهرتز؛ سازگاری وسیله را بررسی کن'),
                 onTap: () => Navigator.pop(context, item)),
             ])),
           ]),
         )),
       );
       if (selected == null || !mounted) return;
-      if (isWifi) { await _selectWifi(selected['ssid'] as String); }
-      else { setState(() { _bleDiscriminator = selected['discriminator'] as int;
-        _bleName = selected['name'] as String;
-        _discoveryNotice = 'وسیله انتخاب شد؛ برای تأیید امن، QR یا تگ NFC همان وسیله را بخوان.'; }); }
+      await _selectWifi(selected['ssid'] as String);
     } catch (error) { if (mounted) setState(() => _error = onboardingError(error)); }
     finally { if (mounted) setState(() => _discovering = false); }
   }
@@ -2919,7 +3037,7 @@ final class _DirectMatterAddDeviceScreenState
     if (_adding) return;
     final name = _name.text.trim();
     final payload = _payload.text.trim();
-    final ssid = _ssid.text.trim();
+    final ssid = _ssid.text;
     if (name.isEmpty || !payload.startsWith('MT:') || (!_sharedDevice && ssid.isEmpty)) {
       setState(() {
         _error = 'نام وسیله، کد اتصال و نام وای‌فای را بررسی کن.';
@@ -2937,12 +3055,11 @@ final class _DirectMatterAddDeviceScreenState
     try {
       if (_pendingDevice == null) {
         final DirectMatterCommissionResult result;
-        if (_sharedDevice || _bleDiscriminator != null) {
+        if (_sharedDevice) {
           final response = await onboardingChannel.invokeMapMethod<Object?, Object?>('commissionWifi', {
             'setupPayload': payload, 'ssid': _sharedDevice ? '' : ssid,
             'password': _sharedDevice ? '' : _password.text,
             'onNetwork': _sharedDevice,
-            if (!_sharedDevice) 'expectedDiscriminator': _bleDiscriminator,
           });
           if (response == null) throw const FormatException('Missing commissioning result');
           result = DirectMatterCommissionResult.fromMap(response);
@@ -3005,7 +3122,7 @@ final class _DirectMatterAddDeviceScreenState
       _step++;
       _error = null;
     });
-    if (_step == 2 && !_sharedDevice) unawaited(_discover('scanWifi'));
+    if (_step == 2 && !_sharedDevice) unawaited(_useCurrentWifi());
   }
 
   @override
@@ -3057,16 +3174,11 @@ final class _DirectMatterAddDeviceScreenState
                 title: const Text('وسیلهٔ اشتراکی'),
                 subtitle: const Text('اسکن QR موقت از گوشی صاحب وسیله؛ بدون ورود رمز وای‌فای'),
                 value: _sharedDevice, onChanged: _discovering ? null : (value) => setState(() {
-                  _sharedDevice = value; _bleDiscriminator = null; _bleName = null;
+                  _sharedDevice = value;
                 })),
               if (!_sharedDevice) ...[
                 OutlinedButton.icon(onPressed: _discovering ? null : () => _discover('readMatterNfc'),
                   icon: const Icon(Icons.nfc), label: const Text('خواندن تگ NFC')),
-                OutlinedButton.icon(onPressed: _discovering ? null : () => _discover('scanMatterBle'),
-                  icon: const Icon(Icons.bluetooth_searching), label: const Text('یافتن با بلوتوث')),
-                if (_bleName != null) ListTile(title: Text(_bleName!),
-                  trailing: IconButton(tooltip: 'لغو انتخاب', icon: const Icon(Icons.close),
-                    onPressed: () => setState(() { _bleName = null; _bleDiscriminator = null; }))),
               ],
               TextField(
                 controller: _payload,
@@ -3098,6 +3210,8 @@ final class _DirectMatterAddDeviceScreenState
               const Text(
                 'شبکهٔ خانه را انتخاب کن. برای بیشتر وسایل، شبکهٔ ۲٫۴ گیگاهرتز مناسب است.',
               ),
+              OutlinedButton.icon(onPressed: _discovering || _adding ? null : _useCurrentWifi,
+                icon: const Icon(Icons.wifi), label: const Text('استفاده از وای‌فای متصل گوشی')),
               OutlinedButton.icon(onPressed: _discovering || _adding ? null : () => _discover('scanWifi'),
                 icon: const Icon(Icons.wifi_find), label: const Text('نمایش شبکه‌های وای‌فای')),
               const SizedBox(height: 20),

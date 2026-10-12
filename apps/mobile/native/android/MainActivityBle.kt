@@ -98,7 +98,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         val password: String,
         val result: MethodChannel.Result,
         val onNetwork: Boolean = false,
-        val expectedDiscriminator: Int? = null,
     )
 
     private lateinit var platform: AndroidChipPlatform
@@ -243,7 +242,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 "isSupported" -> result.success(true)
                 "commissionWifi" -> commissionWifi(call, result)
                 "scanWifi" -> discovery.wifi(result)
-                "scanMatterBle" -> discovery.bluetooth(result)
+                "currentWifi" -> discovery.currentWifi(result)
                 "readMatterNfc" -> discovery.nfc(result)
                 "cancelDiscovery" -> { discovery.cancel(); result.success(null) }
                 "openSharingWindow" -> withNodeId(call, result) { nodeId -> openSharingWindow(nodeId, result) }
@@ -350,7 +349,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
 
         val setupPayload = call.argument<String>("setupPayload")?.trim().orEmpty()
-        val ssid = call.argument<String>("ssid")?.trim().orEmpty()
+        val ssid = call.argument<String>("ssid").orEmpty()
         val password = call.argument<String>("password").orEmpty()
         val onNetwork = call.argument<Boolean>("onNetwork") == true
         if (!setupPayload.startsWith("MT:", ignoreCase = true) || (!onNetwork && ssid.isEmpty())) {
@@ -362,8 +361,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             return
         }
 
-        val request = CommissionRequest(setupPayload, ssid, password, result, onNetwork,
-            call.argument<Number>("expectedDiscriminator")?.toInt())
+        val request = CommissionRequest(setupPayload, ssid, password, result, onNetwork)
         val missingPermissions = (if (onNetwork) emptyList() else requiredMatterPermissions()).filter {
             checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
         }
@@ -423,10 +421,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
 
         val nodeId = nextNodeId()
-        if (request.expectedDiscriminator != null && payload.getLongDiscriminatorValue() != request.expectedDiscriminator) {
-            request.result.error("device_mismatch", "کد اسکن‌شده با وسیلهٔ انتخاب‌شده هماهنگ نیست.", null)
-            return
-        }
         val network = NetworkCredentials.forWiFi(
             NetworkCredentials.WiFiCredentials(request.ssid, request.password),
         )
@@ -1626,6 +1620,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         if (subscriptionEpochs[nodeId to "onoff"] === token) {
                             onOffSubscriptionEndpoints.remove(nodeId)
                             stopSubscription(nodeId, "onoff")
+                            eventSink?.error("matter_subscription_lost", "OnOff reports interrupted",
+                                mapOf("nodeId" to nodeId, "kind" to "onoff"))
                         }
                     }
                     Log.e(TAG, "OnOff subscription failed", ex)
@@ -1687,6 +1683,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         if (subscriptionEpochs[nodeId to "level"] === token) {
                             levelSubscriptionEndpoints.remove(nodeId)
                             stopSubscription(nodeId, "level")
+                            levelEventSink?.error("matter_subscription_lost", "Level reports interrupted",
+                                mapOf("nodeId" to nodeId, "kind" to "level"))
                         }
                     }
                     Log.e(TAG, "LevelControl subscription failed", ex)

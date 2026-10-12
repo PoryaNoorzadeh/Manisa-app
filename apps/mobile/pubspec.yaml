@@ -1,7 +1,7 @@
 name: manisa_mobile
 description: Manisa local-first smart home mobile application.
 publish_to: none
-version: 0.25.0+30
+version: 0.25.1+31
 
 environment:
   sdk: ">=3.13.0 <4.0.0"

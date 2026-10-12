@@ -19,11 +19,14 @@ void main() {
     FlutterSecureStorage.setMockInitialValues(<String, String>{});
     const credentials = WifiCredentialStore();
     await credentials.remember('Home-24', 'saved-password');
+    await credentials.remember('Old-network', 'old-password');
+    var currentSsid = 'Home-24';
     await tester.binding.setSurfaceSize(const Size(800, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(onboardingChannel, (call) async {
       if (call.method == 'readMatterNfc') return 'MT:TEST';
+      if (call.method == 'currentWifi') return <String, Object?>{'ssid': currentSsid, 'frequency': 2412};
       if (call.method == 'scanWifi') return <String, Object?>{
         'fresh': true, 'networks': <Object?>[
           <String, Object?>{'ssid': 'Home-24', 'frequency': 2412, 'rssi': -40, 'secured': true},
@@ -37,6 +40,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: DirectMatterAddDeviceScreen(
       controller: controller, deviceStore: _Store())));
     await tester.pumpAndSettle();
+    expect(find.text('یافتن با بلوتوث'), findsNothing);
     await tester.tap(find.text('خواندن تگ NFC'));
     await tester.pumpAndSettle();
     expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, 'MT:TEST');
@@ -44,13 +48,75 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('ادامه'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Home-24').last);
-    await tester.pumpAndSettle();
     expect(tester.widget<TextField>(find.byType(TextField).at(0)).controller!.text, 'Home-24');
     final password = tester.widget<TextField>(find.byType(TextField).at(1));
     expect(password.controller!.text, 'saved-password');
     expect(password.obscureText, isTrue);
+    await tester.tap(find.text('نمایش شبکه‌های وای‌فای'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home-24').last);
+    await tester.pumpAndSettle();
+    currentSsid = 'Other-network';
+    await tester.tap(find.text('استفاده از وای‌فای متصل گوشی'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField).at(0)).controller!.text, 'Other-network');
+    expect(tester.widget<TextField>(find.byType(TextField).at(1)).controller!.text, isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('late OnOff read cannot overwrite a change from another phone', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    controller.pendingRead = Completer<bool>();
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pump();
+    controller.events.add(const DirectMatterOnOffEvent(nodeId: 7, endpoint: 1, value: false));
+    await tester.pump();
+    controller.pendingRead!.complete(true);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('terminal report error repairs only affected node without replaying commands', (tester) async {
+    final controller = _RecoveringController()..discovery.complete(<int>[1]);
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _MultiDeviceStore()));
+    await tester.pumpAndSettle();
+    controller.nodeValues[7] = false;
+    controller.events.addError(PlatformException(code: 'matter_subscription_lost',
+        details: <String, Object?>{'nodeId': 7, 'kind': 'onoff'}));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(controller.resetNodes, <int>[7]);
+    expect(controller.commandCalls, 0);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile).first).value, isFalse);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile).last).value, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('silent report gap reconciles state only while app is foreground', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    controller.nodeValues[7] = false;
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+    expect(controller.commandCalls, 0);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pumpAndSettle();
+    final reads = controller.readCalls;
+    await tester.pump(const Duration(seconds: 60));
+    expect(controller.readCalls, reads);
+    await tester.pumpWidget(const SizedBox.shrink());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await controller.events.close();
   });
 
@@ -1233,6 +1299,7 @@ class _Controller implements DirectMatterController {
   _Controller({this.initializationFails = false, this.readFails = false});
   bool readFails;
   bool commandFails = false;
+  int commandCalls = 0;
   Completer<bool>? pendingRead;
   int readCalls = 0;
   final Set<int> failingReadNodes = <int>{};
@@ -1288,6 +1355,7 @@ class _Controller implements DirectMatterController {
     required int endpoint,
     required bool value,
   }) async {
+    commandCalls++;
     if (commandFails) {
       throw PlatformException(code: 'matter_command_failed');
     }
@@ -1300,10 +1368,12 @@ class _Controller implements DirectMatterController {
 class _RecoveringController extends _Controller
     implements ConnectionRecoveryController {
   int resetCalls = 0;
+  final List<int> resetNodes = <int>[];
 
   @override
   Future<void> resetConnection(int nodeId) async {
     resetCalls++;
+    resetNodes.add(nodeId);
     readFails = false;
   }
 }
