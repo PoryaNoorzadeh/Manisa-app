@@ -43,6 +43,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Saved switch'), findsOneWidget);
     expect(controller.readCalls, 0);
+    await tester.ensureVisible(find.byTooltip('تنظیمات وسیله'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('تنظیمات وسیله'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('تغییر نام وسیله'));
@@ -51,6 +53,8 @@ void main() {
     await tester.tap(find.text('ذخیره'));
     await tester.pumpAndSettle();
     controller.failStartup = false;
+    await tester.ensureVisible(find.text('تلاش دوباره'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('تلاش دوباره'));
     await tester.pumpAndSettle();
     expect(store.loads, 1);
@@ -79,6 +83,59 @@ void main() {
     expect(controller.watchCalls, 1);
     expect(controller.startupCalls, 2);
     await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('partial subscription failure is cleaned up before a safe retry', (tester) async {
+    final controller = _PartialStartupController();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    expect(controller.events.hasListener, isFalse);
+    expect(controller.readCalls, 0);
+    controller.events.addError(PlatformException(code: 'matter_subscription_lost', details: {'nodeId': 7}));
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(controller.resets, 0);
+    controller.failLevels = false;
+    await tester.ensureVisible(find.text('تلاش دوباره'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تلاش دوباره'));
+    await tester.pumpAndSettle();
+    expect(controller.events.hasListener, isTrue);
+    expect(controller.levelEvents.hasListener, isTrue);
+    expect(controller.resets, 0);
+    expect(controller.readCalls, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+    await controller.levelEvents.close();
+  });
+
+  testWidgets('disposal during native startup creates no late listeners or reads', (tester) async {
+    final controller = _StartupController()..startupWait = Completer<bool>();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.startupWait!.complete(true);
+    await tester.pumpAndSettle();
+    expect(controller.readCalls, 0);
+    expect(controller.watchCalls, 0);
+    expect(tester.takeException(), isNull);
+    await controller.events.close();
+  });
+
+  testWidgets('disposal during refresh ignores late reads and progress updates', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    controller.pendingRead = Completer<bool>();
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.pendingRead!.complete(false);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
     await controller.events.close();
   });
 
@@ -268,6 +325,30 @@ void main() {
     await tester.tap(details);
     await tester.pumpAndSettle();
   }
+
+  testWidgets('refresh progress preserves expanded device lighting controls', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = _ColorController()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    await openOutputDetails(tester);
+    expect(find.byKey(const ValueKey('color-hue')), findsOneWidget);
+    controller.pendingRead = Completer<bool>();
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('device-refresh-progress')), findsOneWidget);
+    expect(find.byKey(const ValueKey('color-hue')), findsOneWidget);
+    controller.pendingRead!.complete(true);
+    controller.pendingRead = null;
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('color-hue')), findsOneWidget);
+    expect(find.byKey(const ValueKey('device-refresh-progress')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+    await controller.levelEvents.close();
+    await controller.colorEvents.close();
+  });
 
   testWidgets('direct output edit persists by endpoint and preserves other names', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 1400));
@@ -1063,6 +1144,8 @@ void main() {
     expect(control.onChanged, isNull);
 
     controller.readFails = false;
+    await tester.ensureVisible(find.text('تلاش دوباره'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('تلاش دوباره'));
     await tester.pumpAndSettle();
 
@@ -1830,4 +1913,20 @@ class _CountingStore extends _RenameStore {
     loads++;
     return super.load();
   }
+}
+
+class _PartialStartupController extends _StartupController
+    implements LevelEventController, ConnectionRecoveryController {
+  bool failLevels = true;
+  int resets = 0;
+  // Test-owned stream is closed after its widget is disposed.
+  // ignore: close_sinks
+  final levelEvents = StreamController<DirectMatterLevelEvent>.broadcast();
+  @override
+  Stream<DirectMatterLevelEvent> watchLevels() {
+    if (failLevels) throw StateError('level subscription setup failed');
+    return levelEvents.stream;
+  }
+  @override
+  Future<void> resetConnection(int nodeId) async { resets++; }
 }

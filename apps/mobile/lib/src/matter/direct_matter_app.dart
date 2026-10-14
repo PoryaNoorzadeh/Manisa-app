@@ -272,13 +272,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (!mounted) return;
       if (!supported) throw StateError('Controller initialization is not available.');
       // A retry after partial initialization must not duplicate subscriptions.
-      for (final subscription in <StreamSubscription<dynamic>?>[
-        _events, _levelEvents, _colorEvents, _electricalEvents, _sensorEvents,
-      ]) { await subscription?.cancel(); }
+      await _cancelReports();
       if (!mounted) return;
-      _events = null; _levelEvents = null; _colorEvents = null;
-      _electricalEvents = null; _sensorEvents = null;
-      _sensorFreshnessTimer?.cancel(); _automationTimer?.cancel();
       _events = widget.controller.watchOnOff().listen(
         (event) {
           if (!_canUpdate(event.nodeId)) return;
@@ -436,6 +431,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       initialized = true;
       _startSharedStateWatchdog();
     } catch (error) {
+      if (!_controllerReady) await _cancelReports();
       if (mounted) {
         _updateState(() => _error = _catalogLoaded
             ? 'Controller initialization failed: $error' : 'Could not load home: $error');
@@ -448,13 +444,26 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
+  Future<void> _cancelReports() async {
+    final subscriptions = <StreamSubscription<dynamic>?>[
+      _events, _levelEvents, _colorEvents, _electricalEvents, _sensorEvents,
+    ];
+    _events = null; _levelEvents = null; _colorEvents = null;
+    _electricalEvents = null; _sensorEvents = null;
+    _sensorFreshnessTimer?.cancel(); _automationTimer?.cancel();
+    await Future.wait(subscriptions.whereType<StreamSubscription<dynamic>>().map((subscription) async {
+      try { await subscription.cancel().timeout(const Duration(seconds: 2)); }
+      catch (_) { /* Cancelled Flutter listeners must not block startup retry. */ }
+    }));
+  }
+
   bool _canUpdate(int nodeId) =>
       mounted &&
       !_removingNodes.contains(nodeId) &&
       _devices.any((device) => device.nodeId == nodeId);
 
   void _onRealtimeFailure(Object error) {
-    if (!mounted) return;
+    if (!mounted || !_controllerReady) return;
     final details = error is PlatformException ? error.details : null;
     final nodeId = details is Map<Object?, Object?> ? details['nodeId'] : null;
     if (nodeId is int) {
@@ -465,11 +474,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   void _scheduleSubscriptionRepair(int nodeId) {
-    if (!_foreground || !_canUpdate(nodeId) || _subscriptionRepairs.containsKey(nodeId) ||
+    if (!_controllerReady || !_foreground || !_canUpdate(nodeId) || _subscriptionRepairs.containsKey(nodeId) ||
         _repairingSubscriptions.contains(nodeId)) return;
     _subscriptionRepairs[nodeId] = Timer(const Duration(seconds: 2), () async {
       _subscriptionRepairs.remove(nodeId);
-      if (!_foreground || !_canUpdate(nodeId)) return;
+      if (!_controllerReady || !_foreground || !_canUpdate(nodeId)) return;
       if (_refreshingNodes.contains(nodeId) || _reconcilingNodes.contains(nodeId)) {
         _scheduleSubscriptionRepair(nodeId);
         return;
@@ -483,7 +492,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                 .timeout(const Duration(seconds: 5));
           }
         } catch (_) { /* The read remains the authoritative connectivity check. */ }
-        if (!_foreground || !_canUpdate(nodeId)) return;
+        if (!_controllerReady || !_foreground || !_canUpdate(nodeId)) return;
         await _refreshDevice(_devices.firstWhere((device) => device.nodeId == nodeId));
         if (_unavailableNodes.contains(nodeId)) _scheduleConnectionRetry();
       } finally { _repairingSubscriptions.remove(nodeId); }
@@ -2481,6 +2490,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
               ),
             for (var index = 0; index < device.onOffEndpoints.length; index++)
               Builder(
+                key: ValueKey('output-row-${device.nodeId}-${device.onOffEndpoints[index]}'),
                 builder: (context) {
                   final endpoint = device.onOffEndpoints[index];
                   final key = _key(endpoint);
