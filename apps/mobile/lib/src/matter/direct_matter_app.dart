@@ -2208,11 +2208,13 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                           color: ManisaColors.mutedInk,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      _DeviceAvailabilityBadge(
-                        unavailable: unavailable,
-                        pending: busy.any((key) => key.startsWith('${device.nodeId}:')),
-                      ),
+                      if (!unavailable || error == null) ...<Widget>[
+                        const SizedBox(height: 8),
+                        _DeviceAvailabilityBadge(
+                          unavailable: unavailable,
+                          pending: busy.any((key) => key.startsWith('${device.nodeId}:')),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -2244,16 +2246,49 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
             if (error != null) ...<Widget>[
               const SizedBox(height: 8),
               Material(
-                color: Theme.of(context).colorScheme.errorContainer,
+                color: unavailable
+                    ? ManisaColors.warningSurface
+                    : Theme.of(context).colorScheme.errorContainer,
                 borderRadius: BorderRadius.circular(12),
                 child: Padding(
                   padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 8, 8),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Expanded(child: _MatterErrorNotice(error: error!)),
-                      TextButton(
-                        onPressed: onRefresh,
-                        child: const Text('تلاش دوباره'),
+                      if (unavailable)
+                        const Text(
+                          'ارتباط قطع است؛ وضعیت تازه دریافت نشده.',
+                          style: TextStyle(color: ManisaColors.warning),
+                        )
+                      else
+                        _MatterErrorNotice(error: error!),
+                      Wrap(
+                        spacing: 8,
+                        children: <Widget>[
+                          TextButton(
+                            onPressed: onRefresh,
+                            child: const Text('تلاش دوباره'),
+                          ),
+                          if (unavailable)
+                            TextButton(
+                              onPressed: () => showDialog<void>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('بررسی ارتباط'),
+                                  content: SingleChildScrollView(
+                                    child: _MatterErrorNotice(error: error!),
+                                  ),
+                                  actions: <Widget>[
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('بستن'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              child: const Text('راهنمای اتصال'),
+                            ),
+                        ],
                       ),
                     ],
                   ),
@@ -2468,7 +2503,7 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
     final value = widget.state;
     if (value == null) return 'وضعیت دریافت نشده';
     if (widget.unavailable) {
-      return 'در دسترس نیست · آخرین وضعیت: ${value ? 'روشن' : 'خاموش'}';
+      return 'آخرین وضعیت: ${value ? 'روشن' : 'خاموش'}';
     }
     if (widget.busy) return 'در حال انجام…';
     if (widget.device.isSocket(widget.endpoint)) {
@@ -2512,10 +2547,10 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                subtitle: Text(_stateLabel, style: TextStyle(color: statusColor)),
+                subtitle: _statusAndDetails(statusColor),
                 leading: _favoriteButton(),
                 trailing: TextButton(
-                  onPressed: widget.busy ? null : widget.onRefresh,
+                  onPressed: widget.busy || widget.unavailable ? null : widget.onRefresh,
                   child: const Text('بررسی'),
                 ),
               )
@@ -2527,51 +2562,12 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                subtitle: Text(_stateLabel, style: TextStyle(color: statusColor)),
+                subtitle: _statusAndDetails(statusColor),
                 value: value,
                 onChanged: enabled ? widget.onChanged : null,
                 secondary: _favoriteButton(),
               ),
             ...<Widget>[
-              const Divider(),
-              Semantics(
-                button: true,
-                expanded: _detailsOpen,
-                child: InkWell(
-                  onTap: () => setState(() => _detailsOpen = !_detailsOpen),
-                  borderRadius: const BorderRadius.vertical(
-                    bottom: Radius.circular(18),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 16, 12),
-                    child: Row(
-                      children: <Widget>[
-                        Icon(
-                          Icons.tune_rounded,
-                          size: 20,
-                          color: ManisaColors.tealPressed,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _hasAdvancedDetails
-                                ? 'نور و مصرف'
-                                : 'تنظیمات خروجی',
-                            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                              color: ManisaColors.tealPressed,
-                            ),
-                          ),
-                        ),
-                        AnimatedRotation(
-                          turns: _detailsOpen ? .5 : 0,
-                          duration: const Duration(milliseconds: 180),
-                          child: const Icon(Icons.keyboard_arrow_down_rounded),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
               AnimatedSize(
                 duration: const Duration(milliseconds: 180),
                 child: !_detailsOpen
@@ -2625,6 +2621,23 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
       ),
     );
   }
+
+  Widget _statusAndDetails(Color statusColor) => Row(
+    children: <Widget>[
+      Expanded(child: Text(_stateLabel, style: TextStyle(color: statusColor))),
+      Semantics(
+        expanded: _detailsOpen,
+        child: IconButton(
+          tooltip: _hasAdvancedDetails ? 'نور و مصرف' : 'تنظیمات خروجی',
+          onPressed: () => setState(() => _detailsOpen = !_detailsOpen),
+          icon: Icon(
+            _detailsOpen ? Icons.expand_less_rounded : Icons.tune_rounded,
+            color: ManisaColors.tealPressed,
+          ),
+        ),
+      ),
+    ],
+  );
 
   Widget _favoriteButton() => IconButton(
     tooltip: widget.favorite

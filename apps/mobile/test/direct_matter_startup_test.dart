@@ -124,10 +124,10 @@ void main() {
     WidgetTester tester, {
     int index = 0,
   }) async {
-    final advanced = find.text('نور و مصرف');
+    final advanced = find.byTooltip('نور و مصرف');
     final details = advanced.evaluate().isNotEmpty
         ? advanced.at(index)
-        : find.text('تنظیمات خروجی').at(index);
+        : find.byTooltip('تنظیمات خروجی').at(index);
     await tester.ensureVisible(details);
     await tester.tap(details);
     await tester.pumpAndSettle();
@@ -776,6 +776,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('home keeps nine outputs compact with independent detail controls', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final endpoints = List<int>.generate(9, (index) => index + 1);
+    final controller = _Controller()..discovery.complete(endpoints);
+    final store = _RenameStore()..fail = false;
+    store.device = store.device.copyWith(onOffEndpoints: endpoints);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SwitchListTile), findsNWidgets(9));
+    expect(find.text('تنظیمات خروجی'), findsNothing);
+    expect(find.byTooltip('تنظیمات خروجی'), findsNWidgets(9));
+    final firstControl = tester.getSize(find.byType(SwitchListTile).first);
+    expect(firstControl.height, lessThan(130));
+    await openOutputDetails(tester);
+    expect(find.byKey(const ValueKey('rename-output-7-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rename-output-7-2')), findsNothing);
+    await tester.tap(find.byTooltip('تنظیمات خروجی').first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rename-output-7-1')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('offline refresh preserves context and retry restores control', (
     tester,
   ) async {
@@ -794,8 +819,10 @@ void main() {
     await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pumpAndSettle();
 
-    expect(find.text('در دسترس نیست · آخرین وضعیت: روشن'), findsOneWidget);
+    expect(find.text('آخرین وضعیت: روشن'), findsOneWidget);
     expect(find.text('تلاش دوباره'), findsOneWidget);
+    expect(find.text('ارتباط قطع است؛ وضعیت تازه دریافت نشده.'), findsOneWidget);
+    expect(find.text('در دسترس نیست'), findsNothing);
     control = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
     expect(control.value, isTrue);
     expect(control.onChanged, isNull);
@@ -804,7 +831,7 @@ void main() {
     await tester.tap(find.text('تلاش دوباره'));
     await tester.pumpAndSettle();
 
-    expect(find.text('در دسترس نیست · آخرین وضعیت: روشن'), findsNothing);
+    expect(find.text('آخرین وضعیت: روشن'), findsNothing);
     expect(find.text('تلاش دوباره'), findsNothing);
     control = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
     expect(control.value, isTrue);

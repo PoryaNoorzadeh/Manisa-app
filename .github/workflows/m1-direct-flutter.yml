@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m7-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m9-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -194,7 +194,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M7"
+            echo "milestone=M9"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -203,7 +203,10 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M8 onboarding and sharing candidate - physical acceptance pending
+          Manisa M9 compact home candidate - physical acceptance pending
+          - Inline output-detail buttons replace repeated disclosure rows
+          - One actionable offline notice per device; preserved state remains explicit
+          - Nine-output layout and recovery regression coverage
           M8.1: shared-state recovery and connected-phone Wi-Fi
           - Removed standalone BLE discovery option; internal BLE commissioning retained
           - Node-specific subscription repair and foreground state reconciliation
@@ -211,8 +214,7 @@ jobs:
           - Auto-select connected SSID and securely stored password for that SSID
           - Wi-Fi network list with runtime permissions and hidden-network fallback
           - Secure on-device Wi-Fi password memory and explicit forget action
-          - NFC Matter NDEF tag reading and filtered Matter BLE discovery
-          - BLE choice requires QR/NFC proof and matching discriminator
+          - NFC Matter NDEF tag reading; internal BLE rendezvous only
           - Temporary Matter multi-admin QR and on-network receiver onboarding
           - Full Persian weekday labels; prioritized screenshot audit in docs/product
           - Compact daily device controls based on Android screenshot review
