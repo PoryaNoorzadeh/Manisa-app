@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/persian_digits.dart';
+import '../design/loading_feedback.dart';
 import '../design/manisa_theme.dart';
 import 'manual_scene.dart';
 import 'scene_automation.dart';
@@ -134,7 +135,7 @@ final class _SceneAutomationScreenState extends State<SceneAutomationScreen> {
       label: const Text('زمان‌بندی جدید'),
     ),
     body: _loading
-        ? const Center(child: CircularProgressIndicator())
+        ? const LoadingNotice(label: 'در حال خواندن زمان‌بندی‌ها…')
         : ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
             children: <Widget>[
@@ -327,13 +328,13 @@ final class _AutomationEditorState extends State<_AutomationEditor> {
           Wrap(
             spacing: 6,
             children: const <(int, String)>[
-              (DateTime.saturday, 'ش'),
-              (DateTime.sunday, 'ی'),
-              (DateTime.monday, 'د'),
-              (DateTime.tuesday, 'س'),
-              (DateTime.wednesday, 'چ'),
-              (DateTime.thursday, 'پ'),
-              (DateTime.friday, 'ج'),
+              (DateTime.saturday, 'شنبه'),
+              (DateTime.sunday, 'یکشنبه'),
+              (DateTime.monday, 'دوشنبه'),
+              (DateTime.tuesday, 'سه‌شنبه'),
+              (DateTime.wednesday, 'چهارشنبه'),
+              (DateTime.thursday, 'پنجشنبه'),
+              (DateTime.friday, 'جمعه'),
             ].map((item) => FilterChip(
               label: Text(item.$2),
               selected: _weekdays.contains(item.$1),
