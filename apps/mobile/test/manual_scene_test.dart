@@ -192,11 +192,13 @@ void main() {
       execute: (_) async => true, runner: SceneRunner())));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('ویرایش'), 300);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('ویرایش'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('تغییر خروجی‌ها'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.byKey(const ValueKey('scene-select-7:33')), 300);
+    await tester.pumpAndSettle();
     expect(tester.widget<CheckboxListTile>(find.byKey(const ValueKey('scene-select-7:33'))).onChanged, isNull);
     expect(find.text('۳۲ خروجی انتخاب شده'), findsOneWidget);
   });
