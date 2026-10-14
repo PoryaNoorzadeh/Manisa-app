@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../core/persian_digits.dart';
+import '../design/loading_feedback.dart';
 import '../design/manisa_theme.dart';
 import 'color_control.dart';
 import 'color_control_widget.dart';
@@ -148,6 +149,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   final Map<int, String> _deviceErrors = <int, String>{};
   static const _readTimeout = Duration(seconds: 15);
   bool _loading = true;
+  bool _catalogLoaded = false;
+  bool _controllerReady = false;
+  bool _initializing = false;
+  Future<void>? _allRefreshTask;
+  Future<void>? _initializationTask;
+  final Map<int, Future<void>> _deviceRefreshTasks = {};
+  DateTime? _lastCheck;
   bool _editingMetadata = false;
   bool _retrying = false;
   bool _foreground = true;
@@ -203,7 +211,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       _connectionRetryTimer = null;
       return;
     }
-    if (_loading || _devices.isEmpty) {
+    if (_loading || !_controllerReady || _devices.isEmpty) {
       return;
     }
     _startSharedStateWatchdog();
@@ -220,19 +228,27 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   String _stateKey(int nodeId, int endpoint) => '$nodeId:$endpoint';
 
-  Future<void> _initialize() async {
+  Future<void> _initialize() {
+    final existing = _initializationTask;
+    if (existing != null) return existing;
+    final task = _performInitialize();
+    _initializationTask = task;
+    return task.whenComplete(() {
+      if (identical(_initializationTask, task)) _initializationTask = null;
+    });
+  }
+
+  Future<void> _performInitialize() async {
+    _updateState(() { _initializing = true; _loading = !_catalogLoaded; _error = null; });
     var initialized = false;
     try {
-      final supported = await widget.controller.isSupported();
-      if (!supported) {
-        throw StateError('Direct Matter is not available on this device.');
-      }
+      if (!_catalogLoaded) {
       final loaded = await Future.wait<Object>(<Future<Object>>[
         widget.deviceStore.load(),
         widget.roomStore.load(),
         widget.homeStore.load(),
         widget.favoriteStore.load(),
-      ]);
+      ]).timeout(_readTimeout);
       final devices = loaded[0] as List<DirectMatterDevice>;
       final roomCatalog = loaded[1] as RoomCatalog;
       final homeProfile = loaded[2] as ManisaHomeProfile;
@@ -250,6 +266,19 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           ),
         );
       });
+      _updateState(() { _catalogLoaded = true; _loading = false; });
+      }
+      final supported = await widget.controller.isSupported().timeout(_readTimeout);
+      if (!mounted) return;
+      if (!supported) throw StateError('Controller initialization is not available.');
+      // A retry after partial initialization must not duplicate subscriptions.
+      for (final subscription in <StreamSubscription<dynamic>?>[
+        _events, _levelEvents, _colorEvents, _electricalEvents, _sensorEvents,
+      ]) { await subscription?.cancel(); }
+      if (!mounted) return;
+      _events = null; _levelEvents = null; _colorEvents = null;
+      _electricalEvents = null; _sensorEvents = null;
+      _sensorFreshnessTimer?.cancel(); _automationTimer?.cancel();
       _events = widget.controller.watchOnOff().listen(
         (event) {
           if (!_canUpdate(event.nodeId)) return;
@@ -397,6 +426,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           });
         });
       }
+      _updateState(() => _controllerReady = true);
       // Restore live state without blocking the home screen or onboarding.
       unawaited(_refreshAllStates());
       _automationTimer = Timer.periodic(
@@ -407,11 +437,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       _startSharedStateWatchdog();
     } catch (error) {
       if (mounted) {
-        _updateState(() => _error = error.toString());
+        _updateState(() => _error = _catalogLoaded
+            ? 'Controller initialization failed: $error' : 'Could not load home: $error');
       }
     } finally {
       if (mounted) {
-        _updateState(() => _loading = false);
+        _updateState(() { _loading = false; _initializing = false; });
         if (initialized) unawaited(_checkAutomations());
       }
     }
@@ -517,10 +548,23 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     } finally { _reconcilingNodes.remove(nodeId); }
   }
 
-  Future<void> _refreshAllStates() async {
+  Future<void> _refreshAllStates() {
+    if (!_controllerReady || !mounted) return Future<void>.value();
+    final existing = _allRefreshTask;
+    if (existing != null) return existing;
+    final task = _performRefreshAll();
+    _allRefreshTask = task;
+    return task.whenComplete(() {
+      if (identical(_allRefreshTask, task)) _allRefreshTask = null;
+    });
+  }
+
+  Future<void> _performRefreshAll() async {
     await Future.wait(
       List<DirectMatterDevice>.of(_devices).map(_refreshDevice),
     );
+    if (!mounted) return;
+    _updateState(() => _lastCheck = DateTime.now());
     if (_unavailableNodes.isEmpty) {
       _connectionRetryTimer?.cancel();
       _connectionRetryTimer = null;
@@ -530,10 +574,21 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-  Future<void> _refreshDevice(DirectMatterDevice device) async {
-    if (!_canUpdate(device.nodeId) || !_refreshingNodes.add(device.nodeId)) {
-      return;
-    }
+  Future<void> _refreshDevice(DirectMatterDevice device) {
+    if (!_controllerReady || !_canUpdate(device.nodeId)) return Future<void>.value();
+    final existing = _deviceRefreshTasks[device.nodeId];
+    if (existing != null) return existing;
+    final task = _performRefreshDevice(device);
+    _deviceRefreshTasks[device.nodeId] = task;
+    return task.whenComplete(() {
+      if (identical(_deviceRefreshTasks[device.nodeId], task)) {
+        _deviceRefreshTasks.remove(device.nodeId);
+      }
+    });
+  }
+
+  Future<void> _performRefreshDevice(DirectMatterDevice device) async {
+    _updateState(() => _refreshingNodes.add(device.nodeId));
     try {
       // Known endpoints are read before discovery so a discovery failure never
       // hides values that were already confirmed.
@@ -584,7 +639,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             _deviceErrors.remove(device.nodeId);
           }
         });
-        unawaited(_refreshOptionalControls(device.nodeId));
+        await _refreshOptionalControls(device.nodeId);
       }
     } catch (error) {
       if (_canUpdate(device.nodeId)) {
@@ -596,7 +651,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         if (device.onOffEndpoints.isEmpty) await _refreshSensors(device.nodeId);
       }
     } finally {
-      _refreshingNodes.remove(device.nodeId);
+      if (mounted) _updateState(() => _refreshingNodes.remove(device.nodeId));
+      else { _refreshingNodes.remove(device.nodeId); }
     }
   }
 
@@ -715,7 +771,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     final controller = widget.controller;
     final key = _stateKey(device.nodeId, endpoint);
     final state = _colors[key];
-    if (controller is! ColorControlController || state == null || !state.supportsColor ||
+    if (!_controllerReady || controller is! ColorControlController || state == null || !state.supportsColor ||
         !_canUpdate(device.nodeId) || _unavailableNodes.contains(device.nodeId) ||
         _staleColors.contains(key) || !_busy.add(key)) return;
     final lifetime = _colorLifetimes.putIfAbsent(device.nodeId, Object.new);
@@ -872,6 +928,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   Future<void> _retryConnections() async {
+    if (!_controllerReady) {
+      await _initialize();
+      if (_controllerReady) await _refreshAllStates();
+      return;
+    }
     await _recoverConnections();
   }
 
@@ -894,7 +955,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   Future<void> _recoverConnections() async {
-    if (!mounted || !_foreground || _retrying) return;
+    if (!mounted || !_foreground || !_controllerReady || _retrying) return;
     _connectionRetryTimer?.cancel();
     _connectionRetryTimer = null;
     _updateState(() => _retrying = true);
@@ -930,7 +991,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   Future<void> _addDevice() async {
-    if (_editingMetadata) return;
+    if (_editingMetadata || !_controllerReady) return;
     final device = await Navigator.of(context).push<DirectMatterDevice>(
       MaterialPageRoute<DirectMatterDevice>(
         builder: (_) => DirectMatterAddDeviceScreen(
@@ -953,7 +1014,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   Future<bool> _executeSceneAction(SceneAction action) async {
     final key = _stateKey(action.nodeId, action.endpoint);
-    if (!_canUpdate(action.nodeId) || _busy.contains(key) ||
+    if (!_controllerReady || !_canUpdate(action.nodeId) || _busy.contains(key) ||
         !_devices.any((d) => d.nodeId == action.nodeId && d.onOffEndpoints.contains(action.endpoint))) {
       throw StateError('output unavailable');
     }
@@ -987,7 +1048,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   Future<void> _checkAutomations() async {
-    if (!mounted || !_foreground || _loading || _checkingAutomations ||
+    if (!mounted || !_foreground || _loading || !_controllerReady || _checkingAutomations ||
         _automationScreenOpen || _sceneRunner.running) return;
     _checkingAutomations = true;
     try {
@@ -1040,7 +1101,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     bool value,
   ) async {
     final key = _stateKey(device.nodeId, endpoint);
-    if (_busy.contains(key) || !_canUpdate(device.nodeId)) return;
+    if (!_controllerReady || _busy.contains(key) || !_canUpdate(device.nodeId)) return;
     _updateState(() {
       _busy.add(key);
       _stateRevisions[key] = (_stateRevisions[key] ?? 0) + 1;
@@ -1075,7 +1136,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   Future<void> _setLevel(DirectMatterDevice device, int endpoint, int level) async {
     final controller = widget.controller;
     final key = _stateKey(device.nodeId, endpoint);
-    if (controller is! LevelControlController ||
+    if (!_controllerReady || controller is! LevelControlController ||
         _busy.contains(key) || !_canUpdate(device.nodeId)) return;
     final levelController = controller as LevelControlController;
     final requested = level.clamp(1, 254);
@@ -1577,7 +1638,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                 outputIndex: item.$3,
                 roomName: _roomNameForDevice(item.$2.nodeId),
                 state: _states[_stateKey(item.$2.nodeId, item.$1.endpoint)],
-                busy: _busy.contains(
+                busy: !_controllerReady || _busy.contains(
                   _stateKey(item.$2.nodeId, item.$1.endpoint),
                 ),
                 unavailable: _unavailableNodes.contains(item.$2.nodeId),
@@ -1674,6 +1735,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     Navigator.of(context).push<void>(MaterialPageRoute<void>(
       builder: (_) => DeviceDetailScreen(
         updates: _deviceViewChanges,
+        refreshing: () => _initializing || _refreshingNodes.contains(nodeId),
         resolve: () {
           if (!mounted) return null;
           for (final device in _devices) {
@@ -1682,7 +1744,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           return null;
         },
         controls: _deviceControls,
-        onRefresh: (device) => _refreshDevice(device),
+        onRefresh: (device) => _controllerReady ? _refreshDevice(device) : _retryConnections(),
       ),
     ));
   }
@@ -1690,6 +1752,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   Widget _deviceControls(BuildContext context, DirectMatterDevice device) {
     return _DirectMatterDeviceCard(
             device: device,
+            controllerReady: _controllerReady,
+            checking: _refreshingNodes.contains(device.nodeId) || _initializing,
             roomName: _roomNameForDevice(device.nodeId),
             states: _states,
             levels: _levels,
@@ -1699,7 +1763,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             onRenameChannel: (endpoint) => _renameChannel(device, endpoint),
             electricalMeasurements: _electricalMeasurements,
             sensorObservations: _sensorObservations,
-            powerController: widget.controller is PowerSourceController
+            powerController: _controllerReady && widget.controller is PowerSourceController
                 ? widget.controller as PowerSourceController : null,
             staleElectricalMetrics: _staleElectricalMetrics,
             busy: _busy,
@@ -1728,6 +1792,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       device: device, states: _states, roomName: _roomNameForDevice(device.nodeId),
       unavailable: unavailable,
       availability: _DeviceAvailabilityBadge(unavailable: unavailable,
+        ready: _controllerReady, initializing: _initializing,
+        checking: _refreshingNodes.contains(device.nodeId),
         pending: _busy.any((key) => key.startsWith('${device.nodeId}:'))),
       errorMessage: error == null || error.startsWith('Could not refresh') || error.startsWith('Realtime')
         ? null : _MatterErrorNotice(error: error).message,
@@ -1745,10 +1811,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         itemBuilder: (_) => [
           const PopupMenuItem(value: 'rename', child: Text('تغییر نام وسیله')),
           const PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
-          PopupMenuItem(value: 'share', enabled: !unavailable, child: const Text('اشتراک‌گذاری')),
+          PopupMenuItem(value: 'share', enabled: _controllerReady && !unavailable, child: const Text('اشتراک‌گذاری')),
           if (device.onOffEndpoints.isNotEmpty)
             const PopupMenuItem(value: 'channels', child: Text('نام خروجی‌ها')),
-          const PopupMenuItem(value: 'remove', child: Text('حذف وسیله')),
+          PopupMenuItem(value: 'remove', enabled: _controllerReady, child: const Text('حذف وسیله')),
         ],
       ),
       primaryControl: endpoint == null ? null : _DeviceOutputControl(
@@ -1761,6 +1827,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         busy: _busy.contains(key), unavailable: unavailable,
         favorite: _favorites.contains(device.nodeId, endpoint),
         showDetailsButton: false,
+        controlReady: _controllerReady,
+        checking: _initializing || _refreshingNodes.contains(device.nodeId),
         onChanged: (value) => _setOnOff(device, endpoint, value),
         onLevelChanged: (level) => _setLevel(device, endpoint, level),
         onColorChanged: (color) => _setColor(device, endpoint, color),
@@ -1788,17 +1856,17 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                   onPressed: _loading || _editingMetadata ? null : _createRoom,
                   icon: const Icon(Icons.add_home_outlined),
                 ),
-                IconButton(
-                  tooltip: 'بررسی وضعیت',
-                  onPressed: _loading ? null : _refreshAllStates,
-                  icon: const Icon(Icons.refresh),
+                RefreshAction(
+                  refreshing: _initializing || _refreshingNodes.any(_canUpdate),
+                  onRefresh: _loading ? null : _controllerReady ? _refreshAllStates : _retryConnections,
+                  progressKey: const ValueKey('home-refresh-progress'),
                 ),
               ]
             : const <Widget>[],
       ),
       floatingActionButton: _selectedDestination == 0
           ? FloatingActionButton.extended(
-              onPressed: _loading ? null : _addDevice,
+              onPressed: _loading || !_controllerReady ? null : _addDevice,
               icon: const Icon(Icons.add),
               label: const Text('افزودن وسیله'),
             )
@@ -1828,17 +1896,27 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingNotice(label: 'در حال خواندن خانهٔ تو…')
           : switch (_selectedDestination) {
               0 => RefreshIndicator(
-              onRefresh: _refreshAllStates,
+              onRefresh: _controllerReady ? _refreshAllStates : _retryConnections,
               child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
                 children: <Widget>[
+                  if (_initializing || _refreshingNodes.any(_canUpdate) || _lastCheck != null)
+                    Padding(padding: const EdgeInsets.only(bottom: 12),
+                      child: Semantics(liveRegion: true, child: Text(
+                        _initializing ? 'در حال آماده‌سازی ارتباط…'
+                        : _refreshingNodes.any(_canUpdate) ? 'در حال تازه‌سازی؛ کنترل‌های آماده قابل استفاده‌اند.'
+                        : 'آخرین بررسی: ${toPersianDigits('${_lastCheck!.hour.toString().padLeft(2, '0')}:${_lastCheck!.minute.toString().padLeft(2, '0')}')}',
+                      ))),
                   _HomeHealthCard(
                     deviceCount: _devices.length,
                     unavailableCount: _unavailableNodes.length,
                     recovering: _retrying,
+                    checking: _initializing || _refreshingNodes.any(_canUpdate),
+                    ready: _controllerReady,
                   ),
                   if (_error != null) ...<Widget>[
                     const SizedBox(height: 16),
@@ -1846,7 +1924,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                       content: _MatterErrorNotice(error: _error!),
                       actions: <Widget>[
                         TextButton(
-                          onPressed: _retrying ? null : _retryConnections,
+                          onPressed: _retrying || _initializing ? null : _retryConnections,
                           child: Text(
                             _retrying ? 'در حال بررسی…' : 'تلاش دوباره',
                           ),
@@ -1863,7 +1941,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                   const SizedBox(height: 24),
                   if (_favorites.outputs.isNotEmpty)
                     ..._favoriteSection(context),
-                  if (_devices.isEmpty && _roomCatalog.rooms.isEmpty)
+                  if (_catalogLoaded && _error == null && _devices.isEmpty && _roomCatalog.rooms.isEmpty)
                     const _EmptyDirectMatterState(),
                   if (_devices.isNotEmpty || _roomCatalog.rooms.isNotEmpty)
                     ..._roomSections(context),
@@ -1891,32 +1969,40 @@ final class _HomeHealthCard extends StatelessWidget {
     required this.deviceCount,
     required this.unavailableCount,
     required this.recovering,
+    this.checking = false,
+    this.ready = true,
   });
 
   final int deviceCount;
   final int unavailableCount;
   final bool recovering;
+  final bool checking;
+  final bool ready;
 
   @override
   Widget build(BuildContext context) {
-    final healthy = unavailableCount == 0;
-    final icon = healthy ? Icons.check_circle_rounded : Icons.wifi_off_rounded;
-    final title = deviceCount == 0
+    final healthy = ready && unavailableCount == 0;
+    final icon = checking ? Icons.sync_rounded : healthy && ready ? Icons.check_circle_rounded : Icons.wifi_off_rounded;
+    final title = checking ? 'در حال دریافت وضعیت خانه'
+        : !ready ? 'ارتباط خانه آماده نیست'
+        : deviceCount == 0
         ? 'خانه برای اولین وسیله آماده است'
         : healthy
             ? 'همه‌چیز آماده است'
             : recovering
                 ? 'در حال بازیابی ارتباط'
                 : '${toPersianDigits(unavailableCount)} وسیله در دسترس نیست';
-    final subtitle = deviceCount == 0
+    final subtitle = checking ? 'کنترل‌های آماده همچنان قابل استفاده‌اند.'
+        : !ready ? 'راه‌اندازی ارتباط را دوباره امتحان کن.'
+        : deviceCount == 0
         ? 'وسیله را اضافه کن و اولین کنترل را همین‌جا ببین.'
         : healthy
             ? '${toPersianDigits(deviceCount)} وسیله در شبکهٔ خانه در دسترس است.'
             : 'آخرین وضعیت معتبر حفظ شده و مانیسا دوباره تلاش می‌کند.';
-    final background = healthy
+    final background = checking || healthy
         ? ManisaColors.mint
         : ManisaColors.warningSurface;
-    final foreground = healthy
+    final foreground = checking || healthy
         ? ManisaColors.tealPressed
         : ManisaColors.warning;
 
@@ -2182,6 +2268,8 @@ final class _EmptyDirectMatterState extends StatelessWidget {
 
 final class _DirectMatterDeviceCard extends StatelessWidget {
   const _DirectMatterDeviceCard({
+    this.controllerReady = true,
+    this.checking = false,
     required this.device,
     required this.roomName,
     required this.states,
@@ -2209,6 +2297,8 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.onToggleFavorite,
   });
 
+  final bool controllerReady;
+  final bool checking;
   final DirectMatterDevice device;
   final String? roomName;
   final Map<String, bool> states;
@@ -2295,6 +2385,8 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         const SizedBox(height: 8),
                         _DeviceAvailabilityBadge(
                           unavailable: unavailable,
+                          ready: controllerReady, checking: checking,
+                          initializing: !controllerReady && checking,
                           pending: busy.any((key) => key.startsWith('${device.nodeId}:')),
                         ),
                       ],
@@ -2316,12 +2408,12 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                       child: Text('تغییر نام وسیله'),
                     ),
                     PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
-                    PopupMenuItem(value: 'share', enabled: !unavailable, child: Text('اشتراک‌گذاری')),
+                    PopupMenuItem(value: 'share', enabled: controllerReady && !unavailable, child: Text('اشتراک‌گذاری')),
                     if (device.onOffEndpoints.isNotEmpty) const PopupMenuItem(
                       value: 'channels',
                       child: Text('نام خروجی‌ها'),
                     ),
-                    PopupMenuItem(value: 'remove', child: Text('حذف وسیله')),
+                    PopupMenuItem(value: 'remove', enabled: controllerReady, child: Text('حذف وسیله')),
                   ],
                 ),
               ],
@@ -2400,6 +2492,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   return _DeviceOutputControl(
                     key: ValueKey('device-output-${device.nodeId}-$endpoint'),
                     device: device,
+                    controlReady: controllerReady, checking: checking,
                     endpoint: endpoint,
                     outputIndex: index,
                     state: state,
@@ -2429,11 +2522,11 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   trailing: IconButton(tooltip: 'تغییر نام خروجی', icon: const Icon(Icons.edit_outlined),
                     onPressed: () => onRenameChannel(endpoint))),
                 ColorControl(key: ValueKey('color-${device.nodeId}-$endpoint'),
-                  state: colors[_key(endpoint)], enabled: !busy.contains(_key(endpoint)) && !unavailable,
+                  state: colors[_key(endpoint)], enabled: controllerReady && !busy.contains(_key(endpoint)) && !unavailable,
                   stale: staleColors.contains(_key(endpoint)) || unavailable,
                   onRefresh: onRefresh, onChanged: (color) => onColorChanged(endpoint, color)),
                 if (device.levelEndpoints.contains(endpoint)) _LevelControl(
-                  level: levels[_key(endpoint)], enabled: !busy.contains(_key(endpoint)) && !unavailable,
+                  level: levels[_key(endpoint)], enabled: controllerReady && !busy.contains(_key(endpoint)) && !unavailable,
                   onChanged: (value) => onLevelChanged(endpoint, value)),
               ],
             if (powerController != null)
@@ -2473,22 +2566,34 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
 
 final class _DeviceAvailabilityBadge extends StatelessWidget {
   const _DeviceAvailabilityBadge({
+    this.checking = false,
+    this.initializing = false,
+    this.ready = true,
     required this.unavailable,
     required this.pending,
   });
 
+  final bool checking;
+  final bool initializing;
+  final bool ready;
   final bool unavailable;
   final bool pending;
 
   @override
   Widget build(BuildContext context) {
-    final (icon, label, foreground, background) = unavailable
+    final (icon, label, foreground, background) = initializing
+        ? (Icons.sync_rounded, 'در حال اتصال', ManisaColors.tealPressed, ManisaColors.mint)
+        : !ready
+        ? (Icons.wifi_off_rounded, 'ارتباط آماده نیست', ManisaColors.warning, ManisaColors.warningSurface)
+        : unavailable
         ? (
             Icons.wifi_off_rounded,
             'در دسترس نیست',
             ManisaColors.warning,
             ManisaColors.warningSurface,
           )
+        : checking
+            ? (Icons.sync_rounded, 'در حال دریافت وضعیت', ManisaColors.tealPressed, ManisaColors.mint)
         : pending
             ? (
                 Icons.sync_rounded,
@@ -2536,6 +2641,8 @@ final class _DeviceAvailabilityBadge extends StatelessWidget {
 final class _DeviceOutputControl extends StatefulWidget {
   const _DeviceOutputControl({
     super.key,
+    this.controlReady = true,
+    this.checking = false,
     this.showDetailsButton = true,
     required this.device,
     required this.endpoint,
@@ -2557,6 +2664,8 @@ final class _DeviceOutputControl extends StatefulWidget {
     required this.onLevelChanged,
   });
 
+  final bool controlReady;
+  final bool checking;
   final bool showDetailsButton;
   final DirectMatterDevice device;
   final int endpoint;
@@ -2591,7 +2700,7 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
 
   String get _stateLabel {
     final value = widget.state;
-    if (value == null) return 'وضعیت دریافت نشده';
+    if (value == null) return widget.checking ? 'در حال دریافت وضعیت' : 'وضعیت دریافت نشده';
     if (widget.unavailable) {
       return 'آخرین وضعیت: ${value ? 'روشن' : 'خاموش'}';
     }
@@ -2605,7 +2714,7 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
   @override
   Widget build(BuildContext context) {
     final value = widget.state;
-    final enabled = !widget.busy && !widget.unavailable;
+    final enabled = widget.controlReady && !widget.busy && !widget.unavailable;
     final statusColor = widget.unavailable
         ? ManisaColors.warning
         : value == true
@@ -2642,7 +2751,7 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                     : Text(_stateLabel, style: TextStyle(color: statusColor)),
                 leading: _favoriteButton(),
                 trailing: TextButton(
-                  onPressed: widget.busy || widget.unavailable ? null : widget.onRefresh,
+                  onPressed: !widget.controlReady || widget.checking || widget.busy || widget.unavailable ? null : widget.onRefresh,
                   child: const Text('بررسی'),
                 ),
               )
@@ -3472,6 +3581,7 @@ final class _MatterErrorNotice extends StatelessWidget {
   final String error;
 
   String get message {
+    if (error.startsWith('Could not load home')) return 'خانه خوانده نشد. دوباره تلاش کن.';
     if (error.contains('matter_ble_failed'))
       return 'وسیله پیدا نشد. نزدیک آن بمان و حالت اتصال و بلوتوث را بررسی کن.';
     if (error.startsWith('Remove failed'))

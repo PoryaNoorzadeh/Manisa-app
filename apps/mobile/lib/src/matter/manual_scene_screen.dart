@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../core/persian_digits.dart';
+import '../design/loading_feedback.dart';
 import '../design/manisa_theme.dart';
 import 'direct_device_store.dart';
 import 'level_control.dart';
@@ -92,7 +93,7 @@ final class _ManualSceneScreenState extends State<ManualSceneScreen> {
       floatingActionButton:FloatingActionButton.extended(
         onPressed:busy || _loading || _error!=null ? null : () => _edit(),
         icon:const Icon(Icons.add),label:const Text('سناریوی جدید')),
-      body:_loading ? const Center(child:CircularProgressIndicator()) : ListView(
+      body:_loading ? const LoadingNotice(label: 'در حال خواندن سناریوها…') : ListView(
         padding:const EdgeInsets.fromLTRB(16,16,16,100),children:<Widget>[
           Text('یک لمس، چند تغییر', style:Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height:8),

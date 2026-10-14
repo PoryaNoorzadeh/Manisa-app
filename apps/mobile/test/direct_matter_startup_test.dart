@@ -15,6 +15,131 @@ import 'package:manisa_mobile/src/matter/onboarding_services.dart';
 import 'package:manisa_mobile/src/matter/room_store.dart';
 
 void main() {
+  testWidgets('saved Home is visible during native startup without premature radio calls', (tester) async {
+    final controller = _StartupController()..startupWait = Completer<bool>();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    expect(find.text('Saved switch'), findsOneWidget);
+    expect(find.text('در حال آماده‌سازی ارتباط…'), findsOneWidget);
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(controller.readCalls, 0);
+    expect(controller.watchCalls, 0);
+    expect(tester.widget<FloatingActionButton>(find.byType(FloatingActionButton)).onPressed, isNull);
+    controller.startupWait!.complete(true);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNotNull);
+    expect(controller.watchCalls, 1);
+    expect(find.byKey(const ValueKey('home-refresh-progress')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('startup retry preserves edited metadata and creates one subscription', (tester) async {
+    final controller = _StartupController()..failStartup = true;
+    controller.discovery.complete(<int>[1]);
+    final store = _CountingStore()..fail = false;
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    expect(find.text('Saved switch'), findsOneWidget);
+    expect(controller.readCalls, 0);
+    await tester.tap(find.byTooltip('تنظیمات وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تغییر نام وسیله'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'چراغ ورودی');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    controller.failStartup = false;
+    await tester.tap(find.text('تلاش دوباره'));
+    await tester.pumpAndSettle();
+    expect(store.loads, 1);
+    expect(find.text('چراغ ورودی'), findsOneWidget);
+    expect(controller.watchCalls, 1);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNotNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('native startup timeout is retryable and late completion does not activate controls', (tester) async {
+    final controller = _StartupController()..startupWait = Completer<bool>();
+    controller.discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 16));
+    await tester.pumpAndSettle();
+    expect(find.text('تلاش دوباره'), findsOneWidget);
+    controller.startupWait!.complete(true);
+    await tester.pumpAndSettle();
+    expect(controller.readCalls, 0);
+    expect(controller.watchCalls, 0);
+    controller.startupWait = null;
+    await tester.tap(find.text('تلاش دوباره'));
+    await tester.pumpAndSettle();
+    expect(controller.watchCalls, 1);
+    expect(controller.startupCalls, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('overlapping Home refreshes wait for one task and keep confirmed controls', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    final reads = controller.readCalls;
+    controller.pendingRead = Completer<bool>();
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+    var firstDone = false;
+    var secondDone = false;
+    final refresh = tester.widget<RefreshIndicator>(find.byType(RefreshIndicator));
+    final first = refresh.onRefresh().then((_) => firstDone = true);
+    final second = refresh.onRefresh().then((_) => secondDone = true);
+    await tester.pumpAndSettle();
+    expect(controller.readCalls, reads + 1);
+    expect(firstDone, isFalse);
+    expect(secondDone, isFalse);
+    expect(find.byKey(const ValueKey('home-refresh-progress')), findsOneWidget);
+    final toggle = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+    expect(toggle.value, isTrue);
+    expect(toggle.onChanged, isNotNull);
+    controller.pendingRead!.complete(false);
+    controller.pendingRead = null;
+    await tester.pumpAndSettle();
+    await Future.wait([first, second]);
+    expect(firstDone, isTrue);
+    expect(secondDone, isTrue);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+    expect(find.byKey(const ValueKey('home-refresh-progress')), findsNothing);
+    expect(find.textContaining('آخرین بررسی:'), findsOneWidget);
+    expect(tester.widget<ListView>(find.byType(ListView).first).physics, isA<AlwaysScrollableScrollPhysics>());
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('detail refresh joins the same node task and reports completion', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    final reads = controller.readCalls;
+    controller.pendingRead = Completer<bool>();
+    await tester.tap(find.byTooltip('بررسی وضعیت'));
+    await tester.pumpAndSettle();
+    final joined = tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).onRefresh();
+    expect(find.byKey(const ValueKey('device-refresh-progress')), findsOneWidget);
+    expect(controller.readCalls, reads + 1);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNotNull);
+    controller.pendingRead!.complete(true);
+    controller.pendingRead = null;
+    await tester.pumpAndSettle();
+    await joined;
+    expect(find.byKey(const ValueKey('device-refresh-progress')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
   testWidgets('NFC payload and Wi-Fi selection reuse securely stored password', (tester) async {
     FlutterSecureStorage.setMockInitialValues(<String, String>{});
     const credentials = WifiCredentialStore();
@@ -1684,4 +1809,25 @@ class _FailRoomStore implements RoomStore {
   Future<RoomCatalog> load() async => const RoomCatalog();
   @override
   Future<void> save(RoomCatalog value) async => throw StateError('disk');
+}
+
+class _StartupController extends _Controller {
+  Completer<bool>? startupWait;
+  bool failStartup = false;
+  int startupCalls = 0;
+  @override
+  Future<bool> isSupported() async {
+    startupCalls++;
+    if (failStartup) throw PlatformException(code: 'matter_initialization_failed');
+    return startupWait == null ? true : await startupWait!.future;
+  }
+}
+
+class _CountingStore extends _RenameStore {
+  int loads = 0;
+  @override
+  Future<List<DirectMatterDevice>> load() async {
+    loads++;
+    return super.load();
+  }
 }

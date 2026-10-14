@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m11-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m12-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -194,7 +194,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M11"
+            echo "milestone=M12"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -203,7 +203,11 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M11 scene wizard candidate - physical acceptance pending
+          Manisa M12 loading and refresh candidate - physical acceptance pending
+          - Saved Home appears before native startup; bounded initialization with retry
+          - Coalesced refreshes preserve controls and expose node-specific progress
+          - Pull-to-refresh on short Home/detail; explicit last-check time
+          - Descriptive loading feedback for Home, scenes and schedules
           - Two-step output selection and scene configuration
           - Persistent selected count, draft retention and unsaved-exit confirmation
           - Editing/saving never executes device commands
