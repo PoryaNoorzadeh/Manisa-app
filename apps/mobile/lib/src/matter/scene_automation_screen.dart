@@ -327,13 +327,13 @@ final class _AutomationEditorState extends State<_AutomationEditor> {
           Wrap(
             spacing: 6,
             children: const <(int, String)>[
-              (DateTime.saturday, 'ش'),
-              (DateTime.sunday, 'ی'),
-              (DateTime.monday, 'د'),
-              (DateTime.tuesday, 'س'),
-              (DateTime.wednesday, 'چ'),
-              (DateTime.thursday, 'پ'),
-              (DateTime.friday, 'ج'),
+              (DateTime.saturday, 'شنبه'),
+              (DateTime.sunday, 'یکشنبه'),
+              (DateTime.monday, 'دوشنبه'),
+              (DateTime.tuesday, 'سه‌شنبه'),
+              (DateTime.wednesday, 'چهارشنبه'),
+              (DateTime.thursday, 'پنجشنبه'),
+              (DateTime.friday, 'جمعه'),
             ].map((item) => FilterChip(
               label: Text(item.$2),
               selected: _weekdays.contains(item.$1),
