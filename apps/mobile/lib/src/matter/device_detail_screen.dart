@@ -19,7 +19,9 @@ final class DeviceDetailScreen extends StatelessWidget {
       final device = resolve();
       return Scaffold(
         key: const ValueKey('device-detail-screen'),
-        appBar: AppBar(title: const Text('کنترل وسیله'), actions: [
+        appBar: AppBar(
+          leading: const BackButton(key: ValueKey('device-detail-back')),
+          title: const Text('کنترل وسیله'), actions: [
           if (device != null) IconButton(tooltip: 'بررسی وضعیت',
             onPressed: () => onRefresh(device), icon: const Icon(Icons.refresh)),
         ]),

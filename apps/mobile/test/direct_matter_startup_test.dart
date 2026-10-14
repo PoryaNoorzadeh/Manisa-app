@@ -124,6 +124,7 @@ void main() {
     if (find.byKey(const ValueKey('device-detail-screen')).evaluate().isNotEmpty) return;
     final button = find.byKey(const ValueKey('open-device-7'));
     await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
     await tester.tap(button);
     await tester.pumpAndSettle();
   }
@@ -138,6 +139,7 @@ void main() {
         ? advanced.at(index)
         : find.byTooltip('تنظیمات خروجی').at(index);
     await tester.ensureVisible(details);
+    await tester.pumpAndSettle();
     await tester.tap(details);
     await tester.pumpAndSettle();
   }
@@ -801,7 +803,7 @@ void main() {
     await openOutputDetails(tester);
     expect(find.text('شدت نور'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    await tester.pageBack();
+    await tester.tap(find.byKey(const ValueKey('device-detail-back')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -828,7 +830,7 @@ void main() {
     await tester.tap(find.text('ذخیره'));
     await tester.pumpAndSettle();
     expect(find.text('چراغ پذیرایی'), findsOneWidget);
-    await tester.pageBack();
+    await tester.tap(find.byKey(const ValueKey('device-detail-back')));
     await tester.pumpAndSettle();
     expect(find.text('چراغ پذیرایی'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -847,7 +849,7 @@ void main() {
     controller.events.add(const DirectMatterOnOffEvent(nodeId: 7, endpoint: 1, value: false));
     await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
-    await tester.pageBack();
+    await tester.tap(find.byKey(const ValueKey('device-detail-back')));
     await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
     expect(find.text('۰ از ۱ خروجی روشن'), findsOneWidget);
