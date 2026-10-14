@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m9-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m10-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -194,7 +194,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M9"
+            echo "milestone=M10"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -203,7 +203,10 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M9 compact home candidate - physical acceptance pending
+          Manisa M10 device detail candidate - physical acceptance pending
+          - Compact device summary cards and live device-detail screen
+          - Existing controller/state shared across Home and detail
+          - Unknown and offline summary counts remain explicit
           - Inline output-detail buttons replace repeated disclosure rows
           - One actionable offline notice per device; preserved state remains explicit
           - Nine-output layout and recovery regression coverage

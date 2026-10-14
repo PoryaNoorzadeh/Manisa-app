@@ -120,10 +120,19 @@ void main() {
     await controller.events.close();
   });
 
+  Future<void> openDevice(WidgetTester tester) async {
+    if (find.byKey(const ValueKey('device-detail-screen')).evaluate().isNotEmpty) return;
+    final button = find.byKey(const ValueKey('open-device-7'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+  }
+
   Future<void> openOutputDetails(
     WidgetTester tester, {
     int index = 0,
   }) async {
+    await openDevice(tester);
     final advanced = find.byTooltip('نور و مصرف');
     final details = advanced.evaluate().isNotEmpty
         ? advanced.at(index)
@@ -349,9 +358,9 @@ void main() {
 
       await showApp();
       await tester.pumpAndSettle();
+      expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
       await openOutputDetails(tester);
       expect(store.device.onOffEndpoints, <int>[2, 1]);
-      expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
       expect(find.text('راهرو'), findsWidgets);
       expect(find.text('چراغ کودک'), findsOneWidget);
       expect(find.text('رنگ نور'), findsOneWidget);
@@ -416,9 +425,10 @@ void main() {
       await showApp();
       await tester.pumpAndSettle();
       expect(store.device.onOffEndpoints, <int>[2, 1]);
+      expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
+      await openDevice(tester);
       expect(find.text('خروجی ۱ اتاق کودک'), findsOneWidget);
       expect(find.text('راهرو'), findsWidgets);
-      expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
       expect(favoriteStore.catalog.contains(7, 2), isTrue);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -776,6 +786,53 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('detail shares reports with Home without extra reads or subscriptions', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    final reads = controller.readCalls;
+    final watches = controller.watchCalls;
+    await openDevice(tester);
+    expect(controller.readCalls, reads);
+    expect(controller.watchCalls, watches);
+    controller.events.add(const DirectMatterOnOffEvent(nodeId: 7, endpoint: 1, value: false));
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+    expect(find.text('۰ از ۱ خروجی روشن'), findsOneWidget);
+    expect(controller.watchCalls, watches);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
+  testWidgets('removal while detail is open replaces controls and ignores late reports', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    controller.removal.complete();
+    final store = _Store();
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    await openDevice(tester);
+    await tester.tap(find.byTooltip('تنظیمات وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('حذف وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'حذف وسیله'));
+    await tester.pumpAndSettle();
+    expect(store.removed, isTrue);
+    expect(find.text('این وسیله حذف شده است.'), findsOneWidget);
+    controller.events.add(const DirectMatterOnOffEvent(nodeId: 7, endpoint: 1, value: false));
+    await tester.pumpAndSettle();
+    expect(find.byType(SwitchListTile), findsNothing);
+    await tester.tap(find.text('بازگشت به خانه'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('open-device-7')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+  });
+
   testWidgets('home keeps nine outputs compact with independent detail controls', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 1800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -786,6 +843,9 @@ void main() {
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
 
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(find.text('۹ از ۹ خروجی روشن'), findsOneWidget);
+    await openDevice(tester);
     expect(find.byType(SwitchListTile), findsNWidgets(9));
     expect(find.text('تنظیمات خروجی'), findsNothing);
     expect(find.byTooltip('تنظیمات خروجی'), findsNWidgets(9));
@@ -821,8 +881,7 @@ void main() {
 
     expect(find.text('آخرین وضعیت: روشن'), findsOneWidget);
     expect(find.text('تلاش دوباره'), findsOneWidget);
-    expect(find.text('ارتباط قطع است؛ وضعیت تازه دریافت نشده.'), findsOneWidget);
-    expect(find.text('در دسترس نیست'), findsNothing);
+    expect(find.text('در دسترس نیست'), findsOneWidget);
     control = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
     expect(control.value, isTrue);
     expect(control.onChanged, isNull);
@@ -1329,6 +1388,7 @@ class _Controller implements DirectMatterController {
   int commandCalls = 0;
   Completer<bool>? pendingRead;
   int readCalls = 0;
+  int watchCalls = 0;
   final Set<int> failingReadNodes = <int>{};
   final Map<int, bool> nodeValues = <int, bool>{};
   final Map<int, int> readCallsByNode = <int, int>{};
@@ -1356,7 +1416,10 @@ class _Controller implements DirectMatterController {
   }
 
   @override
-  Stream<DirectMatterOnOffEvent> watchOnOff() => events.stream;
+  Stream<DirectMatterOnOffEvent> watchOnOff() {
+    watchCalls++;
+    return events.stream;
+  }
 
   @override
   Future<List<int>> discoverOnOffEndpoints(int nodeId) {

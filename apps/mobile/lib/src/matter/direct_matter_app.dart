@@ -10,6 +10,8 @@ import '../design/manisa_theme.dart';
 import 'color_control.dart';
 import 'color_control_widget.dart';
 import 'device_share_screen.dart';
+import 'device_detail_screen.dart';
+import 'device_summary_card.dart';
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
 import 'electrical_measurement.dart';
@@ -100,6 +102,13 @@ final class DirectMatterHomeScreen extends StatefulWidget {
 
 final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     with WidgetsBindingObserver {
+  final ChangeNotifier _deviceViewChanges = ChangeNotifier();
+
+  void _updateState(VoidCallback update) {
+    setState(update);
+    _deviceViewChanges.notifyListeners();
+  }
+
   List<DirectMatterDevice> _devices = const <DirectMatterDevice>[];
   RoomCatalog _roomCatalog = const RoomCatalog();
   ManisaHomeProfile _homeProfile = const ManisaHomeProfile();
@@ -178,6 +187,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     for (final timer in _subscriptionRepairs.values) { timer.cancel(); }
     _subscriptionRepairs.clear();
     _sceneRunner.cancel();
+    _deviceViewChanges.dispose();
     super.dispose();
   }
 
@@ -228,7 +238,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       final homeProfile = loaded[2] as ManisaHomeProfile;
       final favorites = loaded[3] as FavoriteCatalog;
       if (!mounted) return;
-      setState(() {
+      _updateState(() {
         _devices = devices;
         _roomCatalog = roomCatalog;
         _homeProfile = homeProfile;
@@ -243,7 +253,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       _events = widget.controller.watchOnOff().listen(
         (event) {
           if (!_canUpdate(event.nodeId)) return;
-          setState(() {
+          _updateState(() {
             _states[_stateKey(event.nodeId, event.endpoint)] = event.value;
             final key = _stateKey(event.nodeId, event.endpoint);
             _stateRevisions[key] = (_stateRevisions[key] ?? 0) + 1;
@@ -264,7 +274,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               (item) => item.nodeId == event.nodeId,
             );
             if (!device.levelEndpoints.contains(event.endpoint)) return;
-            setState(() {
+            _updateState(() {
               final key = _stateKey(event.nodeId, event.endpoint);
               _levelRevisions[key] = (_levelRevisions[key] ?? 0) + 1;
               if (event.level == null) {
@@ -287,7 +297,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           final device = _devices.firstWhere((item) => item.nodeId == event.nodeId);
           if (!device.colorCapabilities.containsKey(event.endpoint)) return;
           final key = _stateKey(event.nodeId, event.endpoint);
-          setState(() {
+          _updateState(() {
             if (event.stale) {
               _staleColors.add(key);
               _scheduleSubscriptionRepair(event.nodeId);
@@ -307,7 +317,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           });
         }, onError: (Object error, StackTrace stack) {
           if (!mounted) return;
-          setState(() => _staleColors.addAll(_colors.keys));
+          _updateState(() => _staleColors.addAll(_colors.keys));
         });
       }
       if (controller is ElectricalMeasurementEventController) {
@@ -318,7 +328,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           final supported = device.measurementCapabilities[event.endpoint];
           if (supported == null) return;
           final key = _stateKey(event.nodeId, event.endpoint);
-          setState(() {
+          _updateState(() {
             final stale = <ElectricalMetric>{
               ...?_staleElectricalMetrics[key],
               ...event.staleMetrics.where(supported.contains),
@@ -345,7 +355,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           });
         }, onError: (Object error, StackTrace stack) {
           if (!mounted) return;
-          setState(() {
+          _updateState(() {
             for (final device in _devices) {
               for (final entry in device.measurementCapabilities.entries) {
                 _staleElectricalMetrics[_stateKey(device.nodeId, entry.key)] =
@@ -362,7 +372,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           final supported = device.sensorCapabilities[event.endpoint];
           if (supported == null) return;
           final key = _stateKey(event.nodeId, event.endpoint);
-          setState(() {
+          _updateState(() {
             final observation = _sensorObservations.putIfAbsent(key, SensorObservation.new);
             observation.markStale(event.staleMetrics.intersection(supported));
             final report = event.report;
@@ -382,7 +392,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           });
         }, onError: (Object error, StackTrace stack) {
           if (!mounted) return;
-          setState(() {
+          _updateState(() {
             for (final device in _devices) { _markSensorsStale(device); }
           });
         });
@@ -397,11 +407,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       _startSharedStateWatchdog();
     } catch (error) {
       if (mounted) {
-        setState(() => _error = error.toString());
+        _updateState(() => _error = error.toString());
       }
     } finally {
       if (mounted) {
-        setState(() => _loading = false);
+        _updateState(() => _loading = false);
         if (initialized) unawaited(_checkAutomations());
       }
     }
@@ -469,7 +479,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     final value = await widget.controller.readOnOff(nodeId: nodeId, endpoint: endpoint)
         .timeout(_readTimeout);
     if (!_canUpdate(nodeId) || _stateRevisions[key] != revision) return;
-    setState(() => _states[key] = value);
+    _updateState(() => _states[key] = value);
   }
 
   Future<void> _reconcileControls(DirectMatterDevice device) async {
@@ -488,7 +498,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         final revisions = Map<String, int>.of(_levelRevisions);
         final levels = await (controller as LevelControlController).readLevels(nodeId).timeout(_readTimeout);
         if (!_canUpdate(nodeId)) return;
-        setState(() {
+        _updateState(() {
           for (final endpoint in device.levelEndpoints) {
             final key = _stateKey(nodeId, endpoint);
             if (_levelRevisions[key] != revisions[key] || _busy.contains(key)) continue;
@@ -542,7 +552,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           (item) => item.nodeId == device.nodeId,
         );
         if (index < 0) return;
-        setState(() {
+        _updateState(() {
           final updated = List<DirectMatterDevice>.of(_devices);
           updated[index] = updated[index].copyWith(onOffEndpoints: discovered);
           _devices = updated;
@@ -551,7 +561,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           await widget.deviceStore.save(_devices[index]);
         } catch (error) {
           if (_canUpdate(device.nodeId)) {
-            setState(() {
+            _updateState(() {
               _deviceErrors[device.nodeId] =
                   'Could not save discovered channels: $error';
             });
@@ -565,7 +575,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         }
       }
       if (_canUpdate(device.nodeId)) {
-        setState(() {
+        _updateState(() {
           _unavailableNodes.remove(device.nodeId);
           if (!(_deviceErrors[device.nodeId]?.startsWith(
                 'Could not save discovered channels',
@@ -578,7 +588,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
     } catch (error) {
       if (_canUpdate(device.nodeId)) {
-        setState(() {
+        _updateState(() {
           _unavailableNodes.add(device.nodeId);
           _deviceErrors[device.nodeId] =
               'Could not refresh ${device.name}: $error';
@@ -614,7 +624,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       final current = _devices.firstWhere((device) => device.nodeId == nodeId);
       final updated = current.copyWith(sensorCapabilities:
           readings.map((endpoint, reading) => MapEntry(endpoint, reading.supported)));
-      setState(() {
+      _updateState(() {
         _devices = _devices.map((device) => device.nodeId == nodeId ? updated : device).toList();
         _sensorObservations.removeWhere((key, _) => key.startsWith('$nodeId:') &&
             !readings.containsKey(int.parse(key.split(':').last)));
@@ -630,17 +640,17 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       });
       if (readings.isNotEmpty) {
         _sensorFreshnessTimer ??= Timer.periodic(const Duration(seconds: 15), (_) {
-          if (mounted && _sensorObservations.isNotEmpty) setState(() {});
+          if (mounted && _sensorObservations.isNotEmpty) _updateState(() {});
         });
       }
       if (!_editingMetadata) {
-        setState(() => _editingMetadata = true);
+        _updateState(() => _editingMetadata = true);
         try { await widget.deviceStore.save(updated); }
         catch (_) { /* A metadata save failure must not discard a live sensor read. */ }
-        finally { if (mounted) setState(() => _editingMetadata = false); }
+        finally { if (mounted) _updateState(() => _editingMetadata = false); }
       }
     } catch (_) {
-      if (active()) setState(() {
+      if (active()) _updateState(() {
         final device = _devices.firstWhere((item) => item.nodeId == nodeId);
         _markSensorsStale(device);
         if (device.onOffEndpoints.isEmpty && device.sensorCapabilities.isNotEmpty) {
@@ -675,7 +685,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           values.entries.any((entry) => current.colorCapabilities[entry.key] != entry.value.capabilities);
       final updated = current.copyWith(colorCapabilities:
           values.map((endpoint, color) => MapEntry(endpoint, color.capabilities)));
-      setState(() {
+      _updateState(() {
         _devices = _devices.map((item) => item.nodeId == nodeId ? updated : item).toList();
         _colors.removeWhere((key, _) => key.startsWith('$nodeId:') &&
           !values.containsKey(int.parse(key.split(':').last)));
@@ -686,13 +696,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         }
       });
       if (capabilitiesChanged && !_editingMetadata) {
-        setState(() => _editingMetadata = true);
+        _updateState(() => _editingMetadata = true);
         try { await widget.deviceStore.save(updated); }
         catch (_) { /* Keep a successfully read color usable; retry metadata later. */ }
-        finally { if (mounted) setState(() => _editingMetadata = false); }
+        finally { if (mounted) _updateState(() => _editingMetadata = false); }
       }
     } catch (_) {
-      if (active()) setState(() {
+      if (active()) _updateState(() {
         final device = _devices.firstWhere((item) => item.nodeId == nodeId);
         _staleColors.addAll(device.colorCapabilities.keys.map((e) => _stateKey(nodeId, e)));
       });
@@ -710,7 +720,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         _staleColors.contains(key) || !_busy.add(key)) return;
     final lifetime = _colorLifetimes.putIfAbsent(device.nodeId, Object.new);
     bool active() => _canUpdate(device.nodeId) && identical(_colorLifetimes[device.nodeId], lifetime);
-    setState(() => _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1);
+    _updateState(() => _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1);
     try {
       final xy = hsvToXy(color);
       final colorController = controller as ColorControlController;
@@ -725,26 +735,26 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (!active()) return;
       final confirmed = confirmation[endpoint];
       if (confirmed == null || confirmed.hsv == null) throw StateError('color not confirmed');
-      setState(() {
+      _updateState(() {
         if (_colorRevisions[key] == revision) _colors[key] = confirmed;
         _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1;
         _staleColors.remove(key);
         _deviceErrors.remove(device.nodeId);
       });
     } catch (_) {
-      if (active()) setState(() {
+      if (active()) _updateState(() {
         _staleColors.add(key);
         _deviceErrors[device.nodeId] = 'Color command failed';
       });
     } finally {
-      if (active()) setState(() => _busy.remove(key));
+      if (active()) _updateState(() => _busy.remove(key));
     }
   }
 
   Future<void> _renameChannel(DirectMatterDevice device, int endpoint) async {
     if (_editingMetadata || !_canUpdate(device.nodeId) || _removingNodes.isNotEmpty) return;
     final index = device.onOffEndpoints.indexOf(endpoint);
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       await showDialog<void>(context: context, barrierDismissible: false,
         builder: (_) => _RenameDeviceDialog(
@@ -756,10 +766,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             final updated = current.copyWith(channelNames: <int,String>{...current.channelNames, endpoint: name});
             await widget.deviceStore.save(updated);
             if (!_canUpdate(device.nodeId)) return;
-            setState(() => _devices = _devices.map((item) => item.nodeId == device.nodeId ? updated : item).toList());
+            _updateState(() => _devices = _devices.map((item) => item.nodeId == device.nodeId ? updated : item).toList());
           },
         ));
-    } finally { if (mounted) setState(() => _editingMetadata = false); }
+    } finally { if (mounted) _updateState(() => _editingMetadata = false); }
   }
 
   Future<void> _refreshDeviceCapabilities(int nodeId) async {
@@ -796,7 +806,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                   .timeout(_readTimeout);
         } catch (_) {
           if (_canUpdate(nodeId)) {
-            setState(() {
+            _updateState(() {
               final device = _devices.firstWhere((item) => item.nodeId == nodeId);
               for (final entry in device.measurementCapabilities.entries) {
                 _staleElectricalMetrics[_stateKey(nodeId, entry.key)] =
@@ -813,7 +823,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
       if (!_canUpdate(nodeId) || _editingMetadata) return;
       // Product metadata failures must never disable a working OnOff control.
-      setState(() => _editingMetadata = true);
+      _updateState(() => _editingMetadata = true);
       try {
         final current = _devices.firstWhere((device) => device.nodeId == nodeId);
         final updated = current.copyWith(
@@ -825,7 +835,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         );
         await widget.deviceStore.save(updated);
         if (!_canUpdate(nodeId)) return;
-        setState(() {
+        _updateState(() {
           _devices = _devices
               .map((device) => device.nodeId == nodeId ? updated : device)
               .toList();
@@ -852,7 +862,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           }
         });
       } finally {
-        if (mounted) setState(() => _editingMetadata = false);
+        if (mounted) _updateState(() => _editingMetadata = false);
       }
     } catch (_) {
       // Preserve previously read metadata; the next successful refresh retries.
@@ -887,7 +897,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     if (!mounted || !_foreground || _retrying) return;
     _connectionRetryTimer?.cancel();
     _connectionRetryTimer = null;
-    setState(() => _retrying = true);
+    _updateState(() => _retrying = true);
     try {
       final controller = widget.controller;
       if (controller is ConnectionRecoveryController) {
@@ -901,11 +911,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           }
         }
       }
-      if (mounted) setState(() => _error = null);
+      if (mounted) _updateState(() => _error = null);
       await _refreshAllStates();
     } finally {
       if (mounted) {
-        setState(() => _retrying = false);
+        _updateState(() => _retrying = false);
         if (_unavailableNodes.isNotEmpty) _scheduleConnectionRetry();
       }
     }
@@ -930,7 +940,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       ),
     );
     if (device == null || !mounted) return;
-    setState(() {
+    _updateState(() {
       _devices = <DirectMatterDevice>[
         ..._devices.where((item) => item.nodeId != device.nodeId),
         device,
@@ -947,7 +957,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         !_devices.any((d) => d.nodeId == action.nodeId && d.onOffEndpoints.contains(action.endpoint))) {
       throw StateError('output unavailable');
     }
-    setState(() => _busy.add(key));
+    _updateState(() => _busy.add(key));
     try {
       final device = _devices.firstWhere((d) => d.nodeId == action.nodeId);
       final confirmed = await executeSceneLighting(action:action,device:device,
@@ -955,7 +965,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       return confirmed;
     } finally {
       if (mounted) {
-        setState(() => _busy.remove(key));
+        _updateState(() => _busy.remove(key));
       }
     }
   }
@@ -1031,7 +1041,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   ) async {
     final key = _stateKey(device.nodeId, endpoint);
     if (_busy.contains(key) || !_canUpdate(device.nodeId)) return;
-    setState(() {
+    _updateState(() {
       _busy.add(key);
       _stateRevisions[key] = (_stateRevisions[key] ?? 0) + 1;
       _deviceErrors.remove(device.nodeId);
@@ -1042,14 +1052,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           .timeout(_readTimeout);
       await _readSyncedOnOff(device.nodeId, endpoint);
       if (_canUpdate(device.nodeId)) {
-        setState(() {
+        _updateState(() {
           _unavailableNodes.remove(device.nodeId);
           _deviceErrors.remove(device.nodeId);
         });
       }
     } catch (error) {
       if (mounted) {
-        setState(() {
+        _updateState(() {
           _unavailableNodes.add(device.nodeId);
           _deviceErrors[device.nodeId] = 'Command failed: $error';
         });
@@ -1057,7 +1067,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
     } finally {
       if (mounted) {
-        setState(() => _busy.remove(key));
+        _updateState(() => _busy.remove(key));
       }
     }
   }
@@ -1069,7 +1079,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         _busy.contains(key) || !_canUpdate(device.nodeId)) return;
     final levelController = controller as LevelControlController;
     final requested = level.clamp(1, 254);
-    setState(() {
+    _updateState(() {
       _busy.add(key);
       _levelRevisions[key] = (_levelRevisions[key] ?? 0) + 1;
       _stateRevisions[key] = (_stateRevisions[key] ?? 0) + 1;
@@ -1087,7 +1097,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
       await _readSyncedOnOff(device.nodeId, endpoint);
       if (_canUpdate(device.nodeId)) {
-        setState(() {
+        _updateState(() {
           if (_levelRevisions[key] == levelRevision) _levels[key] = confirmed;
           _unavailableNodes.remove(device.nodeId);
           _deviceErrors.remove(device.nodeId);
@@ -1095,12 +1105,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
     } catch (error) {
       if (_canUpdate(device.nodeId)) {
-        setState(() {
+        _updateState(() {
           _deviceErrors[device.nodeId] = 'Level command failed: $error';
         });
       }
     } finally {
-      if (mounted) setState(() => _busy.remove(key));
+      if (mounted) _updateState(() => _busy.remove(key));
     }
   }
 
@@ -1109,7 +1119,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         _removingNodes.isNotEmpty ||
         !_canUpdate(device.nodeId))
       return;
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       await showDialog<void>(
         context: context,
@@ -1133,7 +1143,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             final updated = _devices[index].copyWith(channelNames: names);
             await widget.deviceStore.save(updated);
             if (!mounted) return;
-            setState(() {
+            _updateState(() {
               final devices = List<DirectMatterDevice>.of(_devices);
               devices[index] = updated;
               _devices = devices;
@@ -1142,7 +1152,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         ),
       );
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
@@ -1151,7 +1161,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         _removingNodes.isNotEmpty ||
         !_canUpdate(device.nodeId))
       return;
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       await showDialog<void>(
         context: context,
@@ -1164,7 +1174,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             );
             await widget.deviceStore.save(current.copyWith(name: name));
             if (!mounted) return;
-            setState(() {
+            _updateState(() {
               _devices = _devices
                   .map(
                     (item) => item.nodeId == device.nodeId
@@ -1177,7 +1187,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         ),
       );
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
@@ -1190,7 +1200,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   Future<void> _renameHome() async {
     if (_editingMetadata) return;
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       final name = await showDialog<String>(
         context: context,
@@ -1199,11 +1209,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (name == null || !mounted) return;
       final next = _homeProfile.rename(name);
       await widget.homeStore.save(next);
-      if (mounted) setState(() => _homeProfile = next);
+      if (mounted) _updateState(() => _homeProfile = next);
     } catch (_) {
       _showMetadataError();
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
@@ -1211,20 +1221,20 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     if (_editingMetadata) return;
     final next = _roomCatalog.moveRoom(room.id, offset);
     if (identical(next, _roomCatalog)) return;
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       await widget.roomStore.save(next);
-      if (mounted) setState(() => _roomCatalog = next);
+      if (mounted) _updateState(() => _roomCatalog = next);
     } catch (_) {
       _showMetadataError();
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
   Future<ManisaRoom?> _createRoom() async {
     if (_editingMetadata) return null;
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       final name = await showDialog<String>(
         context: context,
@@ -1242,19 +1252,19 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       final next = _roomCatalog.addRoom(room);
       await widget.roomStore.save(next);
       if (!mounted) return null;
-      setState(() => _roomCatalog = next);
+      _updateState(() => _roomCatalog = next);
       return room;
     } catch (_) {
       _showMetadataError();
       return null;
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
   Future<void> _renameRoom(ManisaRoom room) async {
     if (_editingMetadata) return;
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       final name = await showDialog<String>(
         context: context,
@@ -1271,11 +1281,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (name == null || !mounted) return;
       final next = _roomCatalog.renameRoom(room.id, name);
       await widget.roomStore.save(next);
-      if (mounted) setState(() => _roomCatalog = next);
+      if (mounted) _updateState(() => _roomCatalog = next);
     } catch (_) {
       _showMetadataError();
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
@@ -1308,15 +1318,15 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       ),
     );
     if (confirmed != true || !mounted) return;
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       final next = _roomCatalog.removeRoom(room.id);
       await widget.roomStore.save(next);
-      if (mounted) setState(() => _roomCatalog = next);
+      if (mounted) _updateState(() => _roomCatalog = next);
     } catch (_) {
       _showMetadataError();
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
@@ -1360,29 +1370,29 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (selected == null || !mounted) return;
       roomId = selected == unassigned ? null : selected;
     }
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       final next = _roomCatalog.assignDevice(device.nodeId, roomId);
       await widget.roomStore.save(next);
-      if (mounted) setState(() => _roomCatalog = next);
+      if (mounted) _updateState(() => _roomCatalog = next);
     } catch (_) {
       _showMetadataError();
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
   Future<void> _toggleFavorite(DirectMatterDevice device, int endpoint) async {
     if (_editingMetadata || !_canUpdate(device.nodeId)) return;
-    setState(() => _editingMetadata = true);
+    _updateState(() => _editingMetadata = true);
     try {
       final next = _favorites.toggle(device.nodeId, endpoint);
       await widget.favoriteStore.save(next);
-      if (mounted) setState(() => _favorites = next);
+      if (mounted) _updateState(() => _favorites = next);
     } catch (_) {
       _showMetadataError();
     } finally {
-      if (mounted) setState(() => _editingMetadata = false);
+      if (mounted) _updateState(() => _editingMetadata = false);
     }
   }
 
@@ -1411,7 +1421,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     );
     if (confirmed != true || !mounted || _removingNodes.contains(device.nodeId))
       return;
-    setState(() {
+    _updateState(() {
       _removingNodes.add(device.nodeId);
       _deviceErrors.remove(device.nodeId);
       for (final endpoint in device.onOffEndpoints) {
@@ -1448,7 +1458,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         // confirmed Matter removal into a false failure.
       }
       if (mounted) {
-        setState(() {
+        _updateState(() {
           _roomCatalog = nextRoomCatalog;
           _favorites = nextFavorites;
           _devices = _devices
@@ -1482,7 +1492,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
     } catch (error) {
       if (mounted) {
-        setState(() {
+        _updateState(() {
           _deviceErrors[device.nodeId] = 'Remove failed: $error';
         });
         if (!localOnly && !_fabricRemovedNodes.contains(device.nodeId)) {
@@ -1496,7 +1506,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
     } finally {
       if (mounted) {
-        setState(() {
+        _updateState(() {
           _removingNodes.remove(device.nodeId);
           for (final endpoint in device.onOffEndpoints) {
             _busy.remove(_stateKey(device.nodeId, endpoint));
@@ -1655,9 +1665,32 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       for (final device in devices)
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
-          child: _DirectMatterDeviceCard(
+          child: _homeDeviceSummary(context, device),
+        ),
+    ];
+  }
+
+  void _openDevice(int nodeId) {
+    Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      builder: (_) => DeviceDetailScreen(
+        updates: _deviceViewChanges,
+        resolve: () {
+          if (!mounted) return null;
+          for (final device in _devices) {
+            if (device.nodeId == nodeId) return device;
+          }
+          return null;
+        },
+        controls: _deviceControls,
+        onRefresh: (device) => _refreshDevice(device),
+      ),
+    ));
+  }
+
+  Widget _deviceControls(BuildContext context, DirectMatterDevice device) {
+    return _DirectMatterDeviceCard(
             device: device,
-            roomName: room?.name,
+            roomName: _roomNameForDevice(device.nodeId),
             states: _states,
             levels: _levels,
             colors: _colors,
@@ -1683,9 +1716,59 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               builder: (_) => DeviceShareScreen(nodeId: device.nodeId, name: device.name))),
             onRefresh: () => _refreshDevice(device),
             onToggleFavorite: (endpoint) => _toggleFavorite(device, endpoint),
-          ),
-        ),
-    ];
+          );
+  }
+
+  Widget _homeDeviceSummary(BuildContext context, DirectMatterDevice device) {
+    final unavailable = _unavailableNodes.contains(device.nodeId);
+    final error = _deviceErrors[device.nodeId];
+    final endpoint = device.onOffEndpoints.length == 1 ? device.onOffEndpoints.first : null;
+    final key = endpoint == null ? null : _stateKey(device.nodeId, endpoint);
+    return DeviceSummaryCard(
+      device: device, states: _states, roomName: _roomNameForDevice(device.nodeId),
+      unavailable: unavailable,
+      availability: _DeviceAvailabilityBadge(unavailable: unavailable,
+        pending: _busy.any((key) => key.startsWith('${device.nodeId}:'))),
+      errorMessage: error == null || error.startsWith('Could not refresh') || error.startsWith('Realtime')
+        ? null : _MatterErrorNotice(error: error).message,
+      onOpen: () => _openDevice(device.nodeId),
+      onRefresh: () => _refreshDevice(device),
+      menu: PopupMenuButton<String>(tooltip: 'تنظیمات وسیله',
+        onSelected: (value) {
+          if (value == 'rename') _renameDevice(device);
+          if (value == 'room') _assignRoom(device);
+          if (value == 'remove') _removeDevice(device);
+          if (value == 'channels') _manageChannels(device);
+          if (value == 'share') Navigator.of(context).push<void>(MaterialPageRoute<void>(
+            builder: (_) => DeviceShareScreen(nodeId: device.nodeId, name: device.name)));
+        },
+        itemBuilder: (_) => [
+          const PopupMenuItem(value: 'rename', child: Text('تغییر نام وسیله')),
+          const PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
+          PopupMenuItem(value: 'share', enabled: !unavailable, child: const Text('اشتراک‌گذاری')),
+          if (device.onOffEndpoints.isNotEmpty)
+            const PopupMenuItem(value: 'channels', child: Text('نام خروجی‌ها')),
+          const PopupMenuItem(value: 'remove', child: Text('حذف وسیله')),
+        ],
+      ),
+      primaryControl: endpoint == null ? null : _DeviceOutputControl(
+        key: ValueKey('quick-output-${device.nodeId}-$endpoint'),
+        device: device, endpoint: endpoint, outputIndex: 0,
+        state: _states[key], level: _levels[key], color: _colors[key],
+        measurement: _electricalMeasurements[key],
+        staleElectricalMetrics: _staleElectricalMetrics[key] ?? const {},
+        colorIsStale: _staleColors.contains(key) || unavailable,
+        busy: _busy.contains(key), unavailable: unavailable,
+        favorite: _favorites.contains(device.nodeId, endpoint),
+        showDetailsButton: false,
+        onChanged: (value) => _setOnOff(device, endpoint, value),
+        onLevelChanged: (level) => _setLevel(device, endpoint, level),
+        onColorChanged: (color) => _setColor(device, endpoint, color),
+        onRename: () => _renameChannel(device, endpoint),
+        onToggleFavorite: () => _toggleFavorite(device, endpoint),
+        onRefresh: () => _refreshDevice(device),
+      ),
+    );
   }
 
   @override
@@ -1724,7 +1807,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         selectedIndex: _selectedDestination,
         onDestinationSelected: (index) {
           if (index == _selectedDestination) return;
-          setState(() => _selectedDestination = index);
+          _updateState(() => _selectedDestination = index);
         },
         destinations: const <NavigationDestination>[
           NavigationDestination(
@@ -1771,7 +1854,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                         TextButton(
                           onPressed: _retrying
                               ? null
-                              : () => setState(() => _error = null),
+                              : () => _updateState(() => _error = null),
                           child: const Text('بستن'),
                         ),
                       ],
@@ -2451,6 +2534,7 @@ final class _DeviceAvailabilityBadge extends StatelessWidget {
 /// demand so Home remains a glanceable surface instead of an installer panel.
 final class _DeviceOutputControl extends StatefulWidget {
   const _DeviceOutputControl({
+    this.showDetailsButton = true,
     required this.device,
     required this.endpoint,
     required this.outputIndex,
@@ -2471,6 +2555,7 @@ final class _DeviceOutputControl extends StatefulWidget {
     required this.onLevelChanged,
   });
 
+  final bool showDetailsButton;
   final DirectMatterDevice device;
   final int endpoint;
   final int outputIndex;
@@ -2550,7 +2635,9 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                subtitle: _statusAndDetails(statusColor),
+                subtitle: widget.showDetailsButton
+                    ? _statusAndDetails(statusColor)
+                    : Text(_stateLabel, style: TextStyle(color: statusColor)),
                 leading: _favoriteButton(),
                 trailing: TextButton(
                   onPressed: widget.busy || widget.unavailable ? null : widget.onRefresh,
@@ -2565,7 +2652,9 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                subtitle: _statusAndDetails(statusColor),
+                subtitle: widget.showDetailsButton
+                    ? _statusAndDetails(statusColor)
+                    : Text(_stateLabel, style: TextStyle(color: statusColor)),
                 value: value,
                 onChanged: enabled ? widget.onChanged : null,
                 secondary: _favoriteButton(),
