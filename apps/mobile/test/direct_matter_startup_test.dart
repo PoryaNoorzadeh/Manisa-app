@@ -174,6 +174,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
     await tester.pumpAndSettle();
+    await openDevice(tester);
     expect(find.text('خروجی ۱ اتاق کودک'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await controller.events.close();
@@ -633,7 +634,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 16));
     await tester.pumpAndSettle();
-    expect(find.textContaining('وضعیت تازه دریافت نشد'), findsOneWidget);
+    expect(find.text('در دسترس نیست'), findsOneWidget);
     controller.discovery.complete(<int>[1]);
     await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pumpAndSettle();
@@ -784,6 +785,54 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('لوستر پذیرایی'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('single-output Home and detail work at 360dp with 200 percent text', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final controller = _LevelController(initialLevel: 127)..discovery.complete(<int>[1]);
+    final store = _RenameStore()..fail = false;
+    store.device = store.device.copyWith(name: 'کلید چراغ پذیرایی و آشپزخانه');
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await openOutputDetails(tester);
+    expect(find.text('شدت نور'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
+    await controller.levelEvents.close();
+  });
+
+  testWidgets('detail refreshes on resume and reflects current device metadata', (tester) async {
+    final controller = _Controller()..discovery.complete(<int>[1]);
+    final store = _RenameStore()..fail = false;
+    await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: store));
+    await tester.pumpAndSettle();
+    await openDevice(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    controller.nodeValues[7] = false;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+    await tester.tap(find.byTooltip('تنظیمات وسیله'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تغییر نام وسیله'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'چراغ پذیرایی');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.text('چراغ پذیرایی'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('چراغ پذیرایی'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await controller.events.close();
   });
 
   testWidgets('detail shares reports with Home without extra reads or subscriptions', (tester) async {
@@ -1039,7 +1088,7 @@ void main() {
 
     expect(find.text('Offline switch'), findsOneWidget);
     expect(find.text('Online switch'), findsOneWidget);
-    expect(find.textContaining('وضعیت تازه دریافت نشد'), findsOneWidget);
+    expect(find.text('در دسترس نیست'), findsOneWidget);
     expect(controller.readCallsByNode[7], 1);
     expect(controller.readCallsByNode[8], 1);
 

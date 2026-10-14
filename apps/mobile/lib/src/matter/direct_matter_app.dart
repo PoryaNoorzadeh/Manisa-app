@@ -9,8 +9,8 @@ import '../core/persian_digits.dart';
 import '../design/manisa_theme.dart';
 import 'color_control.dart';
 import 'color_control_widget.dart';
-import 'device_share_screen.dart';
 import 'device_detail_screen.dart';
+import 'device_share_screen.dart';
 import 'device_summary_card.dart';
 import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
@@ -102,11 +102,11 @@ final class DirectMatterHomeScreen extends StatefulWidget {
 
 final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     with WidgetsBindingObserver {
-  final ChangeNotifier _deviceViewChanges = ChangeNotifier();
+  final ValueNotifier<int> _deviceViewChanges = ValueNotifier<int>(0);
 
   void _updateState(VoidCallback update) {
     setState(update);
-    _deviceViewChanges.notifyListeners();
+    _deviceViewChanges.value++;
   }
 
   List<DirectMatterDevice> _devices = const <DirectMatterDevice>[];
@@ -2398,6 +2398,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   final isBusy = busy.contains(key);
                   final favorite = favorites.contains(device.nodeId, endpoint);
                   return _DeviceOutputControl(
+                    key: ValueKey('device-output-${device.nodeId}-$endpoint'),
                     device: device,
                     endpoint: endpoint,
                     outputIndex: index,
@@ -2515,13 +2516,13 @@ final class _DeviceAvailabilityBadge extends StatelessWidget {
             children: <Widget>[
               Icon(icon, size: 16, color: foreground),
               const SizedBox(width: 5),
-              Text(
+              Flexible(child: Text(
                 label,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
                   color: foreground,
                   fontWeight: FontWeight.w700,
                 ),
-              ),
+              )),
             ],
           ),
         ),
@@ -2534,6 +2535,7 @@ final class _DeviceAvailabilityBadge extends StatelessWidget {
 /// demand so Home remains a glanceable surface instead of an installer panel.
 final class _DeviceOutputControl extends StatefulWidget {
   const _DeviceOutputControl({
+    super.key,
     this.showDetailsButton = true,
     required this.device,
     required this.endpoint,
