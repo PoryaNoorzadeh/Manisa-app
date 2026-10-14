@@ -64,8 +64,9 @@ void main() {
       execute:(_)async{calls++;return true;},runner:SceneRunner()));
     await tester.pumpWidget(app()); await tester.pumpAndSettle();
     await tester.tap(find.text('سناریوی جدید')); await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField),'شب');
     await tester.tap(find.byType(CheckboxListTile)); await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-next'))); await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField),'شب');
     await tester.tap(find.byType(SwitchListTile)); await tester.pumpAndSettle();
     await tester.tap(find.text('ذخیره')); await tester.pumpAndSettle();
     expect(find.text('سناریو ذخیره نشد. دوباره تلاش کن.'),findsOneWidget);
@@ -93,8 +94,9 @@ void main() {
         onOffEndpoints:<int>[1],levelEndpoints:<int>[1],colorCapabilities:<int,int>{1:1})],
       execute:(_)async{calls++;return true;},runner:SceneRunner())));
     await tester.pumpAndSettle();await tester.tap(find.text('سناریوی جدید'));await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField),'مطالعه');
     await tester.tap(find.byType(CheckboxListTile));await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-next')));await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField),'مطالعه');
     await tester.tap(find.text('تنظیم شدت نور'));await tester.pumpAndSettle();
     await tester.tap(find.text('تنظیم رنگ'));await tester.pumpAndSettle();
     await tester.tap(find.text('سفید'));await tester.pumpAndSettle();
@@ -109,6 +111,119 @@ void main() {
     final off=store.scenes.single.actions.single;
     expect(off.on,isFalse);expect(off.level,isNull);expect(off.hue,isNull);expect(calls,0);
   });
+  testWidgets('wizard separates selection and preserves targets when changing outputs', (tester) async {
+    final store = MemorySceneStore();
+    var calls = 0;
+    await tester.pumpWidget(MaterialApp(home: ManualSceneScreen(store: store,
+      devices: () => const [DirectMatterDevice(nodeId: 7, name: 'خانه', onOffEndpoints: [1, 2])],
+      execute: (_) async { calls++; return true; }, runner: SceneRunner())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('سناریوی جدید'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(tester.widget<FilledButton>(find.byKey(const ValueKey('scene-next'))).onPressed, isNull);
+    await tester.tap(find.byKey(const ValueKey('scene-select-7:1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-next')));
+    await tester.pumpAndSettle();
+    expect(find.byType(CheckboxListTile), findsNothing);
+    expect(find.byType(SwitchListTile), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'شب');
+    await tester.tap(find.text('روشن شود'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تغییر خروجی‌ها'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-select-7:2')));
+    await tester.pumpAndSettle();
+    expect(find.text('۲ خروجی انتخاب شده'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('scene-next')));
+    await tester.pumpAndSettle();
+    expect(find.text('شب'), findsOneWidget);
+    expect(find.text('خاموش شود'), findsOneWidget);
+    expect(find.text('روشن شود'), findsOneWidget);
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(store.scenes.single.actions.map((a) => a.on), [false, true]);
+    expect(calls, 0);
+  });
+
+  testWidgets('wizard guards unsaved system back and allows continuing or discarding', (tester) async {
+    final store = MemorySceneStore();
+    await tester.pumpWidget(MaterialApp(home: ManualSceneScreen(store: store,
+      devices: () => const [DirectMatterDevice(nodeId: 7, name: 'خانه', onOffEndpoints: [1])],
+      execute: (_) async => true, runner: SceneRunner())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('سناریوی جدید'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-select-7:1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-next')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'پیش‌نویس');
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(CheckboxListTile), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('تغییرات ذخیره نشده‌اند'), findsOneWidget);
+    await tester.tap(find.text('ادامهٔ ویرایش'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-next')));
+    await tester.pumpAndSettle();
+    expect(find.text('پیش‌نویس'), findsOneWidget);
+    await tester.tap(find.text('انصراف'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('خروج بدون ذخیره'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('scene-editor')), findsNothing);
+    expect(store.scenes, isEmpty);
+  });
+
+  testWidgets('wizard prevents selecting a 33rd output', (tester) async {
+    final store = MemorySceneStore();
+    store.scenes = [ManualScene(id: 'many', name: 'خانه',
+      actions: List.generate(32, (i) => SceneAction(nodeId: 7, endpoint: i+1, on: true)))];
+    await tester.pumpWidget(MaterialApp(home: ManualSceneScreen(store: store,
+      devices: () => [DirectMatterDevice(nodeId: 7, name: 'کلید', onOffEndpoints: List.generate(33, (i) => i+1))],
+      execute: (_) async => true, runner: SceneRunner())));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('ویرایش'), 300);
+    await tester.tap(find.text('ویرایش'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تغییر خروجی‌ها'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('scene-select-7:33')), 300);
+    expect(tester.widget<CheckboxListTile>(find.byKey(const ValueKey('scene-select-7:33'))).onChanged, isNull);
+    expect(find.text('۳۲ خروجی انتخاب شده'), findsOneWidget);
+  });
+
+  testWidgets('wizard footer remains usable at 360dp with 200 percent text', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final store = MemorySceneStore();
+    await tester.pumpWidget(MaterialApp(home: Directionality(textDirection: TextDirection.rtl,
+      child: ManualSceneScreen(store: store,
+        devices: () => const [DirectMatterDevice(nodeId: 7, name: 'کلید چراغ پذیرایی و آشپزخانه',
+          onOffEndpoints: [1], levelEndpoints: [1])],
+        execute: (_) async => true, runner: SceneRunner()))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('سناریوی جدید'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-select-7:1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('scene-next')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'روشنایی پذیرایی');
+    expect(find.text('۱ خروجی انتخاب شده'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+    expect(store.scenes.single.name, 'روشنایی پذیرایی');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('stop control cancels unsent actions without pretending to recall a sent command', (tester) async {
     final store=MemorySceneStore(); store.scenes=<ManualScene>[scene()];
     final pending=Completer<bool>(); final sent=<String>[];
