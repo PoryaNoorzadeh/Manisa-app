@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../core/persian_digits.dart';
@@ -148,12 +150,68 @@ final class _SceneEditor extends StatefulWidget {
 }
 final class _SceneEditorState extends State<_SceneEditor> {
   bool _saving = false;
+  bool _configure = false;
+  bool _allowExit = false;
+  bool _confirmingExit = false;
+  late final String _initialDraft;
   late final TextEditingController _name;
   late final Map<String,SceneAction> _actions;
   String? _error;
   @override
   void initState() { super.initState(); _name=TextEditingController(text:widget.scene?.name);
-    _actions=<String,SceneAction>{for(final a in widget.scene?.actions??<SceneAction>[]) a.key:a}; }
+    _actions=<String,SceneAction>{for(final a in widget.scene?.actions??<SceneAction>[]) a.key:a};
+    _configure = widget.scene != null;
+    _initialDraft = _draft;
+    _name.addListener(_nameChanged);
+  }
+  String get _draft => jsonEncode({'name': _name.text,
+    'actions': _actions.values.map((a) => a.toJson()).toList()});
+  bool get _dirty => _draft != _initialDraft;
+  void _nameChanged() { if (mounted) setState(() {}); }
+
+  Future<void> _exit() async {
+    if (_saving || _confirmingExit) return;
+    if (_dirty) {
+      _confirmingExit = true;
+      final discard = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+        title: const Text('تغییرات ذخیره نشده‌اند'),
+        content: const Text('می‌خواهی بدون ذخیرهٔ این تغییرات خارج شوی؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('ادامهٔ ویرایش')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('خروج بدون ذخیره')),
+        ],
+      ));
+      _confirmingExit = false;
+      if (!mounted || discard != true) return;
+    }
+    await _close();
+  }
+  Future<void> _close() async {
+    setState(() => _allowExit = true);
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) Navigator.pop(context);
+  }
+  void _back() {
+    if (_saving) return;
+    if (_configure) {
+      setState(() { _configure = false; _error = null; });
+    } else { _exit(); }
+  }
+  Future<void> _saveScene() async {
+    if (_saving) return;
+    try {
+      final scene = ManualScene(id: widget.scene?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        name: _name.text, actions: _actions.values.toList());
+      setState(() { _saving = true; _error = null; });
+      final saved = await widget.onSave(scene);
+      if (!mounted) return;
+      if (saved) { await _close(); } else {
+        setState(() { _saving = false; _error = 'سناریو ذخیره نشد. دوباره تلاش کن.'; });
+      }
+    } on FormatException {
+      if (mounted) setState(() => _error = 'نام و بین یک تا ۳۲ خروجی انتخاب کن.');
+    }
+  }
   @override
   void dispose() { _name.dispose(); super.dispose(); }
   Widget _lighting(DirectMatterDevice device,int endpoint) {
@@ -208,45 +266,90 @@ final class _SceneEditorState extends State<_SceneEditor> {
   }
   @override
   Widget build(BuildContext context) {
-    final available=<String>{for(final d in widget.devices) for(final ep in d.onOffEndpoints) '${d.nodeId}:$ep'};
-    return PopScope(canPop:!_saving,child:Scaffold(appBar:AppBar(title:Text(widget.scene==null?'سناریوی جدید':'ویرایش سناریو')),
-      body:ListView(padding:const EdgeInsets.fromLTRB(16,16,16,32),children:<Widget>[
-        TextField(controller:_name,enabled:!_saving,maxLength:60,decoration:const InputDecoration(labelText:'نام سناریو')),
-        const SizedBox(height:8),
-        const Text('خروجی‌ها را انتخاب کن و وضعیت دلخواه هرکدام را مشخص کن.'),
-        const SizedBox(height:16),
-        for(final device in widget.devices) for(final endpoint in device.onOffEndpoints)
-          Padding(padding:const EdgeInsets.only(bottom:12),child:Card(child:Column(children:<Widget>[
-            CheckboxListTile(value:_actions.containsKey('${device.nodeId}:$endpoint'),
-              title:Text('${device.name} · ${device.channelName(endpoint,device.onOffEndpoints.indexOf(endpoint))}'),
-              onChanged:_saving ? null : (checked)=>setState(() {
-                final action=SceneAction(nodeId:device.nodeId,endpoint:endpoint,on:true);
-                if(checked==true) { _actions[action.key]=action; } else { _actions.remove(action.key); }
-              })),
-            if(_actions.containsKey('${device.nodeId}:$endpoint')) SwitchListTile(
-              title:Text(_actions['${device.nodeId}:$endpoint']!.on?'روشن شود':'خاموش شود'),
-              value:_actions['${device.nodeId}:$endpoint']!.on,
-              onChanged:_saving ? null : (on)=>setState(()=>_actions['${device.nodeId}:$endpoint']=SceneAction(nodeId:device.nodeId,endpoint:endpoint,on:on))),
-            if (_actions['${device.nodeId}:$endpoint']?.on == true)
-              _lighting(device,endpoint),
-          ]))),
-        for(final action in _actions.values.where((a)=>!available.contains(a.key)).toList())
-          ListTile(title:const Text('خروجی حذف‌شده یا در دسترس نیست'),
-            trailing:IconButton(tooltip:'حذف خروجی از سناریو',icon:const Icon(Icons.close),
-              onPressed:()=>setState(()=>_actions.remove(action.key)))),
-        if(_error!=null) ...<Widget>[Text(_error!,style:TextStyle(color:Theme.of(context).colorScheme.error)),const SizedBox(height:8)],
-        FilledButton(onPressed:_saving ? null : () async {
-          try {
-            final scene=ManualScene(id:widget.scene?.id??DateTime.now().microsecondsSinceEpoch.toString(),
-              name:_name.text,actions:_actions.values.toList());
-            setState(()=>_saving=true);
-            final saved = await widget.onSave(scene);
-            if (!context.mounted) return;
-            if (saved) { Navigator.pop(context); } else {
-              setState(() { _saving=false; _error='سناریو ذخیره نشد. دوباره تلاش کن.'; });
-            }
-          } on FormatException { setState(()=>_error='نام و بین یک تا ۳۲ خروجی انتخاب کن.'); }
-        },child:const Text('ذخیره')),
-      ])));
+    final available = <String>{for (final d in widget.devices)
+      for (final ep in d.onOffEndpoints) '${d.nodeId}:$ep'};
+    final canProceed = _actions.isNotEmpty && _actions.length <= 32;
+    return PopScope(
+      canPop: _allowExit || (!_saving && !_configure && !_dirty),
+      onPopInvokedWithResult: (didPop, result) { if (!didPop) _back(); },
+      child: Scaffold(
+        key: const ValueKey('scene-editor'),
+        appBar: AppBar(
+          leading: IconButton(key: const ValueKey('scene-editor-back'),
+            tooltip: 'بازگشت', onPressed: _saving ? null : _back,
+            icon: const Icon(Icons.arrow_back_rounded)),
+          title: Text(widget.scene == null ? 'سناریوی جدید' : 'ویرایش سناریو'),
+        ),
+        body: ListView(padding: const EdgeInsets.all(16), children: [
+          Text(_configure ? '۲ · تنظیم عملکرد' : '۱ · انتخاب خروجی‌ها',
+            style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
+          if (_configure) ...[
+            TextField(controller: _name, enabled: !_saving, maxLength: 60,
+              decoration: const InputDecoration(labelText: 'نام سناریو')),
+            const SizedBox(height: 8),
+            const Text('این تنظیمات فقط هنگام اجرای سناریو اعمال می‌شوند.'),
+          ] else ...[
+            const Text('خروجی‌هایی را انتخاب کن که با این سناریو تغییر می‌کنند.'),
+            if (available.isEmpty) const Padding(padding: EdgeInsets.only(top: 16),
+              child: Text('هنوز خروجی قابل‌کنترلی اضافه نشده است.')),
+          ],
+          const SizedBox(height: 16),
+          for (final device in widget.devices)
+            for (final endpoint in device.onOffEndpoints)
+              if (!_configure || _actions.containsKey('${device.nodeId}:$endpoint'))
+                Padding(padding: const EdgeInsets.only(bottom: 12),
+                  child: Card(child: Column(children: [
+                    if (!_configure)
+                      CheckboxListTile(
+                        key: ValueKey('scene-select-${device.nodeId}:$endpoint'),
+                        value: _actions.containsKey('${device.nodeId}:$endpoint'),
+                        title: Text('${device.name} · ${device.channelName(endpoint, device.onOffEndpoints.indexOf(endpoint))}'),
+                        onChanged: _saving || (!_actions.containsKey('${device.nodeId}:$endpoint') && _actions.length >= 32)
+                          ? null : (checked) => setState(() {
+                            final action = SceneAction(nodeId: device.nodeId, endpoint: endpoint, on: true);
+                            if (checked == true) { _actions[action.key] = action; }
+                            else { _actions.remove(action.key); }
+                            _error = null;
+                          }),
+                      )
+                    else ...[
+                      ListTile(title: Text('${device.name} · ${device.channelName(endpoint, device.onOffEndpoints.indexOf(endpoint))}')),
+                      SwitchListTile(
+                        title: Text(_actions['${device.nodeId}:$endpoint']!.on ? 'روشن شود' : 'خاموش شود'),
+                        value: _actions['${device.nodeId}:$endpoint']!.on,
+                        onChanged: _saving ? null : (on) => setState(() =>
+                          _actions['${device.nodeId}:$endpoint'] = SceneAction(nodeId: device.nodeId, endpoint: endpoint, on: on)),
+                      ),
+                      if (_actions['${device.nodeId}:$endpoint']!.on) _lighting(device, endpoint),
+                    ],
+                  ]))),
+          for (final action in _actions.values.where((a) => !available.contains(a.key)).toList())
+            ListTile(title: const Text('خروجی حذف‌شده یا در دسترس نیست'),
+              trailing: IconButton(tooltip: 'حذف خروجی از سناریو', icon: const Icon(Icons.close),
+                onPressed: _saving ? null : () => setState(() => _actions.remove(action.key)))),
+          if (_error != null) Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ]),
+        bottomNavigationBar: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+          child: SafeArea(child: Padding(padding: const EdgeInsets.all(16),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${toPersianDigits(_actions.length)} خروجی انتخاب شده'),
+              const SizedBox(height: 8),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                if (_configure)
+                  FilledButton(onPressed: _saving || !canProceed ? null : _saveScene,
+                    child: Text(_saving ? 'در حال ذخیره…' : 'ذخیره'))
+                else
+                  FilledButton(key: const ValueKey('scene-next'),
+                    onPressed: _saving || !canProceed ? null : () => setState(() { _configure = true; _error = null; }),
+                    child: const Text('ادامه')),
+                if (_configure) TextButton(onPressed: _saving ? null : _back, child: const Text('تغییر خروجی‌ها')),
+                TextButton(onPressed: _saving ? null : _exit, child: const Text('انصراف')),
+              ]),
+            ]))),
+        ),
+      ),
+    );
   }
 }
