@@ -53,7 +53,7 @@ void main() {
     await tester.tap(find.text('ذخیره'));
     await tester.pumpAndSettle();
     controller.failStartup = false;
-    await tester.ensureVisible(find.text('تلاش دوباره'));
+    await tester.scrollUntilVisible(find.text('تلاش دوباره'), -200, scrollable: find.byType(Scrollable).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('تلاش دوباره'));
     await tester.pumpAndSettle();
