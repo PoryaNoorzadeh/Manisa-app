@@ -2256,9 +2256,12 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       if (unavailable)
-                        const Text(
-                          'ارتباط قطع است؛ وضعیت تازه دریافت نشده.',
-                          style: TextStyle(color: ManisaColors.warning),
+                        Text(
+                          error!.startsWith('Could not refresh') ||
+                                  error!.startsWith('Realtime')
+                              ? 'ارتباط قطع است؛ وضعیت تازه دریافت نشده.'
+                              : _MatterErrorNotice(error: error!).message,
+                          style: const TextStyle(color: ManisaColors.warning),
                         )
                       else
                         _MatterErrorNotice(error: error!),
