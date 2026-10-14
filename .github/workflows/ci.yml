@@ -1,0 +1,182 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - run: go mod tidy
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following Go files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./cmd/manisa-core
+
+  flutter:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Format Dart sources
+        run: dart format lib test
+      - run: flutter analyze
+      - run: flutter test
+      - name: Upload formatted validated Flutter sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: formatted-flutter-sources
+          path: |
+            apps/mobile/lib
+            apps/mobile/test
+          if-no-files-found: error
+          retention-days: 2
+
+  android-apk:
+    needs: flutter
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Format Dart sources
+        run: dart format lib test
+      - name: Generate native Android/iOS shells
+        run: flutter create --platforms=android,ios --org com.manisa --project-name manisa_mobile .
+      - name: Configure Android demo permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('android/app/src/main/AndroidManifest.xml')
+          text = path.read_text()
+          permissions = '''    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />\n'''
+          if 'android.permission.CAMERA' not in text:
+              text = text.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n' + permissions)
+          text = text.replace('<application\n', '<application\n        android:usesCleartextTraffic="true"\n')
+          path.write_text(text)
+          PY
+      - name: Build installable debug APK
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manisa-debug-apk
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  direct-matter-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Manisa
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Clone official Matter SDK and Android dependencies
+        run: |
+          git clone --branch v1.5.1.0 --depth 1 --filter=blob:none \
+            https://github.com/project-chip/connectedhomeip.git matter
+          python3 matter/scripts/checkout_submodules.py \
+            --shallow --platform android --jobs 8
+
+      - name: Install Android SDK 34 and NDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -perm -111 | head -n 1)"
+          fi
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under ANDROID_HOME=$ANDROID_HOME"
+            find "$ANDROID_HOME" -maxdepth 4 -name sdkmanager -print
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0" "ndk;28.2.13676358"
+
+      - name: Install Kotlin 2.1.10
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/kotlin.zip" \
+            https://github.com/JetBrains/kotlin/releases/download/v2.1.10/kotlin-compiler-2.1.10.zip
+          unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+
+      - name: Brand hardware-validation app
+        working-directory: matter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('examples/android/CHIPTool/app/src/main/res/values/strings.xml')
+          s = p.read_text()
+          s = s.replace('<string name="app_name">CHIPTool</string>', '<string name="app_name">Manisa Direct Matter</string>')
+          s = s.replace('Provision CHIP device with Wi-Fi', 'Add Matter device over Wi-Fi')
+          s = s.replace('Light On/Off &amp; Level Cluster', 'Touch Switch On/Off &amp; Level')
+          p.write_text(s)
+          PY
+
+      - name: Build official Matter Android controller
+        working-directory: matter
+        run: |
+          export PATH="$RUNNER_TEMP/kotlinc/bin:$PATH"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          test -f "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+          source scripts/bootstrap.sh
+          ./scripts/build/build_examples.py --target android-arm64-chip-tool build
+
+      - name: Prepare APK
+        run: |
+          mkdir -p dist
+          apk="$(find matter/out/android-arm64-chip-tool -type f -name '*.apk' | head -n 1)"
+          if [ -z "$apk" ]; then
+            echo "No APK found in Matter build output"
+            find matter/out/android-arm64-chip-tool -maxdepth 6 -type f | sort | tail -n 200
+            exit 1
+          fi
+          cp "$apk" dist/manisa-direct-matter-arm64-debug.apk
+          sha256sum dist/manisa-direct-matter-arm64-debug.apk > dist/SHA256SUMS.txt
+
+      - name: Upload direct Matter APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: manisa-direct-matter-apk
+          path: |
+            dist/manisa-direct-matter-arm64-debug.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
