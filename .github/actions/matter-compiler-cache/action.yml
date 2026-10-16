@@ -1,0 +1,50 @@
+name: Matter compiler cache
+description: Reuse verified compiler results while always executing the full Matter build.
+inputs:
+  sdk-directory:
+    description: Checked-out Matter SDK directory, relative to the workspace
+    required: true
+    default: matter
+outputs:
+  cache-hit:
+    description: Whether the exact compiler cache was restored
+    value: ${{ steps.restore.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Install compiler cache
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y ccache
+
+    - name: Resolve exact toolchain cache identity
+      id: identity
+      shell: bash
+      env:
+        SDK_DIRECTORY: ${{ inputs.sdk-directory }}
+      run: |
+        set -euo pipefail
+        sdk_commit="$(git -C "$SDK_DIRECTORY" rev-parse HEAD)"
+        cache_version="$(/usr/bin/ccache --version | head -n 1 | sha256sum | cut -d ' ' -f 1)"
+        recipe="$(sha256sum .github/actions/matter-compiler-cache/action.yml | cut -d ' ' -f 1)"
+        toolchain="$(sha256sum "$ANDROID_HOME/ndk/28.2.13676358/source.properties" "$ANDROID_HOME/build-tools/34.0.0/source.properties" | sha256sum | cut -d ' ' -f 1)"
+        echo "key=matter-ccache-v1-${RUNNER_OS}-${RUNNER_ARCH}-${sdk_commit}-android-arm64-chip-tool-debug-sdk34-ndk28.2.13676358-kotlin2.1.10-${toolchain}-${cache_version}-${recipe}" >> "$GITHUB_OUTPUT"
+        echo "CCACHE_DIR=$GITHUB_WORKSPACE/.cache/matter-compiler" >> "$GITHUB_ENV"
+        echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE/$SDK_DIRECTORY" >> "$GITHUB_ENV"
+        echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+        echo "CCACHE_MAXSIZE=2G" >> "$GITHUB_ENV"
+
+    - name: Restore compiler results
+      id: restore
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/.cache/matter-compiler
+        key: ${{ steps.identity.outputs.key }}
+        # No broad restore prefix; mismatched toolchains start with a cold cache.
+
+    - name: Start per-build cache statistics
+      shell: bash
+      run: |
+        /usr/bin/ccache --zero-stats
+        /usr/bin/ccache --show-config
