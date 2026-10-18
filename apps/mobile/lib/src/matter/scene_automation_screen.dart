@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../core/persian_digits.dart';
+import '../design/loading_feedback.dart';
+import '../design/manisa_localization.dart';
 import '../design/manisa_theme.dart';
 import 'manual_scene.dart';
 import 'scene_automation.dart';
@@ -16,8 +18,7 @@ final class SceneAutomationScreen extends StatefulWidget {
   final SceneStore sceneStore;
 
   @override
-  State<SceneAutomationScreen> createState() =>
-      _SceneAutomationScreenState();
+  State<SceneAutomationScreen> createState() => _SceneAutomationScreenState();
 }
 
 final class _SceneAutomationScreenState extends State<SceneAutomationScreen> {
@@ -68,7 +69,9 @@ final class _SceneAutomationScreenState extends State<SceneAutomationScreen> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('زمان‌بندی ذخیره نشد. دوباره تلاش کن.')),
+          const SnackBar(
+            content: AppText('زمان‌بندی ذخیره نشد. دوباره تلاش کن.'),
+          ),
         );
       }
       return false;
@@ -81,10 +84,8 @@ final class _SceneAutomationScreenState extends State<SceneAutomationScreen> {
     final result = await showDialog<SceneAutomation>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _AutomationEditor(
-        scenes: _scenes,
-        automation: automation,
-      ),
+      builder: (_) =>
+          _AutomationEditor(scenes: _scenes, automation: automation),
     );
     if (result == null || !mounted) return;
     await _mutate(
@@ -96,128 +97,146 @@ final class _SceneAutomationScreenState extends State<SceneAutomationScreen> {
     );
   }
 
-  String _sceneName(SceneAutomation automation) => _scenes
-      .where((scene) => scene.id == automation.sceneId)
-      .map((scene) => scene.name)
-      .firstOrNull ??
+  String _sceneName(SceneAutomation automation) =>
+      _scenes
+          .where((scene) => scene.id == automation.sceneId)
+          .map((scene) => scene.name)
+          .firstOrNull ??
       'سناریوی حذف‌شده';
 
   String _days(Set<int> weekdays) {
     const labels = <int, String>{
-      DateTime.saturday: 'ش',
-      DateTime.sunday: 'ی',
-      DateTime.monday: 'د',
-      DateTime.tuesday: 'س',
-      DateTime.wednesday: 'چ',
-      DateTime.thursday: 'پ',
-      DateTime.friday: 'ج',
+      DateTime.saturday: 'شنبه',
+      DateTime.sunday: 'یکشنبه',
+      DateTime.monday: 'دوشنبه',
+      DateTime.tuesday: 'سه‌شنبه',
+      DateTime.wednesday: 'چهارشنبه',
+      DateTime.thursday: 'پنجشنبه',
+      DateTime.friday: 'جمعه',
     };
     return <int>[
-      DateTime.saturday,
-      DateTime.sunday,
-      DateTime.monday,
-      DateTime.tuesday,
-      DateTime.wednesday,
-      DateTime.thursday,
-      DateTime.friday,
-    ].where(weekdays.contains).map((day) => labels[day]!).join('، ');
+          DateTime.saturday,
+          DateTime.sunday,
+          DateTime.monday,
+          DateTime.tuesday,
+          DateTime.wednesday,
+          DateTime.thursday,
+          DateTime.friday,
+        ]
+        .where(weekdays.contains)
+        .map((day) => context.tr(labels[day]!))
+        .join(ManisaCopy.of(context).language == 'en' ? ', ' : '، ');
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('زمان‌بندی‌ها')),
+    appBar: AppBar(title: const AppText('زمان‌بندی‌ها')),
     floatingActionButton: FloatingActionButton.extended(
       onPressed: _saving || _loading || _error != null || _scenes.isEmpty
           ? null
           : () => _edit(),
       icon: const Icon(Icons.add_alarm_outlined),
-      label: const Text('زمان‌بندی جدید'),
+      label: const AppText('زمان‌بندی جدید'),
     ),
     body: _loading
-        ? const Center(child: CircularProgressIndicator())
+        ? const LoadingNotice(label: 'در حال خواندن زمان‌بندی‌ها…')
         : ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
             children: <Widget>[
-              Text(
+              AppText(
                 'روال‌های قابل پیش‌بینی',
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 8),
-              const Text('برای سناریوهای آماده، روز و ساعت اجرا را مشخص کن.'),
+              const AppText(
+                'برای سناریوهای آماده، روز و ساعت اجرا را مشخص کن.',
+              ),
               const SizedBox(height: 20),
               const _ScheduleTrustNotice(),
               if (_error != null) ...<Widget>[
                 const SizedBox(height: 12),
-                Text(_error!),
-                TextButton(onPressed: _load, child: const Text('تلاش دوباره')),
+                AppText(_error!),
+                TextButton(
+                  onPressed: _load,
+                  child: const AppText('تلاش دوباره'),
+                ),
               ],
               if (_scenes.isEmpty && _error == null)
                 const Padding(
                   padding: EdgeInsets.only(top: 16),
-                  child: Card(child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text('ابتدا یک سناریو بساز، سپس برای آن زمان تعیین کن.'),
-                  )),
+                  child: Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: AppText(
+                        'ابتدا یک سناریو بساز، سپس برای آن زمان تعیین کن.',
+                      ),
+                    ),
+                  ),
                 ),
               if (_automations.isEmpty && _scenes.isNotEmpty)
                 const Padding(
                   padding: EdgeInsets.only(top: 16),
-                  child: Card(child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text('هنوز زمان‌بندی‌ای نساخته‌ای.'),
-                  )),
+                  child: Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: AppText('هنوز زمان‌بندی‌ای نساخته‌ای.'),
+                    ),
+                  ),
                 ),
               for (final automation in _automations)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Card(
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    title: Text(_sceneName(automation)),
-                    subtitle: Text(
-                      '${toPersianDigits(automation.hour.toString().padLeft(2, '0'))}:'
-                      '${toPersianDigits(automation.minute.toString().padLeft(2, '0'))}'
-                      ' · ${_days(automation.weekdays)}',
-                    ),
-                    leading: Switch(
-                      value: automation.enabled,
-                      onChanged: _saving
-                          ? null
-                          : (enabled) => _mutate(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      title: Text(_sceneName(automation)),
+                      subtitle: Text(
+                        '${ManisaCopy.of(context).number(automation.hour.toString().padLeft(2, '0'))}:'
+                        '${ManisaCopy.of(context).number(automation.minute.toString().padLeft(2, '0'))}'
+                        ' · ${_days(automation.weekdays)}',
+                      ),
+                      leading: Switch(
+                        value: automation.enabled,
+                        onChanged: _saving
+                            ? null
+                            : (enabled) => _mutate(
+                                (current) => current
+                                    .map(
+                                      (item) => item.id == automation.id
+                                          ? item.copyWith(
+                                              enabled: enabled,
+                                              clearLastHandledSlot: enabled,
+                                            )
+                                          : item,
+                                    )
+                                    .toList(),
+                              ),
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        enabled: !_saving,
+                        onSelected: (value) {
+                          if (value == 'edit') _edit(automation);
+                          if (value == 'delete') {
+                            _mutate(
                               (current) => current
-                                  .map(
-                                    (item) => item.id == automation.id
-                                        ? item.copyWith(
-                                            enabled: enabled,
-                                            clearLastHandledSlot: enabled,
-                                          )
-                                        : item,
-                                  )
+                                  .where((item) => item.id != automation.id)
                                   .toList(),
-                            ),
-                    ),
-                    trailing: PopupMenuButton<String>(
-                      enabled: !_saving,
-                      onSelected: (value) {
-                        if (value == 'edit') _edit(automation);
-                        if (value == 'delete') {
-                          _mutate(
-                            (current) => current
-                                .where((item) => item.id != automation.id)
-                                .toList(),
-                          );
-                        }
-                      },
-                      itemBuilder: (_) => const <PopupMenuEntry<String>>[
-                        PopupMenuItem(value: 'edit', child: Text('ویرایش')),
-                        PopupMenuItem(value: 'delete', child: Text('حذف')),
-                      ],
+                            );
+                          }
+                        },
+                        itemBuilder: (_) => const <PopupMenuEntry<String>>[
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: AppText('ویرایش'),
+                          ),
+                          PopupMenuItem(value: 'delete', child: AppText('حذف')),
+                        ],
+                      ),
                     ),
                   ),
-                ),
                 ),
             ],
           ),
@@ -241,7 +260,7 @@ final class _ScheduleTrustNotice extends StatelessWidget {
           Icon(Icons.verified_user_outlined, color: ManisaColors.tealPressed),
           SizedBox(width: 12),
           Expanded(
-            child: Text(
+            child: AppText(
               'زمان‌بندی روی همین گوشی اجرا می‌شود. اجرای عقب‌افتاده فقط تا ۱۰ دقیقه جبران می‌شود و فرمان دوبار پخش نمی‌شود.',
             ),
           ),
@@ -291,7 +310,9 @@ final class _AutomationEditorState extends State<_AutomationEditor> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.automation == null ? 'زمان‌بندی جدید' : 'ویرایش زمان‌بندی'),
+    title: AppText(
+      widget.automation == null ? 'زمان‌بندی جدید' : 'ویرایش زمان‌بندی',
+    ),
     content: SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -301,7 +322,7 @@ final class _AutomationEditorState extends State<_AutomationEditor> {
             initialValue: widget.scenes.any((scene) => scene.id == _sceneId)
                 ? _sceneId
                 : widget.scenes.first.id,
-            decoration: const InputDecoration(labelText: 'سناریو'),
+            decoration: InputDecoration(labelText: context.tr('سناریو')),
             items: <DropdownMenuItem<String>>[
               for (final scene in widget.scenes)
                 DropdownMenuItem(value: scene.id, child: Text(scene.name)),
@@ -311,7 +332,7 @@ final class _AutomationEditorState extends State<_AutomationEditor> {
           const SizedBox(height: 12),
           OutlinedButton.icon(
             icon: const Icon(Icons.schedule),
-            label: Text(
+            label: AppText(
               '${toPersianDigits(_time.hour.toString().padLeft(2, '0'))}:'
               '${toPersianDigits(_time.minute.toString().padLeft(2, '0'))}',
             ),
@@ -326,31 +347,38 @@ final class _AutomationEditorState extends State<_AutomationEditor> {
           const SizedBox(height: 12),
           Wrap(
             spacing: 6,
-            children: const <(int, String)>[
-              (DateTime.saturday, 'ش'),
-              (DateTime.sunday, 'ی'),
-              (DateTime.monday, 'د'),
-              (DateTime.tuesday, 'س'),
-              (DateTime.wednesday, 'چ'),
-              (DateTime.thursday, 'پ'),
-              (DateTime.friday, 'ج'),
-            ].map((item) => FilterChip(
-              label: Text(item.$2),
-              selected: _weekdays.contains(item.$1),
-              onSelected: (selected) => setState(() {
-                if (selected) _weekdays.add(item.$1);
-                else _weekdays.remove(item.$1);
-              }),
-            )).toList(),
+            children:
+                const <(int, String)>[
+                      (DateTime.saturday, 'شنبه'),
+                      (DateTime.sunday, 'یکشنبه'),
+                      (DateTime.monday, 'دوشنبه'),
+                      (DateTime.tuesday, 'سه‌شنبه'),
+                      (DateTime.wednesday, 'چهارشنبه'),
+                      (DateTime.thursday, 'پنجشنبه'),
+                      (DateTime.friday, 'جمعه'),
+                    ]
+                    .map(
+                      (item) => FilterChip(
+                        label: AppText(item.$2),
+                        selected: _weekdays.contains(item.$1),
+                        onSelected: (selected) => setState(() {
+                          if (selected)
+                            _weekdays.add(item.$1);
+                          else
+                            _weekdays.remove(item.$1);
+                        }),
+                      ),
+                    )
+                    .toList(),
           ),
-          if (_error != null) Text(_error!),
+          if (_error != null) AppText(_error!),
         ],
       ),
     ),
     actions: <Widget>[
       TextButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('انصراف'),
+        child: const AppText('انصراف'),
       ),
       FilledButton(
         onPressed: () {
@@ -361,7 +389,8 @@ final class _AutomationEditorState extends State<_AutomationEditor> {
           Navigator.pop(
             context,
             SceneAutomation(
-              id: widget.automation?.id ??
+              id:
+                  widget.automation?.id ??
                   DateTime.now().microsecondsSinceEpoch.toString(),
               sceneId: _sceneId,
               hour: _time.hour,
@@ -372,7 +401,7 @@ final class _AutomationEditorState extends State<_AutomationEditor> {
             ),
           );
         },
-        child: const Text('ذخیره'),
+        child: const AppText('ذخیره'),
       ),
     ],
   );

@@ -82,6 +82,10 @@ void main() {
         2:<SensorMetric>{SensorMetric.contactClosed,SensorMetric.occupancy,temperature}});
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
     expect(find.text('دریافت نشده'),findsNWidgets(3));
     expect(find.text('بسته'),findsNothing);
     expect(find.text('حضوری تشخیص داده نشده'),findsNothing);
@@ -113,6 +117,10 @@ void main() {
     fake.pending = Completer<Map<int,DirectSensorMeasurement>>();
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
     expect(find.text('دریافت نشده'),findsNWidgets(3));
     expect(find.text('بسته'),findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -126,6 +134,10 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final fake = _SensorController()..value = DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':false});
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:_SensorStore()));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
     await tester.pumpAndSettle();
     expect(find.text('سنسور در و پنجره'),findsOneWidget);
     fake.failRead = true;
@@ -149,6 +161,10 @@ void main() {
     final fake = _SensorController()..value = DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':false});
     final store = _SensorStore();
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
     await tester.pumpAndSettle();
     fake.events.add(DirectSensorEvent(nodeId:7,endpoint:9,
       report:DirectSensorMeasurement.fromMap(<Object?,Object?>{'contactClosed':true})));
@@ -332,6 +348,10 @@ void main() {
     final store = _SensorStore();
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
     expect(find.text('سنسور محیطی'), findsOneWidget);
     expect(find.text('۲۱٫۵ °C'), findsOneWidget);
     expect(find.text('۴۵٪'), findsOneWidget);
@@ -351,9 +371,17 @@ void main() {
     final store = _SensorStore();
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox.shrink());
     fake.pending = Completer<Map<int,DirectSensorMeasurement>>();
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
     await tester.pumpAndSettle();
     expect(find.text('۲۱٫۵ °C'),findsNothing);
     expect(find.text('دریافت نشده'),findsNWidgets(2));
@@ -377,6 +405,10 @@ void main() {
     final fake = _SensorController();
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:_SensorStore()));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
     fake.failRead = true;
     await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pumpAndSettle();
@@ -398,6 +430,10 @@ void main() {
   testWidgets('late read cannot replace newer live sensor value or stream error', (tester) async {
     final fake = _SensorController();
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:_SensorStore()));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
     await tester.pumpAndSettle();
     fake.pending = Completer<Map<int,DirectSensorMeasurement>>();
     await tester.tap(find.byTooltip('بررسی وضعیت'));
@@ -426,6 +462,10 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
     fake.failRead = true;
     await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pumpAndSettle();
@@ -443,6 +483,10 @@ void main() {
     final fake = _SensorController();
     final store = _SensorStore();
     await tester.pumpWidget(ManisaDirectApp(controller:fake,deviceStore:store));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-device-7')));
     await tester.pumpAndSettle();
     fake.pending = Completer<Map<int,DirectSensorMeasurement>>();
     await tester.tap(find.byTooltip('بررسی وضعیت'));
