@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m12-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m13-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -109,12 +109,14 @@ jobs:
 
       - name: Apply Manisa launcher artwork
         run: |
-          mkdir -p apps/mobile/android/app/src/main/res/drawable-nodpi
-          cp apps/mobile/native/android/res/drawable-nodpi/manisa_icon.png apps/mobile/android/app/src/main/res/drawable-nodpi/manisa_icon.png
+          for resource_dir in drawable mipmap-anydpi mipmap-anydpi-v26 values; do
+            mkdir -p "apps/mobile/android/app/src/main/res/$resource_dir"
+            cp apps/mobile/native/android/res/"$resource_dir"/*.xml "apps/mobile/android/app/src/main/res/$resource_dir/"
+          done
           python3 - <<'PYICON'
           from pathlib import Path
           p = Path('apps/mobile/android/app/src/main/AndroidManifest.xml')
-          s = p.read_text().replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/manisa_icon"')
+          s = p.read_text().replace('android:icon="@drawable/manisa_icon"', 'android:icon="@mipmap/ic_launcher"')
           s = s.replace('android:label="manisa_mobile"', 'android:label="مانیسا"')
           p.write_text(s)
           PYICON
@@ -194,7 +196,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M12"
+            echo "milestone=M13"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -203,7 +205,12 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M12 loading and refresh candidate - physical acceptance pending
+          Manisa M13 home design candidate - physical acceptance pending
+          - Reviewed Manisa visual system with original ribbon symbol and correct brand name
+          - Persian-first persistent English and Arabic selection
+          - Unified device/room add menu, room filters and sensor summaries
+          - Home and room switch-backlight colors with explicit eligible output selection
+          - Explicit color application and failed-only retry without power/brightness changes
           - Saved Home appears before native startup; bounded initialization with retry
           - Coalesced refreshes preserve controls and expose node-specific progress
           - Pull-to-refresh on short Home/detail; explicit last-check time

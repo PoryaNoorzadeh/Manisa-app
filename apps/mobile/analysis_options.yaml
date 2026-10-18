@@ -5,6 +5,8 @@ analyzer:
     strict-raw-types: true
   errors:
     avoid_dynamic_calls: error
+  exclude:
+    - build/**
 
 linter:
   rules:

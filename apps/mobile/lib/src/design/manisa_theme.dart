@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 
 /// The visual foundation for Manisa: calm, local-first and readable in Persian.
 abstract final class ManisaColors {
-  static const ink = Color(0xFF172322);
-  static const mutedInk = Color(0xFF586866);
-  static const teal = Color(0xFF087A78);
-  static const tealPressed = Color(0xFF005F5E);
-  static const mint = Color(0xFFD9F3EF);
-  static const canvas = Color(0xFFF5F8F6);
-  static const surface = Color(0xFFFCFEFD);
-  static const outline = Color(0xFFDCE5E2);
-  static const warning = Color(0xFF9B5C00);
-  static const warningSurface = Color(0xFFFFEFD2);
+  static const ink = Color(0xFF171D32);
+  static const mutedInk = Color(0xFF70788C);
+  static const teal = Color(0xFF4158EB);
+  static const tealPressed = Color(0xFF3447CE);
+  static const mint = Color(0xFFE9EDFF);
+  static const canvas = Color(0xFFF4F5F8);
+  static const surface = Color(0xFFFFFFFF);
+  static const outline = Color(0xFFE2E5ED);
+  static const warning = Color(0xFFA45C20);
+  static const warningSurface = Color(0xFFFFF1E5);
   static const danger = Color(0xFFBA1A1A);
   static const dangerSurface = Color(0xFFFFDAD6);
 }
@@ -22,11 +22,11 @@ abstract final class ManisaTheme {
       primary: ManisaColors.teal,
       onPrimary: Colors.white,
       primaryContainer: ManisaColors.mint,
-      onPrimaryContainer: Color(0xFF00201F),
-      secondary: Color(0xFF4A635F),
+      onPrimaryContainer: ManisaColors.ink,
+      secondary: ManisaColors.tealPressed,
       onSecondary: Colors.white,
-      secondaryContainer: Color(0xFFCCE8E3),
-      onSecondaryContainer: Color(0xFF06201D),
+      secondaryContainer: ManisaColors.mint,
+      onSecondaryContainer: ManisaColors.ink,
       error: ManisaColors.danger,
       onError: Colors.white,
       errorContainer: ManisaColors.dangerSurface,
@@ -35,9 +35,9 @@ abstract final class ManisaTheme {
       onSurface: ManisaColors.ink,
       onSurfaceVariant: ManisaColors.mutedInk,
       outline: ManisaColors.outline,
-      outlineVariant: Color(0xFFE8EFED),
-      shadow: Color(0x1F172322),
-      scrim: Color(0x66172322),
+      outlineVariant: Color(0xFFECEEF4),
+      shadow: Color(0x1F171D32),
+      scrim: Color(0x66171D32),
       inverseSurface: Color(0xFF293331),
       onInverseSurface: Color(0xFFEEF2F0),
       inversePrimary: Color(0xFF81D5CF),
@@ -102,6 +102,7 @@ abstract final class ManisaTheme {
         scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: TextStyle(
+          fontFamily: 'Vazirmatn',
           color: ManisaColors.ink,
           fontSize: 20,
           fontWeight: FontWeight.w800,
@@ -115,13 +116,16 @@ abstract final class ManisaTheme {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(22),
-          side: const BorderSide(color: ManisaColors.outline),
+          side: BorderSide.none,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: ManisaColors.surface,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: const BorderSide(color: ManisaColors.outline),
@@ -138,7 +142,9 @@ abstract final class ManisaTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(48, 54),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           textStyle: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
@@ -146,7 +152,9 @@ abstract final class ManisaTheme {
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(48, 52),
           side: const BorderSide(color: ManisaColors.outline),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           textStyle: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
@@ -172,6 +180,19 @@ abstract final class ManisaTheme {
                 : FontWeight.w600,
           );
         }),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: ManisaColors.surface,
+        selectedColor: ManisaColors.mint,
+        showCheckmark: false,
+        side: BorderSide.none,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        labelStyle: const TextStyle(
+          color: ManisaColors.ink,
+          fontFamily: 'Vazirmatn',
+          fontSize: 13,
+        ),
       ),
       dividerTheme: const DividerThemeData(
         color: ManisaColors.outline,

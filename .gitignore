@@ -6,3 +6,16 @@ data/
 .DS_Store
 .idea/
 .vscode/
+
+# Flutter generated files
+apps/mobile/.dart_tool/
+apps/mobile/build/
+apps/mobile/android/
+apps/mobile/ios/
+apps/mobile/web/
+apps/mobile/linux/
+apps/mobile/macos/
+apps/mobile/windows/
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/.metadata
+.superpowers/

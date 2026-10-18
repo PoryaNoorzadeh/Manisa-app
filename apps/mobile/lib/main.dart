@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'src/app.dart';
 import 'src/core/config/app_config.dart';
 import 'src/data/manisa_api.dart';
+import 'src/design/manisa_localization.dart';
 import 'src/discovery/hub_discovery.dart';
+import 'src/matter/backlight_policy.dart';
 import 'src/matter/direct_device_store.dart';
 import 'src/matter/direct_matter_app.dart';
 import 'src/matter/direct_matter_controller.dart';
@@ -26,6 +28,8 @@ void main() {
         favoriteStore: PreferencesFavoriteStore(),
         homeStore: PreferencesHomeProfileStore(),
         roomStore: PreferencesRoomStore(),
+        localeStore: PreferencesLocaleStore(),
+        backlightStore: PreferencesBacklightStore(),
         sceneStore: PreferencesSceneStore(),
       ),
     );

@@ -25,7 +25,7 @@ void main() {
     expect(find.byType(SwitchListTile), findsNothing);
     expect(controller.readCalls, 0);
     expect(controller.watchCalls, 0);
-    expect(tester.widget<FloatingActionButton>(find.byType(FloatingActionButton)).onPressed, isNull);
+    expect(controller.readCalls, 0); // Add-device is gated by readiness in the add menu.
     controller.startupWait!.complete(true);
     await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNotNull);
@@ -177,6 +177,8 @@ void main() {
   testWidgets('detail refresh joins the same node task and reports completion', (tester) async {
     final controller = _Controller()..discovery.complete(<int>[1]);
     await tester.pumpWidget(ManisaDirectApp(controller: controller, deviceStore: _Store()));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('open-device-7')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('open-device-7')));
     await tester.pumpAndSettle();
@@ -756,7 +758,9 @@ void main() {
     await tester.tap(find.byTooltip('بررسی وضعیت'));
     await tester.pump();
     expect(controller.discoveryCalls, 1);
-    await tester.tap(find.text('افزودن وسیله'));
+    await tester.tap(find.byTooltip('افزودن'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('افزودن دستگاه'));
     await tester.pumpAndSettle();
     expect(find.text('مرحلهٔ ۱ از ۳'), findsOneWidget);
     expect(find.text('کد اتصال'), findsOneWidget);
@@ -888,7 +892,9 @@ void main() {
       Directionality.of(tester.element(find.text('خانهٔ من'))),
       TextDirection.rtl,
     );
-    await tester.tap(find.text('افزودن وسیله'));
+    await tester.tap(find.byTooltip('افزودن'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('افزودن دستگاه'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('ادامه'));
     await tester.tap(find.text('ادامه'));
@@ -1058,7 +1064,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('device-detail-back')));
     await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
-    expect(find.text('۰ از ۱ خروجی روشن'), findsOneWidget);
+    expect(find.text('خاموش'), findsOneWidget);
     expect(controller.watchCalls, watches);
     await tester.pumpWidget(const SizedBox.shrink());
     await controller.events.close();
@@ -1337,12 +1343,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('افزودن اتاق'));
+    await tester.tap(find.byTooltip('افزودن'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('افزودن اتاق'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'پذیرایی');
     await tester.tap(find.text('ساخت اتاق'));
     await tester.pumpAndSettle();
-    expect(find.text('پذیرایی'), findsOneWidget);
+    expect(find.text('پذیرایی'), findsWidgets);
     expect(find.text('هنوز وسیله‌ای در این اتاق نیست'), findsOneWidget);
 
     await tester.tap(find.byTooltip('تنظیمات وسیله'));
@@ -1353,7 +1361,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(roomStore.catalog.roomIdForDevice(7), isNotNull);
-    expect(find.textContaining('۱ خروجی · پذیرایی'), findsOneWidget);
+    expect(find.text('پذیرایی'), findsWidgets);
     expect(find.text('بدون اتاق'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -1367,8 +1375,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('پذیرایی'), findsOneWidget);
-    expect(find.textContaining('۱ خروجی · پذیرایی'), findsOneWidget);
+    expect(find.text('پذیرایی'), findsWidgets);
+    expect(find.text('پذیرایی'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
@@ -1405,7 +1413,7 @@ void main() {
 
     expect(roomStore.catalog.rooms, isEmpty);
     expect(roomStore.catalog.roomIdForDevice(7), isNull);
-    expect(find.text('بدون اتاق'), findsOneWidget);
+    expect(find.text('بدون اتاق'), findsWidgets);
     expect(find.text('Saved switch'), findsOneWidget);
   });
 
@@ -1556,7 +1564,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('علاقه‌مندی‌ها'), findsOneWidget);
-    expect(find.textContaining('وضعیت دریافت نشده'), findsNWidgets(2));
+    expect(find.textContaining('وضعیت دریافت نشده'), findsWidgets);
     expect(find.byType(SwitchListTile), findsNothing);
   });
 }

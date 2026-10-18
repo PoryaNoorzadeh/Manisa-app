@@ -7,7 +7,11 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../core/persian_digits.dart';
 import '../design/loading_feedback.dart';
+import '../design/manisa_brand.dart';
+import '../design/manisa_localization.dart';
 import '../design/manisa_theme.dart';
+import 'backlight_policy.dart';
+import 'backlight_screen.dart';
 import 'color_control.dart';
 import 'color_control_widget.dart';
 import 'device_detail_screen.dart';
@@ -17,6 +21,7 @@ import 'direct_device_store.dart';
 import 'direct_matter_controller.dart';
 import 'electrical_measurement.dart';
 import 'favorite_store.dart';
+import 'home_environment.dart';
 import 'home_profile_store.dart';
 import 'level_control.dart';
 import 'manual_scene.dart';
@@ -30,7 +35,7 @@ import 'scene_lighting_executor.dart';
 import 'sensor_measurement.dart';
 import 'sensor_measurement_widget.dart';
 
-final class ManisaDirectApp extends StatelessWidget {
+final class ManisaDirectApp extends StatefulWidget {
   const ManisaDirectApp({
     required this.controller,
     required this.deviceStore,
@@ -40,6 +45,8 @@ final class ManisaDirectApp extends StatelessWidget {
     this.sceneStore,
     this.automationStore,
     this.clock = DateTime.now,
+    this.localeStore = const EmptyLocaleStore(),
+    this.backlightStore = const EmptyBacklightStore(),
     super.key,
   });
 
@@ -52,27 +59,58 @@ final class ManisaDirectApp extends StatelessWidget {
   final AutomationStore? automationStore;
   final DateTime Function() clock;
 
+  final LocaleStore localeStore;
+  final BacklightStore backlightStore;
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'مانیسا',
-      locale: const Locale('fa'),
-      supportedLocales: const <Locale>[Locale('fa')],
-      localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: ManisaTheme.light,
-      home: DirectMatterHomeScreen(
-        controller: controller,
-        deviceStore: deviceStore,
-        favoriteStore: favoriteStore,
-        homeStore: homeStore,
-        roomStore: roomStore,
-        sceneStore: sceneStore,
-        automationStore: automationStore,
-        clock: clock,
-      ),
-    );
+  State<ManisaDirectApp> createState() => _ManisaDirectAppState();
+}
+
+class _ManisaDirectAppState extends State<ManisaDirectApp> {
+  late final ManisaLocaleController _locale = ManisaLocaleController(
+    widget.localeStore,
+  );
+  @override
+  void initState() {
+    super.initState();
+    _locale.restore();
   }
+
+  @override
+  void dispose() {
+    _locale.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<String>(
+    valueListenable: _locale,
+    builder: (context, language, _) => ManisaLocaleScope(
+      controller: _locale,
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'مانیسا',
+        locale: Locale(language),
+        supportedLocales: const <Locale>[
+          Locale('fa'),
+          Locale('en'),
+          Locale('ar'),
+        ],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        theme: ManisaTheme.light,
+        home: DirectMatterHomeScreen(
+          controller: widget.controller,
+          deviceStore: widget.deviceStore,
+          favoriteStore: widget.favoriteStore,
+          homeStore: widget.homeStore,
+          roomStore: widget.roomStore,
+          sceneStore: widget.sceneStore,
+          automationStore: widget.automationStore,
+          clock: widget.clock,
+          backlightStore: widget.backlightStore,
+        ),
+      ),
+    ),
+  );
 }
 
 final class DirectMatterHomeScreen extends StatefulWidget {
@@ -85,6 +123,7 @@ final class DirectMatterHomeScreen extends StatefulWidget {
     this.sceneStore,
     this.automationStore,
     this.clock = DateTime.now,
+    this.backlightStore = const EmptyBacklightStore(),
     super.key,
   });
 
@@ -96,6 +135,7 @@ final class DirectMatterHomeScreen extends StatefulWidget {
   final SceneStore? sceneStore;
   final AutomationStore? automationStore;
   final DateTime Function() clock;
+  final BacklightStore backlightStore;
 
   @override
   State<DirectMatterHomeScreen> createState() => _DirectMatterHomeScreenState();
@@ -114,7 +154,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   RoomCatalog _roomCatalog = const RoomCatalog();
   ManisaHomeProfile _homeProfile = const ManisaHomeProfile();
   FavoriteCatalog _favorites = const FavoriteCatalog();
-  final Map<String, SensorObservation> _sensorObservations = <String, SensorObservation>{};
+  final Map<String, SensorObservation> _sensorObservations =
+      <String, SensorObservation>{};
   final Map<int, Object> _sensorLifetimes = <int, Object>{};
   final Set<int> _readingSensors = <int>{};
   StreamSubscription<DirectSensorEvent>? _sensorEvents;
@@ -160,6 +201,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   bool _retrying = false;
   bool _foreground = true;
   int _selectedDestination = 0;
+  String? _selectedRoom;
   bool _checkingAutomations = false;
   bool _automationScreenOpen = false;
   int _connectionRetryAttempt = 0;
@@ -192,7 +234,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     _connectionRetryTimer?.cancel();
     _automationTimer?.cancel();
     _sharedStateTimer?.cancel();
-    for (final timer in _subscriptionRepairs.values) { timer.cancel(); }
+    for (final timer in _subscriptionRepairs.values) {
+      timer.cancel();
+    }
     _subscriptionRepairs.clear();
     _sceneRunner.cancel();
     _deviceViewChanges.dispose();
@@ -205,7 +249,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     if (!_foreground) {
       _sharedStateTimer?.cancel();
       _sharedStateTimer = null;
-      for (final timer in _subscriptionRepairs.values) { timer.cancel(); }
+      for (final timer in _subscriptionRepairs.values) {
+        timer.cancel();
+      }
       _subscriptionRepairs.clear();
       _connectionRetryTimer?.cancel();
       _connectionRetryTimer = null;
@@ -223,7 +269,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       return;
     }
     _lastResumeRefresh = now;
-    unawaited(_unavailableNodes.isEmpty ? _refreshAllStates() : _recoverConnections());
+    unawaited(
+      _unavailableNodes.isEmpty ? _refreshAllStates() : _recoverConnections(),
+    );
   }
 
   String _stateKey(int nodeId, int endpoint) => '$nodeId:$endpoint';
@@ -239,38 +287,48 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   Future<void> _performInitialize() async {
-    _updateState(() { _initializing = true; _loading = !_catalogLoaded; _error = null; });
+    _updateState(() {
+      _initializing = true;
+      _loading = !_catalogLoaded;
+      _error = null;
+    });
     var initialized = false;
     try {
       if (!_catalogLoaded) {
-      final loaded = await Future.wait<Object>(<Future<Object>>[
-        widget.deviceStore.load(),
-        widget.roomStore.load(),
-        widget.homeStore.load(),
-        widget.favoriteStore.load(),
-      ]).timeout(_readTimeout);
-      final devices = loaded[0] as List<DirectMatterDevice>;
-      final roomCatalog = loaded[1] as RoomCatalog;
-      final homeProfile = loaded[2] as ManisaHomeProfile;
-      final favorites = loaded[3] as FavoriteCatalog;
-      if (!mounted) return;
-      _updateState(() {
-        _devices = devices;
-        _roomCatalog = roomCatalog;
-        _homeProfile = homeProfile;
-        _favorites = favorites.retain(
-          (favorite) => devices.any(
-            (device) =>
-                device.nodeId == favorite.nodeId &&
-                device.onOffEndpoints.contains(favorite.endpoint),
-          ),
-        );
-      });
-      _updateState(() { _catalogLoaded = true; _loading = false; });
+        final loaded = await Future.wait<Object>(<Future<Object>>[
+          widget.deviceStore.load(),
+          widget.roomStore.load(),
+          widget.homeStore.load(),
+          widget.favoriteStore.load(),
+        ]).timeout(_readTimeout);
+        final devices = loaded[0] as List<DirectMatterDevice>;
+        final roomCatalog = loaded[1] as RoomCatalog;
+        final homeProfile = loaded[2] as ManisaHomeProfile;
+        final favorites = loaded[3] as FavoriteCatalog;
+        if (!mounted) return;
+        _updateState(() {
+          _devices = devices;
+          _roomCatalog = roomCatalog;
+          _homeProfile = homeProfile;
+          _favorites = favorites.retain(
+            (favorite) => devices.any(
+              (device) =>
+                  device.nodeId == favorite.nodeId &&
+                  device.onOffEndpoints.contains(favorite.endpoint),
+            ),
+          );
+        });
+        _updateState(() {
+          _catalogLoaded = true;
+          _loading = false;
+        });
       }
-      final supported = await widget.controller.isSupported().timeout(_readTimeout);
+      final supported = await widget.controller.isSupported().timeout(
+        _readTimeout,
+      );
       if (!mounted) return;
-      if (!supported) throw StateError('Controller initialization is not available.');
+      if (!supported)
+        throw StateError('Controller initialization is not available.');
       // A retry after partial initialization must not duplicate subscriptions.
       await _cancelReports();
       if (!mounted) return;
@@ -291,135 +349,188 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       );
       final controller = widget.controller;
       if (controller is LevelEventController) {
-        _levelEvents = (controller as LevelEventController).watchLevels().listen(
-          (event) {
-            if (!_canUpdate(event.nodeId)) return;
-            final device = _devices.firstWhere(
-              (item) => item.nodeId == event.nodeId,
+        _levelEvents = (controller as LevelEventController)
+            .watchLevels()
+            .listen(
+              (event) {
+                if (!_canUpdate(event.nodeId)) return;
+                final device = _devices.firstWhere(
+                  (item) => item.nodeId == event.nodeId,
+                );
+                if (!device.levelEndpoints.contains(event.endpoint)) return;
+                _updateState(() {
+                  final key = _stateKey(event.nodeId, event.endpoint);
+                  _levelRevisions[key] = (_levelRevisions[key] ?? 0) + 1;
+                  if (event.level == null) {
+                    _levels.remove(key);
+                  } else {
+                    _levels[key] = event.level!;
+                  }
+                  _unavailableNodes.remove(event.nodeId);
+                  _deviceErrors.remove(event.nodeId);
+                });
+              },
+              onError: (Object error, StackTrace stackTrace) {
+                _onRealtimeFailure(error);
+              },
             );
-            if (!device.levelEndpoints.contains(event.endpoint)) return;
-            _updateState(() {
-              final key = _stateKey(event.nodeId, event.endpoint);
-              _levelRevisions[key] = (_levelRevisions[key] ?? 0) + 1;
-              if (event.level == null) {
-                _levels.remove(key);
-              } else {
-                _levels[key] = event.level!;
-              }
-              _unavailableNodes.remove(event.nodeId);
-              _deviceErrors.remove(event.nodeId);
-            });
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            _onRealtimeFailure(error);
-          },
-        );
       }
       if (controller is ColorControlController) {
-        _colorEvents = (controller as ColorControlController).watchColors().listen((event) {
-          if (!_canUpdate(event.nodeId)) return;
-          final device = _devices.firstWhere((item) => item.nodeId == event.nodeId);
-          if (!device.colorCapabilities.containsKey(event.endpoint)) return;
-          final key = _stateKey(event.nodeId, event.endpoint);
-          _updateState(() {
-            if (event.stale) {
-              _staleColors.add(key);
-              _scheduleSubscriptionRepair(event.nodeId);
-            } else {
-              final previous = _colors[key] ?? DirectColorState.fromMap(
-                  <String, int>{'capabilities': device.colorCapabilities[event.endpoint]!});
-              _colors[key] = previous.merge(event.report);
-              _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1;
-              // A partial report cannot make a failed full read fresh.
-              if (DirectColorState.fromMap(<String, int?>{
-                  'capabilities': device.colorCapabilities[event.endpoint],
-                  ...event.report.values,
-                }).hsv != null && !_unavailableNodes.contains(event.nodeId)) {
-                _staleColors.remove(key);
-              }
-            }
-          });
-        }, onError: (Object error, StackTrace stack) {
-          if (!mounted) return;
-          _updateState(() => _staleColors.addAll(_colors.keys));
-        });
+        _colorEvents = (controller as ColorControlController)
+            .watchColors()
+            .listen(
+              (event) {
+                if (!_canUpdate(event.nodeId)) return;
+                final device = _devices.firstWhere(
+                  (item) => item.nodeId == event.nodeId,
+                );
+                if (!device.colorCapabilities.containsKey(event.endpoint))
+                  return;
+                final key = _stateKey(event.nodeId, event.endpoint);
+                _updateState(() {
+                  if (event.stale) {
+                    _staleColors.add(key);
+                    _scheduleSubscriptionRepair(event.nodeId);
+                  } else {
+                    final previous =
+                        _colors[key] ??
+                        DirectColorState.fromMap(<String, int>{
+                          'capabilities':
+                              device.colorCapabilities[event.endpoint]!,
+                        });
+                    _colors[key] = previous.merge(event.report);
+                    _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1;
+                    // A partial report cannot make a failed full read fresh.
+                    if (DirectColorState.fromMap(<String, int?>{
+                              'capabilities':
+                                  device.colorCapabilities[event.endpoint],
+                              ...event.report.values,
+                            }).hsv !=
+                            null &&
+                        !_unavailableNodes.contains(event.nodeId)) {
+                      _staleColors.remove(key);
+                    }
+                  }
+                });
+              },
+              onError: (Object error, StackTrace stack) {
+                if (!mounted) return;
+                _updateState(() => _staleColors.addAll(_colors.keys));
+              },
+            );
       }
       if (controller is ElectricalMeasurementEventController) {
         _electricalEvents = (controller as ElectricalMeasurementEventController)
-            .watchElectricalMeasurements().listen((event) {
-          if (!_canUpdate(event.nodeId)) return;
-          final device = _devices.firstWhere((item) => item.nodeId == event.nodeId);
-          final supported = device.measurementCapabilities[event.endpoint];
-          if (supported == null) return;
-          final key = _stateKey(event.nodeId, event.endpoint);
-          _updateState(() {
-            final stale = <ElectricalMetric>{
-              ...?_staleElectricalMetrics[key],
-              ...event.staleMetrics.where(supported.contains),
-            };
-            final report = event.report;
-            if (report != null) {
-              final accepted = report.supported.intersection(supported);
-              if (accepted.isNotEmpty) {
-                final filtered = DirectElectricalMeasurement(
-                  supported: accepted,
-                  activePowerMilliwatts: report.activePowerMilliwatts,
-                  voltageMillivolts: report.voltageMillivolts,
-                  activeCurrentMilliamps: report.activeCurrentMilliamps,
-                  cumulativeEnergyImportedMilliwattHours:
-                      report.cumulativeEnergyImportedMilliwattHours,
+            .watchElectricalMeasurements()
+            .listen(
+              (event) {
+                if (!_canUpdate(event.nodeId)) return;
+                final device = _devices.firstWhere(
+                  (item) => item.nodeId == event.nodeId,
                 );
-                _electricalMeasurements[key] =
-                    _electricalMeasurements[key]?.merge(filtered) ?? filtered;
-                stale.removeAll(accepted);
-              }
-            }
-            if (stale.isEmpty) _staleElectricalMetrics.remove(key);
-            else _staleElectricalMetrics[key] = stale;
-          });
-        }, onError: (Object error, StackTrace stack) {
-          if (!mounted) return;
-          _updateState(() {
-            for (final device in _devices) {
-              for (final entry in device.measurementCapabilities.entries) {
-                _staleElectricalMetrics[_stateKey(device.nodeId, entry.key)] =
-                    Set<ElectricalMetric>.of(entry.value);
-              }
-            }
-          });
-        });
+                final supported =
+                    device.measurementCapabilities[event.endpoint];
+                if (supported == null) return;
+                final key = _stateKey(event.nodeId, event.endpoint);
+                _updateState(() {
+                  final stale = <ElectricalMetric>{
+                    ...?_staleElectricalMetrics[key],
+                    ...event.staleMetrics.where(supported.contains),
+                  };
+                  final report = event.report;
+                  if (report != null) {
+                    final accepted = report.supported.intersection(supported);
+                    if (accepted.isNotEmpty) {
+                      final filtered = DirectElectricalMeasurement(
+                        supported: accepted,
+                        activePowerMilliwatts: report.activePowerMilliwatts,
+                        voltageMillivolts: report.voltageMillivolts,
+                        activeCurrentMilliamps: report.activeCurrentMilliamps,
+                        cumulativeEnergyImportedMilliwattHours:
+                            report.cumulativeEnergyImportedMilliwattHours,
+                      );
+                      _electricalMeasurements[key] =
+                          _electricalMeasurements[key]?.merge(filtered) ??
+                          filtered;
+                      stale.removeAll(accepted);
+                    }
+                  }
+                  if (stale.isEmpty)
+                    _staleElectricalMetrics.remove(key);
+                  else
+                    _staleElectricalMetrics[key] = stale;
+                });
+              },
+              onError: (Object error, StackTrace stack) {
+                if (!mounted) return;
+                _updateState(() {
+                  for (final device in _devices) {
+                    for (final entry
+                        in device.measurementCapabilities.entries) {
+                      _staleElectricalMetrics[_stateKey(
+                        device.nodeId,
+                        entry.key,
+                      )] = Set<ElectricalMetric>.of(
+                        entry.value,
+                      );
+                    }
+                  }
+                });
+              },
+            );
       }
       if (controller is SensorMeasurementController) {
-        _sensorEvents = (controller as SensorMeasurementController).watchSensorMeasurements().listen((event) {
-          if (!_canUpdate(event.nodeId)) return;
-          final device = _devices.firstWhere((item) => item.nodeId == event.nodeId);
-          final supported = device.sensorCapabilities[event.endpoint];
-          if (supported == null) return;
-          final key = _stateKey(event.nodeId, event.endpoint);
-          _updateState(() {
-            final observation = _sensorObservations.putIfAbsent(key, SensorObservation.new);
-            observation.markStale(event.staleMetrics.intersection(supported));
-            final report = event.report;
-            if (report != null) {
-              final filtered = <SensorMetric, int?>{
-                for (final entry in report.values.entries)
-                  if (supported.contains(entry.key)) entry.key: entry.value,
-              };
-              observation.report(DirectSensorMeasurement(filtered), DateTime.now());
-              if (filtered.isNotEmpty && device.onOffEndpoints.isEmpty) {
-                _unavailableNodes.remove(event.nodeId);
-                if (_deviceErrors[event.nodeId]?.startsWith('Sensor read failed') == true) {
-                  _deviceErrors.remove(event.nodeId);
-                }
-              }
-            }
-          });
-        }, onError: (Object error, StackTrace stack) {
-          if (!mounted) return;
-          _updateState(() {
-            for (final device in _devices) { _markSensorsStale(device); }
-          });
-        });
+        _sensorEvents = (controller as SensorMeasurementController)
+            .watchSensorMeasurements()
+            .listen(
+              (event) {
+                if (!_canUpdate(event.nodeId)) return;
+                final device = _devices.firstWhere(
+                  (item) => item.nodeId == event.nodeId,
+                );
+                final supported = device.sensorCapabilities[event.endpoint];
+                if (supported == null) return;
+                final key = _stateKey(event.nodeId, event.endpoint);
+                _updateState(() {
+                  final observation = _sensorObservations.putIfAbsent(
+                    key,
+                    SensorObservation.new,
+                  );
+                  observation.markStale(
+                    event.staleMetrics.intersection(supported),
+                  );
+                  final report = event.report;
+                  if (report != null) {
+                    final filtered = <SensorMetric, int?>{
+                      for (final entry in report.values.entries)
+                        if (supported.contains(entry.key))
+                          entry.key: entry.value,
+                    };
+                    observation.report(
+                      DirectSensorMeasurement(filtered),
+                      DateTime.now(),
+                    );
+                    if (filtered.isNotEmpty && device.onOffEndpoints.isEmpty) {
+                      _unavailableNodes.remove(event.nodeId);
+                      if (_deviceErrors[event.nodeId]?.startsWith(
+                            'Sensor read failed',
+                          ) ==
+                          true) {
+                        _deviceErrors.remove(event.nodeId);
+                      }
+                    }
+                  }
+                });
+              },
+              onError: (Object error, StackTrace stack) {
+                if (!mounted) return;
+                _updateState(() {
+                  for (final device in _devices) {
+                    _markSensorsStale(device);
+                  }
+                });
+              },
+            );
       }
       _updateState(() => _controllerReady = true);
       // Restore live state without blocking the home screen or onboarding.
@@ -433,12 +544,18 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     } catch (error) {
       if (!_controllerReady) await _cancelReports();
       if (mounted) {
-        _updateState(() => _error = _catalogLoaded
-            ? 'Controller initialization failed: $error' : 'Could not load home: $error');
+        _updateState(
+          () => _error = _catalogLoaded
+              ? 'Controller initialization failed: $error'
+              : 'Could not load home: $error',
+        );
       }
     } finally {
       if (mounted) {
-        _updateState(() { _loading = false; _initializing = false; });
+        _updateState(() {
+          _loading = false;
+          _initializing = false;
+        });
         if (initialized) unawaited(_checkAutomations());
       }
     }
@@ -446,15 +563,30 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   Future<void> _cancelReports() async {
     final subscriptions = <StreamSubscription<dynamic>?>[
-      _events, _levelEvents, _colorEvents, _electricalEvents, _sensorEvents,
+      _events,
+      _levelEvents,
+      _colorEvents,
+      _electricalEvents,
+      _sensorEvents,
     ];
-    _events = null; _levelEvents = null; _colorEvents = null;
-    _electricalEvents = null; _sensorEvents = null;
-    _sensorFreshnessTimer?.cancel(); _automationTimer?.cancel();
-    await Future.wait(subscriptions.whereType<StreamSubscription<dynamic>>().map((subscription) async {
-      try { await subscription.cancel().timeout(const Duration(seconds: 2)); }
-      catch (_) { /* Cancelled Flutter listeners must not block startup retry. */ }
-    }));
+    _events = null;
+    _levelEvents = null;
+    _colorEvents = null;
+    _electricalEvents = null;
+    _sensorEvents = null;
+    _sensorFreshnessTimer?.cancel();
+    _automationTimer?.cancel();
+    await Future.wait(
+      subscriptions.whereType<StreamSubscription<dynamic>>().map((
+        subscription,
+      ) async {
+        try {
+          await subscription.cancel().timeout(const Duration(seconds: 2));
+        } catch (_) {
+          /* Cancelled Flutter listeners must not block startup retry. */
+        }
+      }),
+    );
   }
 
   bool _canUpdate(int nodeId) =>
@@ -469,17 +601,24 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     if (nodeId is int) {
       _scheduleSubscriptionRepair(nodeId);
     } else {
-      for (final device in _devices) { _scheduleSubscriptionRepair(device.nodeId); }
+      for (final device in _devices) {
+        _scheduleSubscriptionRepair(device.nodeId);
+      }
     }
   }
 
   void _scheduleSubscriptionRepair(int nodeId) {
-    if (!_controllerReady || !_foreground || !_canUpdate(nodeId) || _subscriptionRepairs.containsKey(nodeId) ||
-        _repairingSubscriptions.contains(nodeId)) return;
+    if (!_controllerReady ||
+        !_foreground ||
+        !_canUpdate(nodeId) ||
+        _subscriptionRepairs.containsKey(nodeId) ||
+        _repairingSubscriptions.contains(nodeId))
+      return;
     _subscriptionRepairs[nodeId] = Timer(const Duration(seconds: 2), () async {
       _subscriptionRepairs.remove(nodeId);
       if (!_controllerReady || !_foreground || !_canUpdate(nodeId)) return;
-      if (_refreshingNodes.contains(nodeId) || _reconcilingNodes.contains(nodeId)) {
+      if (_refreshingNodes.contains(nodeId) ||
+          _reconcilingNodes.contains(nodeId)) {
         _scheduleSubscriptionRepair(nodeId);
         return;
       }
@@ -488,14 +627,21 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         final controller = widget.controller;
         try {
           if (controller is ConnectionRecoveryController) {
-            await (controller as ConnectionRecoveryController).resetConnection(nodeId)
+            await (controller as ConnectionRecoveryController)
+                .resetConnection(nodeId)
                 .timeout(const Duration(seconds: 5));
           }
-        } catch (_) { /* The read remains the authoritative connectivity check. */ }
+        } catch (_) {
+          /* The read remains the authoritative connectivity check. */
+        }
         if (!_controllerReady || !_foreground || !_canUpdate(nodeId)) return;
-        await _refreshDevice(_devices.firstWhere((device) => device.nodeId == nodeId));
+        await _refreshDevice(
+          _devices.firstWhere((device) => device.nodeId == nodeId),
+        );
         if (_unavailableNodes.contains(nodeId)) _scheduleConnectionRetry();
-      } finally { _repairingSubscriptions.remove(nodeId); }
+      } finally {
+        _repairingSubscriptions.remove(nodeId);
+      }
     });
   }
 
@@ -506,7 +652,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     _sharedStateTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!_foreground || _loading) return;
       for (final device in List<DirectMatterDevice>.of(_devices)) {
-        if (device.onOffEndpoints.isNotEmpty && !_unavailableNodes.contains(device.nodeId)) {
+        if (device.onOffEndpoints.isNotEmpty &&
+            !_unavailableNodes.contains(device.nodeId)) {
           unawaited(_reconcileControls(device));
         }
       }
@@ -516,7 +663,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   Future<void> _readSyncedOnOff(int nodeId, int endpoint) async {
     final key = _stateKey(nodeId, endpoint);
     final revision = _stateRevisions[key];
-    final value = await widget.controller.readOnOff(nodeId: nodeId, endpoint: endpoint)
+    final value = await widget.controller
+        .readOnOff(nodeId: nodeId, endpoint: endpoint)
         .timeout(_readTimeout);
     if (!_canUpdate(nodeId) || _stateRevisions[key] != revision) return;
     _updateState(() => _states[key] = value);
@@ -524,37 +672,53 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   Future<void> _reconcileControls(DirectMatterDevice device) async {
     final nodeId = device.nodeId;
-    if (!_canUpdate(nodeId) || _refreshingNodes.contains(nodeId) ||
+    if (!_canUpdate(nodeId) ||
+        _refreshingNodes.contains(nodeId) ||
         _repairingSubscriptions.contains(nodeId) ||
-        !_reconcilingNodes.add(nodeId)) return;
+        !_reconcilingNodes.add(nodeId))
+      return;
     try {
       for (final endpoint in device.onOffEndpoints) {
         if (!_foreground || !_canUpdate(nodeId)) return;
-        if (!_busy.contains(_stateKey(nodeId, endpoint))) await _readSyncedOnOff(nodeId, endpoint);
+        if (!_busy.contains(_stateKey(nodeId, endpoint)))
+          await _readSyncedOnOff(nodeId, endpoint);
       }
       final controller = widget.controller;
-      if (_foreground && _canUpdate(nodeId) && device.levelEndpoints.isNotEmpty &&
-          controller is LevelControlController && !_readingCapabilities.contains(nodeId)) {
+      if (_foreground &&
+          _canUpdate(nodeId) &&
+          device.levelEndpoints.isNotEmpty &&
+          controller is LevelControlController &&
+          !_readingCapabilities.contains(nodeId)) {
         final revisions = Map<String, int>.of(_levelRevisions);
-        final levels = await (controller as LevelControlController).readLevels(nodeId).timeout(_readTimeout);
+        final levels = await (controller as LevelControlController)
+            .readLevels(nodeId)
+            .timeout(_readTimeout);
         if (!_canUpdate(nodeId)) return;
         _updateState(() {
           for (final endpoint in device.levelEndpoints) {
             final key = _stateKey(nodeId, endpoint);
-            if (_levelRevisions[key] != revisions[key] || _busy.contains(key)) continue;
-            if (levels[endpoint] == null) { _levels.remove(key); }
-            else { _levels[key] = levels[endpoint]!; }
+            if (_levelRevisions[key] != revisions[key] || _busy.contains(key))
+              continue;
+            if (levels[endpoint] == null) {
+              _levels.remove(key);
+            } else {
+              _levels[key] = levels[endpoint]!;
+            }
           }
         });
       }
-      if (_foreground && _canUpdate(nodeId) && device.colorCapabilities.isNotEmpty) {
+      if (_foreground &&
+          _canUpdate(nodeId) &&
+          device.colorCapabilities.isNotEmpty) {
         await _refreshColors(nodeId);
       }
     } catch (_) {
       // A failed watchdog read should repair reports and confirm reachability,
       // rather than display an invented Off value.
       _scheduleSubscriptionRepair(nodeId);
-    } finally { _reconcilingNodes.remove(nodeId); }
+    } finally {
+      _reconcilingNodes.remove(nodeId);
+    }
   }
 
   Future<void> _refreshAllStates() {
@@ -584,7 +748,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   Future<void> _refreshDevice(DirectMatterDevice device) {
-    if (!_controllerReady || !_canUpdate(device.nodeId)) return Future<void>.value();
+    if (!_controllerReady || !_canUpdate(device.nodeId))
+      return Future<void>.value();
     final existing = _deviceRefreshTasks[device.nodeId];
     if (existing != null) return existing;
     final task = _performRefreshDevice(device);
@@ -660,43 +825,68 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         if (device.onOffEndpoints.isEmpty) await _refreshSensors(device.nodeId);
       }
     } finally {
-      if (mounted) _updateState(() => _refreshingNodes.remove(device.nodeId));
-      else { _refreshingNodes.remove(device.nodeId); }
+      if (mounted)
+        _updateState(() => _refreshingNodes.remove(device.nodeId));
+      else {
+        _refreshingNodes.remove(device.nodeId);
+      }
     }
   }
 
   void _markSensorsStale(DirectMatterDevice device) {
     for (final entry in device.sensorCapabilities.entries) {
-      _sensorObservations.putIfAbsent(_stateKey(device.nodeId, entry.key), SensorObservation.new)
+      _sensorObservations
+          .putIfAbsent(
+            _stateKey(device.nodeId, entry.key),
+            SensorObservation.new,
+          )
           .markStale(entry.value);
     }
   }
 
   Future<void> _refreshSensors(int nodeId) async {
     final controller = widget.controller;
-    if (controller is! SensorMeasurementController || !_canUpdate(nodeId) ||
-        !_readingSensors.add(nodeId)) return;
+    if (controller is! SensorMeasurementController ||
+        !_canUpdate(nodeId) ||
+        !_readingSensors.add(nodeId))
+      return;
     final lifetime = _sensorLifetimes.putIfAbsent(nodeId, Object.new);
-    bool active() => _canUpdate(nodeId) && identical(_sensorLifetimes[nodeId], lifetime);
+    bool active() =>
+        _canUpdate(nodeId) && identical(_sensorLifetimes[nodeId], lifetime);
     final versions = <String, Map<SensorMetric, int>>{
       for (final entry in _sensorObservations.entries)
-        if (entry.key.startsWith('$nodeId:')) entry.key: entry.value.readVersion(),
+        if (entry.key.startsWith('$nodeId:'))
+          entry.key: entry.value.readVersion(),
     };
     try {
       final readings = await (controller as SensorMeasurementController)
-          .readSensorMeasurements(nodeId).timeout(_readTimeout);
+          .readSensorMeasurements(nodeId)
+          .timeout(_readTimeout);
       if (!active()) return;
       final current = _devices.firstWhere((device) => device.nodeId == nodeId);
-      final updated = current.copyWith(sensorCapabilities:
-          readings.map((endpoint, reading) => MapEntry(endpoint, reading.supported)));
+      final updated = current.copyWith(
+        sensorCapabilities: readings.map(
+          (endpoint, reading) => MapEntry(endpoint, reading.supported),
+        ),
+      );
       _updateState(() {
-        _devices = _devices.map((device) => device.nodeId == nodeId ? updated : device).toList();
-        _sensorObservations.removeWhere((key, _) => key.startsWith('$nodeId:') &&
-            !readings.containsKey(int.parse(key.split(':').last)));
+        _devices = _devices
+            .map((device) => device.nodeId == nodeId ? updated : device)
+            .toList();
+        _sensorObservations.removeWhere(
+          (key, _) =>
+              key.startsWith('$nodeId:') &&
+              !readings.containsKey(int.parse(key.split(':').last)),
+        );
         for (final entry in readings.entries) {
           final key = _stateKey(nodeId, entry.key);
-          _sensorObservations.putIfAbsent(key, SensorObservation.new)
-              .read(entry.value, versions[key] ?? const <SensorMetric, int>{}, DateTime.now());
+          _sensorObservations
+              .putIfAbsent(key, SensorObservation.new)
+              .read(
+                entry.value,
+                versions[key] ?? const <SensorMetric, int>{},
+                DateTime.now(),
+              );
         }
         if (current.onOffEndpoints.isEmpty && readings.isNotEmpty) {
           _unavailableNodes.remove(nodeId);
@@ -704,27 +894,36 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         }
       });
       if (readings.isNotEmpty) {
-        _sensorFreshnessTimer ??= Timer.periodic(const Duration(seconds: 15), (_) {
+        _sensorFreshnessTimer ??= Timer.periodic(const Duration(seconds: 15), (
+          _,
+        ) {
           if (mounted && _sensorObservations.isNotEmpty) _updateState(() {});
         });
       }
       if (!_editingMetadata) {
         _updateState(() => _editingMetadata = true);
-        try { await widget.deviceStore.save(updated); }
-        catch (_) { /* A metadata save failure must not discard a live sensor read. */ }
-        finally { if (mounted) _updateState(() => _editingMetadata = false); }
+        try {
+          await widget.deviceStore.save(updated);
+        } catch (_) {
+          /* A metadata save failure must not discard a live sensor read. */
+        } finally {
+          if (mounted) _updateState(() => _editingMetadata = false);
+        }
       }
     } catch (_) {
-      if (active()) _updateState(() {
-        final device = _devices.firstWhere((item) => item.nodeId == nodeId);
-        _markSensorsStale(device);
-        if (device.onOffEndpoints.isEmpty && device.sensorCapabilities.isNotEmpty) {
-          _unavailableNodes.add(nodeId);
-          _deviceErrors[nodeId] = 'Sensor read failed';
-        }
-      });
+      if (active())
+        _updateState(() {
+          final device = _devices.firstWhere((item) => item.nodeId == nodeId);
+          _markSensorsStale(device);
+          if (device.onOffEndpoints.isEmpty &&
+              device.sensorCapabilities.isNotEmpty) {
+            _unavailableNodes.add(nodeId);
+            _deviceErrors[nodeId] = 'Sensor read failed';
+          }
+        });
     } finally {
-      if (identical(_sensorLifetimes[nodeId], lifetime)) _readingSensors.remove(nodeId);
+      if (identical(_sensorLifetimes[nodeId], lifetime))
+        _readingSensors.remove(nodeId);
     }
   }
 
@@ -737,69 +936,119 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   Future<void> _refreshColors(int nodeId) async {
     final controller = widget.controller;
-    if (controller is! ColorControlController || !_canUpdate(nodeId) ||
-        !_readingColors.add(nodeId)) return;
+    if (controller is! ColorControlController ||
+        !_canUpdate(nodeId) ||
+        !_readingColors.add(nodeId))
+      return;
     final lifetime = _colorLifetimes.putIfAbsent(nodeId, Object.new);
     final revisions = Map<String, int>.of(_colorRevisions);
-    bool active() => _canUpdate(nodeId) && identical(_colorLifetimes[nodeId], lifetime);
+    bool active() =>
+        _canUpdate(nodeId) && identical(_colorLifetimes[nodeId], lifetime);
     try {
-      final values = await (controller as ColorControlController).readColors(nodeId).timeout(_readTimeout);
+      final values = await (controller as ColorControlController)
+          .readColors(nodeId)
+          .timeout(_readTimeout);
       if (!active()) return;
       final current = _devices.firstWhere((item) => item.nodeId == nodeId);
-      final capabilitiesChanged = current.colorCapabilities.length != values.length ||
-          values.entries.any((entry) => current.colorCapabilities[entry.key] != entry.value.capabilities);
-      final updated = current.copyWith(colorCapabilities:
-          values.map((endpoint, color) => MapEntry(endpoint, color.capabilities)));
+      final capabilitiesChanged =
+          current.colorCapabilities.length != values.length ||
+          values.entries.any(
+            (entry) =>
+                current.colorCapabilities[entry.key] !=
+                entry.value.capabilities,
+          );
+      final updated = current.copyWith(
+        colorCapabilities: values.map(
+          (endpoint, color) => MapEntry(endpoint, color.capabilities),
+        ),
+      );
       _updateState(() {
-        _devices = _devices.map((item) => item.nodeId == nodeId ? updated : item).toList();
-        _colors.removeWhere((key, _) => key.startsWith('$nodeId:') &&
-          !values.containsKey(int.parse(key.split(':').last)));
+        _devices = _devices
+            .map((item) => item.nodeId == nodeId ? updated : item)
+            .toList();
+        _colors.removeWhere(
+          (key, _) =>
+              key.startsWith('$nodeId:') &&
+              !values.containsKey(int.parse(key.split(':').last)),
+        );
         for (final entry in values.entries) {
           final key = _stateKey(nodeId, entry.key);
-          if (_colorRevisions[key] == revisions[key]) _colors[key] = entry.value;
+          if (_colorRevisions[key] == revisions[key])
+            _colors[key] = entry.value;
           _staleColors.remove(key);
         }
       });
       if (capabilitiesChanged && !_editingMetadata) {
         _updateState(() => _editingMetadata = true);
-        try { await widget.deviceStore.save(updated); }
-        catch (_) { /* Keep a successfully read color usable; retry metadata later. */ }
-        finally { if (mounted) _updateState(() => _editingMetadata = false); }
+        try {
+          await widget.deviceStore.save(updated);
+        } catch (_) {
+          /* Keep a successfully read color usable; retry metadata later. */
+        } finally {
+          if (mounted) _updateState(() => _editingMetadata = false);
+        }
       }
     } catch (_) {
-      if (active()) _updateState(() {
-        final device = _devices.firstWhere((item) => item.nodeId == nodeId);
-        _staleColors.addAll(device.colorCapabilities.keys.map((e) => _stateKey(nodeId, e)));
-      });
+      if (active())
+        _updateState(() {
+          final device = _devices.firstWhere((item) => item.nodeId == nodeId);
+          _staleColors.addAll(
+            device.colorCapabilities.keys.map((e) => _stateKey(nodeId, e)),
+          );
+        });
     } finally {
-      if (identical(_colorLifetimes[nodeId], lifetime)) _readingColors.remove(nodeId);
+      if (identical(_colorLifetimes[nodeId], lifetime))
+        _readingColors.remove(nodeId);
     }
   }
 
-  Future<void> _setColor(DirectMatterDevice device, int endpoint, HSVColor color) async {
+  Future<void> _setColor(
+    DirectMatterDevice device,
+    int endpoint,
+    HSVColor color,
+  ) async {
     final controller = widget.controller;
     final key = _stateKey(device.nodeId, endpoint);
     final state = _colors[key];
-    if (!_controllerReady || controller is! ColorControlController || state == null || !state.supportsColor ||
-        !_canUpdate(device.nodeId) || _unavailableNodes.contains(device.nodeId) ||
-        _staleColors.contains(key) || !_busy.add(key)) return;
+    if (!_controllerReady ||
+        controller is! ColorControlController ||
+        state == null ||
+        !state.supportsColor ||
+        !_canUpdate(device.nodeId) ||
+        _unavailableNodes.contains(device.nodeId) ||
+        _staleColors.contains(key) ||
+        !_busy.add(key))
+      return;
     final lifetime = _colorLifetimes.putIfAbsent(device.nodeId, Object.new);
-    bool active() => _canUpdate(device.nodeId) && identical(_colorLifetimes[device.nodeId], lifetime);
+    bool active() =>
+        _canUpdate(device.nodeId) &&
+        identical(_colorLifetimes[device.nodeId], lifetime);
     _updateState(() => _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1);
     try {
       final xy = hsvToXy(color);
       final colorController = controller as ColorControlController;
-      await colorController.setColor(nodeId: device.nodeId, endpoint: endpoint,
-        mode: state.supportsHueSaturation ? 'hs' : 'xy',
-        first: state.supportsHueSaturation ? (color.hue % 360 / 360 * 254).round() : xy.x,
-        second: state.supportsHueSaturation ? (color.saturation * 254).round() : xy.y,
-      ).timeout(_readTimeout);
+      await colorController
+          .setColor(
+            nodeId: device.nodeId,
+            endpoint: endpoint,
+            mode: state.supportsHueSaturation ? 'hs' : 'xy',
+            first: state.supportsHueSaturation
+                ? (color.hue % 360 / 360 * 254).round()
+                : xy.x,
+            second: state.supportsHueSaturation
+                ? (color.saturation * 254).round()
+                : xy.y,
+          )
+          .timeout(_readTimeout);
       if (!active()) return;
       final revision = _colorRevisions[key];
-      final confirmation = await colorController.readColors(device.nodeId).timeout(_readTimeout);
+      final confirmation = await colorController
+          .readColors(device.nodeId)
+          .timeout(_readTimeout);
       if (!active()) return;
       final confirmed = confirmation[endpoint];
-      if (confirmed == null || confirmed.hsv == null) throw StateError('color not confirmed');
+      if (confirmed == null || confirmed.hsv == null)
+        throw StateError('color not confirmed');
       _updateState(() {
         if (_colorRevisions[key] == revision) _colors[key] = confirmed;
         _colorRevisions[key] = (_colorRevisions[key] ?? 0) + 1;
@@ -807,34 +1056,55 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         _deviceErrors.remove(device.nodeId);
       });
     } catch (_) {
-      if (active()) _updateState(() {
-        _staleColors.add(key);
-        _deviceErrors[device.nodeId] = 'Color command failed';
-      });
+      if (active())
+        _updateState(() {
+          _staleColors.add(key);
+          _deviceErrors[device.nodeId] = 'Color command failed';
+        });
     } finally {
       if (active()) _updateState(() => _busy.remove(key));
     }
   }
 
   Future<void> _renameChannel(DirectMatterDevice device, int endpoint) async {
-    if (_editingMetadata || !_canUpdate(device.nodeId) || _removingNodes.isNotEmpty) return;
+    if (_editingMetadata ||
+        !_canUpdate(device.nodeId) ||
+        _removingNodes.isNotEmpty)
+      return;
     final index = device.onOffEndpoints.indexOf(endpoint);
     _updateState(() => _editingMetadata = true);
     try {
-      await showDialog<void>(context: context, barrierDismissible: false,
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
         builder: (_) => _RenameDeviceDialog(
-          title: 'تغییر نام خروجی', emptyMessage: 'یک نام برای خروجی بنویس.',
+          title: 'تغییر نام خروجی',
+          emptyMessage: 'یک نام برای خروجی بنویس.',
           initialName: device.channelName(endpoint, index < 0 ? 0 : index),
           onSave: (name) async {
             if (!_canUpdate(device.nodeId)) throw StateError('device removed');
-            final current = _devices.firstWhere((item) => item.nodeId == device.nodeId);
-            final updated = current.copyWith(channelNames: <int,String>{...current.channelNames, endpoint: name});
+            final current = _devices.firstWhere(
+              (item) => item.nodeId == device.nodeId,
+            );
+            final updated = current.copyWith(
+              channelNames: <int, String>{
+                ...current.channelNames,
+                endpoint: name,
+              },
+            );
             await widget.deviceStore.save(updated);
             if (!_canUpdate(device.nodeId)) return;
-            _updateState(() => _devices = _devices.map((item) => item.nodeId == device.nodeId ? updated : item).toList());
+            _updateState(
+              () => _devices = _devices
+                  .map((item) => item.nodeId == device.nodeId ? updated : item)
+                  .toList(),
+            );
           },
-        ));
-    } finally { if (mounted) _updateState(() => _editingMetadata = false); }
+        ),
+      );
+    } finally {
+      if (mounted) _updateState(() => _editingMetadata = false);
+    }
   }
 
   Future<void> _refreshDeviceCapabilities(int nodeId) async {
@@ -865,14 +1135,15 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       }
       if (controller is ElectricalMeasurementController) {
         try {
-          measurements =
-              await (controller as ElectricalMeasurementController)
-                  .readElectricalMeasurements(nodeId)
-                  .timeout(_readTimeout);
+          measurements = await (controller as ElectricalMeasurementController)
+              .readElectricalMeasurements(nodeId)
+              .timeout(_readTimeout);
         } catch (_) {
           if (_canUpdate(nodeId)) {
             _updateState(() {
-              final device = _devices.firstWhere((item) => item.nodeId == nodeId);
+              final device = _devices.firstWhere(
+                (item) => item.nodeId == nodeId,
+              );
               for (final entry in device.measurementCapabilities.entries) {
                 _staleElectricalMetrics[_stateKey(nodeId, entry.key)] =
                     Set<ElectricalMetric>.of(entry.value);
@@ -890,7 +1161,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       // Product metadata failures must never disable a working OnOff control.
       _updateState(() => _editingMetadata = true);
       try {
-        final current = _devices.firstWhere((device) => device.nodeId == nodeId);
+        final current = _devices.firstWhere(
+          (device) => device.nodeId == nodeId,
+        );
         final updated = current.copyWith(
           deviceTypes: types == null || types.isEmpty ? null : types,
           levelEndpoints: levels?.keys.toList(growable: false),
@@ -923,7 +1196,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               _electricalMeasurements[_stateKey(nodeId, entry.key)] =
                   entry.value;
             }
-            _staleElectricalMetrics.removeWhere((key, _) => key.startsWith('$nodeId:'));
+            _staleElectricalMetrics.removeWhere(
+              (key, _) => key.startsWith('$nodeId:'),
+            );
           }
         });
       } finally {
@@ -946,8 +1221,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   void _scheduleConnectionRetry() {
-    if (!mounted || !_foreground || _unavailableNodes.isEmpty ||
-        _connectionRetryTimer?.isActive == true || _retrying) return;
+    if (!mounted ||
+        !_foreground ||
+        _unavailableNodes.isEmpty ||
+        _connectionRetryTimer?.isActive == true ||
+        _retrying)
+      return;
     const delays = <Duration>[
       Duration(seconds: 2),
       Duration(seconds: 5),
@@ -960,7 +1239,10 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         : delays.length - 1;
     final delay = delays[index];
     _connectionRetryAttempt++;
-    _connectionRetryTimer = Timer(delay, () => unawaited(_recoverConnections()));
+    _connectionRetryTimer = Timer(
+      delay,
+      () => unawaited(_recoverConnections()),
+    );
   }
 
   Future<void> _recoverConnections() async {
@@ -1023,15 +1305,25 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   Future<bool> _executeSceneAction(SceneAction action) async {
     final key = _stateKey(action.nodeId, action.endpoint);
-    if (!_controllerReady || !_canUpdate(action.nodeId) || _busy.contains(key) ||
-        !_devices.any((d) => d.nodeId == action.nodeId && d.onOffEndpoints.contains(action.endpoint))) {
+    if (!_controllerReady ||
+        !_canUpdate(action.nodeId) ||
+        _busy.contains(key) ||
+        !_devices.any(
+          (d) =>
+              d.nodeId == action.nodeId &&
+              d.onOffEndpoints.contains(action.endpoint),
+        )) {
       throw StateError('output unavailable');
     }
     _updateState(() => _busy.add(key));
     try {
       final device = _devices.firstWhere((d) => d.nodeId == action.nodeId);
-      final confirmed = await executeSceneLighting(action:action,device:device,
-        controller:widget.controller,active:()=>_canUpdate(action.nodeId));
+      final confirmed = await executeSceneLighting(
+        action: action,
+        device: device,
+        controller: widget.controller,
+        active: () => _canUpdate(action.nodeId),
+      );
       return confirmed;
     } finally {
       if (mounted) {
@@ -1041,24 +1333,44 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   void _openScenes() async {
-    await Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) =>
-      ManualSceneScreen(store:_sceneStore,
-        devices:() => _devices.where((d)=>!_removingNodes.contains(d.nodeId)).toList(),
-        execute:_executeSceneAction, runner:_sceneRunner)));
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ManualSceneScreen(
+          store: _sceneStore,
+          devices: () => _devices
+              .where((d) => !_removingNodes.contains(d.nodeId))
+              .toList(),
+          execute: _executeSceneAction,
+          runner: _sceneRunner,
+        ),
+      ),
+    );
     if (mounted) unawaited(_refreshAllStates());
   }
 
   void _openAutomations() async {
     _automationScreenOpen = true;
-    await Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) =>
-      SceneAutomationScreen(store:_automationStore,sceneStore:_sceneStore)));
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => SceneAutomationScreen(
+          store: _automationStore,
+          sceneStore: _sceneStore,
+        ),
+      ),
+    );
     _automationScreenOpen = false;
     if (mounted) unawaited(_checkAutomations());
   }
 
   Future<void> _checkAutomations() async {
-    if (!mounted || !_foreground || _loading || !_controllerReady || _checkingAutomations ||
-        _automationScreenOpen || _sceneRunner.running) return;
+    if (!mounted ||
+        !_foreground ||
+        _loading ||
+        !_controllerReady ||
+        _checkingAutomations ||
+        _automationScreenOpen ||
+        _sceneRunner.running)
+      return;
     _checkingAutomations = true;
     try {
       final now = widget.clock();
@@ -1082,20 +1394,23 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         final scene = matches.first;
         final results = await _sceneRunner.run(
           scene,
-          available: (action) => _devices.any(
-            (device) => sceneActionSupported(action, device),
-          ),
+          available: (action) =>
+              _devices.any((device) => sceneActionSupported(action, device)),
           execute: _executeSceneAction,
         );
         if (!mounted) return;
         final confirmed = results.values.every(
           (status) => status == SceneActionStatus.confirmed,
         );
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(confirmed
-              ? 'زمان‌بندی «${scene.name}» اجرا و تأیید شد.'
-              : 'زمان‌بندی «${scene.name}» کامل تأیید نشد؛ وضعیت خروجی‌ها را بررسی کن.'),
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: AppText(
+              confirmed
+                  ? 'زمان‌بندی «${scene.name}» اجرا و تأیید شد.'
+                  : 'زمان‌بندی «${scene.name}» کامل تأیید نشد؛ وضعیت خروجی‌ها را بررسی کن.',
+            ),
+          ),
+        );
       }
     } catch (_) {
       // A storage/read failure must never execute an unclaimed automation.
@@ -1110,7 +1425,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     bool value,
   ) async {
     final key = _stateKey(device.nodeId, endpoint);
-    if (!_controllerReady || _busy.contains(key) || !_canUpdate(device.nodeId)) return;
+    if (!_controllerReady || _busy.contains(key) || !_canUpdate(device.nodeId))
+      return;
     _updateState(() {
       _busy.add(key);
       _stateRevisions[key] = (_stateRevisions[key] ?? 0) + 1;
@@ -1142,11 +1458,18 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-  Future<void> _setLevel(DirectMatterDevice device, int endpoint, int level) async {
+  Future<void> _setLevel(
+    DirectMatterDevice device,
+    int endpoint,
+    int level,
+  ) async {
     final controller = widget.controller;
     final key = _stateKey(device.nodeId, endpoint);
-    if (!_controllerReady || controller is! LevelControlController ||
-        _busy.contains(key) || !_canUpdate(device.nodeId)) return;
+    if (!_controllerReady ||
+        controller is! LevelControlController ||
+        _busy.contains(key) ||
+        !_canUpdate(device.nodeId))
+      return;
     final levelController = controller as LevelControlController;
     final requested = level.clamp(1, 254);
     _updateState(() {
@@ -1160,7 +1483,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           .setLevel(nodeId: device.nodeId, endpoint: endpoint, level: requested)
           .timeout(_readTimeout);
       final levelRevision = _levelRevisions[key];
-      final levels = await levelController.readLevels(device.nodeId).timeout(_readTimeout);
+      final levels = await levelController
+          .readLevels(device.nodeId)
+          .timeout(_readTimeout);
       final confirmed = levels[endpoint];
       if (confirmed == null) {
         throw const FormatException('LevelControl state was not returned');
@@ -1264,7 +1589,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   void _showMetadataError() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تغییرات ذخیره نشد. دوباره تلاش کن.')),
+      const SnackBar(content: AppText('تغییرات ذخیره نشد. دوباره تلاش کن.')),
     );
   }
 
@@ -1294,7 +1619,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     _updateState(() => _editingMetadata = true);
     try {
       await widget.roomStore.save(next);
-      if (mounted) _updateState(() => _roomCatalog = next);
+      if (mounted)
+        _updateState(() {
+          _roomCatalog = next;
+          if (_selectedRoom != null &&
+              _selectedRoom != 'unassigned' &&
+              !next.rooms.any((room) => room.id == _selectedRoom))
+            _selectedRoom = null;
+        });
     } catch (_) {
       _showMetadataError();
     } finally {
@@ -1322,7 +1654,13 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       final next = _roomCatalog.addRoom(room);
       await widget.roomStore.save(next);
       if (!mounted) return null;
-      _updateState(() => _roomCatalog = next);
+      _updateState(() {
+        _roomCatalog = next;
+        if (_selectedRoom != null &&
+            _selectedRoom != 'unassigned' &&
+            !next.rooms.any((room) => room.id == _selectedRoom))
+          _selectedRoom = null;
+      });
       return room;
     } catch (_) {
       _showMetadataError();
@@ -1351,7 +1689,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (name == null || !mounted) return;
       final next = _roomCatalog.renameRoom(room.id, name);
       await widget.roomStore.save(next);
-      if (mounted) _updateState(() => _roomCatalog = next);
+      if (mounted)
+        _updateState(() {
+          _roomCatalog = next;
+          if (_selectedRoom != null &&
+              _selectedRoom != 'unassigned' &&
+              !next.rooms.any((room) => room.id == _selectedRoom))
+            _selectedRoom = null;
+        });
     } catch (_) {
       _showMetadataError();
     } finally {
@@ -1369,8 +1714,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('حذف اتاق؟'),
-        content: Text(
+        title: const AppText('حذف اتاق؟'),
+        content: AppText(
           assignedCount == 0
               ? 'اتاق «${room.name}» حذف شود؟'
               : 'اتاق «${room.name}» حذف شود؟ ${toPersianDigits(assignedCount)} وسیله به بخش «بدون اتاق» منتقل می‌شود.',
@@ -1378,11 +1723,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('انصراف'),
+            child: const AppText('انصراف'),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('حذف اتاق'),
+            child: const AppText('حذف اتاق'),
           ),
         ],
       ),
@@ -1392,7 +1737,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     try {
       final next = _roomCatalog.removeRoom(room.id);
       await widget.roomStore.save(next);
-      if (mounted) _updateState(() => _roomCatalog = next);
+      if (mounted)
+        _updateState(() {
+          _roomCatalog = next;
+          if (_selectedRoom != null &&
+              _selectedRoom != 'unassigned' &&
+              !next.rooms.any((room) => room.id == _selectedRoom))
+            _selectedRoom = null;
+        });
     } catch (_) {
       _showMetadataError();
     } finally {
@@ -1413,14 +1765,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       final selected = await showDialog<String>(
         context: context,
         builder: (context) => SimpleDialog(
-          title: Text('اتاق «${device.name}»'),
+          title: AppText('اتاق «${device.name}»'),
           children: <Widget>[
             SimpleDialogOption(
               onPressed: () => Navigator.of(context).pop(unassigned),
               child: ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.home_outlined),
-                title: const Text('بدون اتاق'),
+                title: const AppText('بدون اتاق'),
                 trailing: current == null ? const Icon(Icons.check) : null,
               ),
             ),
@@ -1444,7 +1796,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     try {
       final next = _roomCatalog.assignDevice(device.nodeId, roomId);
       await widget.roomStore.save(next);
-      if (mounted) _updateState(() => _roomCatalog = next);
+      if (mounted)
+        _updateState(() {
+          _roomCatalog = next;
+          if (_selectedRoom != null &&
+              _selectedRoom != 'unassigned' &&
+              !next.rooms.any((room) => room.id == _selectedRoom))
+            _selectedRoom = null;
+        });
     } catch (_) {
       _showMetadataError();
     } finally {
@@ -1466,25 +1825,31 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-  Future<void> _removeDevice(DirectMatterDevice device, {bool localOnly = false}) async {
+  Future<void> _removeDevice(
+    DirectMatterDevice device, {
+    bool localOnly = false,
+  }) async {
     if (_editingMetadata) return;
     if (_removingNodes.contains(device.nodeId)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(localOnly ? 'حذف فقط از این گوشی؟' : 'حذف وسیله از مانیسا؟'),
-        content: Text(
-          localOnly ? '«${device.name}» فقط از فهرست این گوشی پاک می‌شود. قطع اتصال روی خود دستگاه تأیید نشده است؛ برای اتصال دوباره ممکن است بازنشانی کارخانه لازم باشد.'
+        title: AppText(
+          localOnly ? 'حذف فقط از این گوشی؟' : 'حذف وسیله از مانیسا؟',
+        ),
+        content: AppText(
+          localOnly
+              ? '«${device.name}» فقط از فهرست این گوشی پاک می‌شود. قطع اتصال روی خود دستگاه تأیید نشده است؛ برای اتصال دوباره ممکن است بازنشانی کارخانه لازم باشد.'
               : '«${device.name}» از مانیسا حذف شود؟ برای افزودن دوباره، وسیله باید آمادهٔ اتصال باشد.',
         ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('انصراف'),
+            child: const AppText('انصراف'),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('حذف وسیله'),
+            child: const AppText('حذف وسیله'),
           ),
         ],
       ),
@@ -1502,24 +1867,31 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       // Remote removal is the default; local forgetting requires its own confirmation.
       if (!localOnly && !_fabricRemovedNodes.contains(device.nodeId)) {
         await widget.controller
-          .removeDevice(device.nodeId)
-          .timeout(
-            const Duration(seconds: 35),
-            onTimeout: () => throw TimeoutException(
-              'Removal not confirmed; device kept in the list',
-            ),
-          );
+            .removeDevice(device.nodeId)
+            .timeout(
+              const Duration(seconds: 35),
+              onTimeout: () => throw TimeoutException(
+                'Removal not confirmed; device kept in the list',
+              ),
+            );
         _fabricRemovedNodes.add(device.nodeId);
       }
       final nextRoomCatalog = _roomCatalog.assignDevice(device.nodeId, null);
       await widget.deviceStore.remove(device.nodeId).timeout(_readTimeout);
       if (localOnly && widget.controller is LocalDeviceForgetter) {
-        try { await (widget.controller as LocalDeviceForgetter)
-            .forgetDeviceLocally(device.nodeId).timeout(_readTimeout); }
-        catch (_) { /* Local list removal remains valid; no remote success claimed. */ }
+        try {
+          await (widget.controller as LocalDeviceForgetter)
+              .forgetDeviceLocally(device.nodeId)
+              .timeout(_readTimeout);
+        } catch (_) {
+          /* Local list removal remains valid; no remote success claimed. */
+        }
       }
-      try { await widget.roomStore.save(nextRoomCatalog).timeout(_readTimeout); }
-      catch (_) { /* Stale room membership is filtered on reload. */ }
+      try {
+        await widget.roomStore.save(nextRoomCatalog).timeout(_readTimeout);
+      } catch (_) {
+        /* Stale room membership is filtered on reload. */
+      }
       final nextFavorites = _favorites.removeDevice(device.nodeId);
       try {
         await widget.favoriteStore.save(nextFavorites);
@@ -1538,7 +1910,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           _fabricRemovedNodes.remove(device.nodeId);
           _sensorLifetimes.remove(device.nodeId);
           _readingSensors.remove(device.nodeId);
-          _sensorObservations.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
+          _sensorObservations.removeWhere(
+            (key, _) => key.startsWith('${device.nodeId}:'),
+          );
           if (_sensorObservations.isEmpty) {
             _sensorFreshnessTimer?.cancel();
             _sensorFreshnessTimer = null;
@@ -1546,8 +1920,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           _colorLifetimes.remove(device.nodeId);
           _readingColors.remove(device.nodeId);
           _colors.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
-          _colorRevisions.removeWhere((key, _) => key.startsWith('${device.nodeId}:'));
-          _staleColors.removeWhere((key) => key.startsWith('${device.nodeId}:'));
+          _colorRevisions.removeWhere(
+            (key, _) => key.startsWith('${device.nodeId}:'),
+          );
+          _staleColors.removeWhere(
+            (key) => key.startsWith('${device.nodeId}:'),
+          );
           _deviceErrors.remove(device.nodeId);
           for (final endpoint in device.onOffEndpoints) {
             _states.remove(_stateKey(device.nodeId, endpoint));
@@ -1566,13 +1944,17 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           _deviceErrors[device.nodeId] = 'Remove failed: $error';
         });
         if (!localOnly && !_fabricRemovedNodes.contains(device.nodeId)) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            duration: const Duration(seconds: 20),
-            content: const Text('حذف روی وسیله تأیید نشد.'),
-            action: SnackBarAction(label: 'حذف از این گوشی',
-              onPressed: () => _removeDevice(device, localOnly: true))));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 20),
+              content: const AppText('حذف روی وسیله تأیید نشد.'),
+              action: SnackBarAction(
+                label: 'حذف از این گوشی',
+                onPressed: () => _removeDevice(device, localOnly: true),
+              ),
+            ),
+          );
         }
-
       }
     } finally {
       if (mounted) {
@@ -1589,6 +1971,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   List<Widget> _roomSections(BuildContext context) {
     final sections = <Widget>[];
     for (final room in _roomCatalog.rooms) {
+      if (_selectedRoom != null && _selectedRoom != room.id) continue;
       final devices = _devices
           .where(
             (device) => _roomCatalog.roomIdForDevice(device.nodeId) == room.id,
@@ -1599,7 +1982,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     final unassigned = _devices
         .where((device) => _roomCatalog.roomIdForDevice(device.nodeId) == null)
         .toList(growable: false);
-    if (unassigned.isNotEmpty) {
+    if (unassigned.isNotEmpty &&
+        (_selectedRoom == null || _selectedRoom == 'unassigned')) {
       sections.addAll(
         _roomSection(context, title: 'بدون اتاق', devices: unassigned),
       );
@@ -1628,12 +2012,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             const Icon(Icons.star_rounded, size: 22),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
+              child: AppText(
                 'علاقه‌مندی‌ها',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
-            Text('${toPersianDigits(resolved.length)} خروجی'),
+            AppText('${toPersianDigits(resolved.length)} خروجی'),
           ],
         ),
       ),
@@ -1647,9 +2031,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                 outputIndex: item.$3,
                 roomName: _roomNameForDevice(item.$2.nodeId),
                 state: _states[_stateKey(item.$2.nodeId, item.$1.endpoint)],
-                busy: !_controllerReady || _busy.contains(
-                  _stateKey(item.$2.nodeId, item.$1.endpoint),
-                ),
+                busy:
+                    !_controllerReady ||
+                    _busy.contains(_stateKey(item.$2.nodeId, item.$1.endpoint)),
                 unavailable: _unavailableNodes.contains(item.$2.nodeId),
                 onChanged: (value) =>
                     _setOnOff(item.$2, item.$1.endpoint, value),
@@ -1686,15 +2070,20 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
             const Icon(Icons.meeting_room_outlined, size: 22),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                room?.name ?? title!,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              child: room == null
+                  ? AppText(
+                      title!,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    )
+                  : Text(
+                      room.name,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
             ),
-            Text('${toPersianDigits(devices.length)} وسیله'),
+            AppText('${toPersianDigits(devices.length)} وسیله'),
             if (room != null)
               PopupMenuButton<String>(
-                tooltip: 'تنظیمات اتاق',
+                tooltip: context.tr('تنظیمات اتاق'),
                 onSelected: (value) {
                   if (value == 'rename') _renameRoom(room);
                   if (value == 'up') _moveRoom(room, -1);
@@ -1704,22 +2093,25 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                 itemBuilder: (_) => <PopupMenuEntry<String>>[
                   const PopupMenuItem(
                     value: 'rename',
-                    child: Text('تغییر نام اتاق'),
+                    child: AppText('تغییر نام اتاق'),
                   ),
                   PopupMenuItem(
                     value: 'up',
                     enabled: roomIndex > 0,
-                    child: const Text('انتقال به بالا'),
+                    child: const AppText('انتقال به بالا'),
                   ),
                   PopupMenuItem(
                     value: 'down',
                     enabled:
                         roomIndex >= 0 &&
                         roomIndex < _roomCatalog.rooms.length - 1,
-                    child: const Text('انتقال به پایین'),
+                    child: const AppText('انتقال به پایین'),
                   ),
                   const PopupMenuDivider(),
-                  const PopupMenuItem(value: 'delete', child: Text('حذف اتاق')),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: AppText('حذف اتاق'),
+                  ),
                 ],
               ),
           ],
@@ -1729,7 +2121,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         const Card(
           child: ListTile(
             leading: Icon(Icons.devices_other_outlined),
-            title: Text('هنوز وسیله‌ای در این اتاق نیست'),
+            title: AppText('هنوز وسیله‌ای در این اتاق نیست'),
           ),
         ),
       for (final device in devices)
@@ -1741,166 +2133,311 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   }
 
   void _openDevice(int nodeId) {
-    Navigator.of(context).push<void>(MaterialPageRoute<void>(
-      builder: (_) => DeviceDetailScreen(
-        updates: _deviceViewChanges,
-        refreshing: () => _initializing || _refreshingNodes.contains(nodeId),
-        resolve: () {
-          if (!mounted) return null;
-          for (final device in _devices) {
-            if (device.nodeId == nodeId) return device;
-          }
-          return null;
-        },
-        controls: _deviceControls,
-        onRefresh: (device) => _controllerReady ? _refreshDevice(device) : _retryConnections(),
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => DeviceDetailScreen(
+          updates: _deviceViewChanges,
+          refreshing: () => _initializing || _refreshingNodes.contains(nodeId),
+          resolve: () {
+            if (!mounted) return null;
+            for (final device in _devices) {
+              if (device.nodeId == nodeId) return device;
+            }
+            return null;
+          },
+          controls: _deviceControls,
+          onRefresh: (device) =>
+              _controllerReady ? _refreshDevice(device) : _retryConnections(),
+        ),
       ),
-    ));
+    );
   }
 
   Widget _deviceControls(BuildContext context, DirectMatterDevice device) {
     return _DirectMatterDeviceCard(
-            device: device,
-            controllerReady: _controllerReady,
-            checking: _refreshingNodes.contains(device.nodeId) || _initializing,
-            roomName: _roomNameForDevice(device.nodeId),
-            states: _states,
-            levels: _levels,
-            colors: _colors,
-            staleColors: _staleColors,
-            onColorChanged: (endpoint, color) => _setColor(device, endpoint, color),
-            onRenameChannel: (endpoint) => _renameChannel(device, endpoint),
-            electricalMeasurements: _electricalMeasurements,
-            sensorObservations: _sensorObservations,
-            powerController: _controllerReady && widget.controller is PowerSourceController
-                ? widget.controller as PowerSourceController : null,
-            staleElectricalMetrics: _staleElectricalMetrics,
-            busy: _busy,
-            error: _deviceErrors[device.nodeId],
-            unavailable: _unavailableNodes.contains(device.nodeId),
-            favorites: _favorites,
-            onChanged: (endpoint, value) => _setOnOff(device, endpoint, value),
-            onLevelChanged: (endpoint, level) => _setLevel(device, endpoint, level),
-            onRemove: () => _removeDevice(device),
-            onRename: () => _renameDevice(device),
-            onAssignRoom: () => _assignRoom(device),
-            onManageChannels: () => _manageChannels(device),
-            onShare: () => Navigator.of(context).push<void>(MaterialPageRoute(
-              builder: (_) => DeviceShareScreen(nodeId: device.nodeId, name: device.name))),
-            onRefresh: () => _refreshDevice(device),
-            onToggleFavorite: (endpoint) => _toggleFavorite(device, endpoint),
-          );
+      device: device,
+      controllerReady: _controllerReady,
+      checking: _refreshingNodes.contains(device.nodeId) || _initializing,
+      roomName: _roomNameForDevice(device.nodeId),
+      states: _states,
+      levels: _levels,
+      colors: _colors,
+      staleColors: _staleColors,
+      onColorChanged: (endpoint, color) => _setColor(device, endpoint, color),
+      onRenameChannel: (endpoint) => _renameChannel(device, endpoint),
+      electricalMeasurements: _electricalMeasurements,
+      sensorObservations: _sensorObservations,
+      powerController:
+          _controllerReady && widget.controller is PowerSourceController
+          ? widget.controller as PowerSourceController
+          : null,
+      staleElectricalMetrics: _staleElectricalMetrics,
+      busy: _busy,
+      error: _deviceErrors[device.nodeId],
+      unavailable: _unavailableNodes.contains(device.nodeId),
+      favorites: _favorites,
+      onChanged: (endpoint, value) => _setOnOff(device, endpoint, value),
+      onLevelChanged: (endpoint, level) => _setLevel(device, endpoint, level),
+      onRemove: () => _removeDevice(device),
+      onRename: () => _renameDevice(device),
+      onAssignRoom: () => _assignRoom(device),
+      onManageChannels: () => _manageChannels(device),
+      onShare: () => Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) =>
+              DeviceShareScreen(nodeId: device.nodeId, name: device.name),
+        ),
+      ),
+      onRefresh: () => _refreshDevice(device),
+      onToggleFavorite: (endpoint) => _toggleFavorite(device, endpoint),
+    );
   }
 
   Widget _homeDeviceSummary(BuildContext context, DirectMatterDevice device) {
     final unavailable = _unavailableNodes.contains(device.nodeId);
     final error = _deviceErrors[device.nodeId];
-    final endpoint = device.onOffEndpoints.length == 1 ? device.onOffEndpoints.first : null;
+    final endpoint = device.onOffEndpoints.length == 1
+        ? device.onOffEndpoints.first
+        : null;
     final key = endpoint == null ? null : _stateKey(device.nodeId, endpoint);
     return DeviceSummaryCard(
-      device: device, states: _states, roomName: _roomNameForDevice(device.nodeId),
+      device: device,
+      states: _states,
+      sensorObservations: _sensorObservations,
+      now: widget.clock(),
+      roomName: _roomNameForDevice(device.nodeId),
       unavailable: unavailable,
-      availability: _DeviceAvailabilityBadge(unavailable: unavailable,
-        ready: _controllerReady, initializing: _initializing,
+      availability: _DeviceAvailabilityBadge(
+        unavailable: unavailable,
+        ready: _controllerReady,
+        initializing: _initializing,
         checking: _refreshingNodes.contains(device.nodeId),
-        pending: _busy.any((key) => key.startsWith('${device.nodeId}:'))),
-      errorMessage: error == null || error.startsWith('Could not refresh') || error.startsWith('Realtime')
-        ? null : _MatterErrorNotice(error: error).message,
+        pending: _busy.any((key) => key.startsWith('${device.nodeId}:')),
+      ),
+      errorMessage:
+          error == null ||
+              error.startsWith('Could not refresh') ||
+              error.startsWith('Realtime')
+          ? null
+          : _MatterErrorNotice(error: error).message,
       onOpen: () => _openDevice(device.nodeId),
       onRefresh: () => _refreshDevice(device),
-      menu: PopupMenuButton<String>(tooltip: 'تنظیمات وسیله',
+      menu: PopupMenuButton<String>(
+        icon: Icon(
+          Icons.more_horiz,
+          color:
+              !unavailable &&
+                  device.onOffEndpoints.any(
+                    (e) => _states[_stateKey(device.nodeId, e)] == true,
+                  )
+              ? const Color(0xFFBEC7DC)
+              : ManisaColors.mutedInk,
+        ),
+        tooltip: context.tr('تنظیمات وسیله'),
         onSelected: (value) {
           if (value == 'rename') _renameDevice(device);
           if (value == 'room') _assignRoom(device);
           if (value == 'remove') _removeDevice(device);
           if (value == 'channels') _manageChannels(device);
-          if (value == 'share') Navigator.of(context).push<void>(MaterialPageRoute<void>(
-            builder: (_) => DeviceShareScreen(nodeId: device.nodeId, name: device.name)));
+          if (value == 'share')
+            Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    DeviceShareScreen(nodeId: device.nodeId, name: device.name),
+              ),
+            );
         },
         itemBuilder: (_) => [
-          const PopupMenuItem(value: 'rename', child: Text('تغییر نام وسیله')),
-          const PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
-          PopupMenuItem(value: 'share', enabled: _controllerReady && !unavailable, child: const Text('اشتراک‌گذاری')),
+          const PopupMenuItem(
+            value: 'rename',
+            child: AppText('تغییر نام وسیله'),
+          ),
+          const PopupMenuItem(value: 'room', child: AppText('تغییر اتاق')),
+          PopupMenuItem(
+            value: 'share',
+            enabled: _controllerReady && !unavailable,
+            child: const AppText('اشتراک‌گذاری'),
+          ),
           if (device.onOffEndpoints.isNotEmpty)
-            const PopupMenuItem(value: 'channels', child: Text('نام خروجی‌ها')),
-          PopupMenuItem(value: 'remove', enabled: _controllerReady, child: const Text('حذف وسیله')),
+            const PopupMenuItem(
+              value: 'channels',
+              child: AppText('نام خروجی‌ها'),
+            ),
+          PopupMenuItem(
+            value: 'remove',
+            enabled: _controllerReady,
+            child: const AppText('حذف وسیله'),
+          ),
         ],
       ),
-      primaryControl: endpoint == null ? null : _DeviceOutputControl(
-        key: ValueKey('quick-output-${device.nodeId}-$endpoint'),
-        device: device, endpoint: endpoint, outputIndex: 0,
-        state: _states[key], level: _levels[key], color: _colors[key],
-        measurement: _electricalMeasurements[key],
-        staleElectricalMetrics: _staleElectricalMetrics[key] ?? const {},
-        colorIsStale: _staleColors.contains(key) || unavailable,
-        busy: _busy.contains(key), unavailable: unavailable,
-        favorite: _favorites.contains(device.nodeId, endpoint),
-        showDetailsButton: false,
-        controlReady: _controllerReady,
-        checking: _initializing || _refreshingNodes.contains(device.nodeId),
-        onChanged: (value) => _setOnOff(device, endpoint, value),
-        onLevelChanged: (level) => _setLevel(device, endpoint, level),
-        onColorChanged: (color) => _setColor(device, endpoint, color),
-        onRename: () => _renameChannel(device, endpoint),
-        onToggleFavorite: () => _toggleFavorite(device, endpoint),
-        onRefresh: () => _refreshDevice(device),
+      primaryControl: endpoint == null
+          ? null
+          : _DeviceOutputControl(
+              key: ValueKey('quick-output-${device.nodeId}-$endpoint'),
+              device: device,
+              endpoint: endpoint,
+              outputIndex: 0,
+              state: _states[key],
+              level: _levels[key],
+              color: _colors[key],
+              measurement: _electricalMeasurements[key],
+              staleElectricalMetrics: _staleElectricalMetrics[key] ?? const {},
+              colorIsStale: _staleColors.contains(key) || unavailable,
+              busy: _busy.contains(key),
+              unavailable: unavailable,
+              favorite: _favorites.contains(device.nodeId, endpoint),
+              showDetailsButton: false,
+              controlReady: _controllerReady,
+              checking:
+                  _initializing || _refreshingNodes.contains(device.nodeId),
+              onChanged: (value) => _setOnOff(device, endpoint, value),
+              onLevelChanged: (level) => _setLevel(device, endpoint, level),
+              onColorChanged: (color) => _setColor(device, endpoint, color),
+              onRename: () => _renameChannel(device, endpoint),
+              onToggleFavorite: () => _toggleFavorite(device, endpoint),
+              onRefresh: () => _refreshDevice(device),
+            ),
+    );
+  }
+
+  Future<void> _showAddMenu() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const AppText(
+              'افزودن به خانه',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 20),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.add_link_rounded),
+                title: const AppText('افزودن دستگاه'),
+                subtitle: const AppText('افزودن کلید، چراغ یا سنسور'),
+                enabled: _controllerReady,
+                onTap: _controllerReady
+                    ? () => Navigator.pop(context, 'device')
+                    : null,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.meeting_room_outlined),
+                title: const AppText('افزودن اتاق'),
+                subtitle: const AppText('مرتب‌کردن دستگاه‌ها بر اساس اتاق'),
+                enabled: !_editingMetadata,
+                onTap: _editingMetadata
+                    ? null
+                    : () => Navigator.pop(context, 'room'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'device') await _addDevice();
+    if (choice == 'room') await _createRoom();
+  }
+
+  Widget _roomFilter() {
+    final valid =
+        _selectedRoom == null ||
+        _selectedRoom == 'unassigned' ||
+        _roomCatalog.rooms.any((r) => r.id == _selectedRoom);
+    final selected = valid ? _selectedRoom : null;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final item in <(String?, String)>[
+            (null, 'همهٔ اتاق‌ها'),
+            for (final room in _roomCatalog.rooms) (room.id, room.name),
+            if (_devices.any(
+              (d) => _roomCatalog.roomIdForDevice(d.nodeId) == null,
+            ))
+              ('unassigned', 'بدون اتاق'),
+          ])
+            Padding(
+              padding: const EdgeInsetsDirectional.only(end: 8),
+              child: ChoiceChip(
+                selected: selected == item.$1,
+                label: item.$1 == null || item.$1 == 'unassigned'
+                    ? AppText(item.$2)
+                    : Text(item.$2),
+                onSelected: (_) => _updateState(() => _selectedRoom = item.$1),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _openBacklights() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => BacklightScreen(
+          store: widget.backlightStore,
+          devices: () => _devices,
+          rooms: () => _roomCatalog,
+          apply: (target, desired) async {
+            final key = _stateKey(target.device.nodeId, target.endpoint);
+            if (_staleColors.contains(key) || _colors[key]?.hsv == null)
+              await _refreshColors(target.device.nodeId);
+            if (!_controllerReady ||
+                !_canUpdate(target.device.nodeId) ||
+                _unavailableNodes.contains(target.device.nodeId) ||
+                _busy.contains(key) ||
+                _staleColors.contains(key))
+              return false;
+            await _setColor(target.device, target.endpoint, desired);
+            if (!mounted || _staleColors.contains(key)) return false;
+            final actual = _colors[key]?.hsv;
+            if (actual == null) return false;
+            final difference = (actual.hue - desired.hue).abs();
+            return (actual.saturation - desired.saturation).abs() <= .04 &&
+                (desired.saturation == 0 ||
+                    difference <= 4 ||
+                    difference >= 356);
+          },
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final titles = <String>[
-      _homeProfile.name,
-      'کارها',
-      'تنظیمات',
-    ];
     return Scaffold(
-      appBar: AppBar(
-        title: Text(titles[_selectedDestination]),
-        actions: _selectedDestination == 0
-            ? <Widget>[
-                IconButton(
-                  tooltip: 'افزودن اتاق',
-                  onPressed: _loading || _editingMetadata ? null : _createRoom,
-                  icon: const Icon(Icons.add_home_outlined),
-                ),
-                RefreshAction(
-                  refreshing: _initializing || _refreshingNodes.any(_canUpdate),
-                  onRefresh: _loading ? null : _controllerReady ? _refreshAllStates : _retryConnections,
-                  progressKey: const ValueKey('home-refresh-progress'),
-                ),
-              ]
-            : const <Widget>[],
-      ),
-      floatingActionButton: _selectedDestination == 0
-          ? FloatingActionButton.extended(
-              onPressed: _loading || !_controllerReady ? null : _addDevice,
-              icon: const Icon(Icons.add),
-              label: const Text('افزودن وسیله'),
-            )
-          : null,
+      appBar: AppBar(title: const ManisaBrand(), toolbarHeight: 64),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedDestination,
         onDestinationSelected: (index) {
           if (index == _selectedDestination) return;
           _updateState(() => _selectedDestination = index);
         },
-        destinations: const <NavigationDestination>[
+        destinations: <NavigationDestination>[
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home_rounded),
-            label: 'خانه',
+            label: context.tr('خانه'),
           ),
           NavigationDestination(
             icon: Icon(Icons.auto_awesome_motion_outlined),
             selectedIcon: Icon(Icons.auto_awesome_motion_rounded),
-            label: 'کارها',
+            label: context.tr('کارها'),
           ),
           NavigationDestination(
             icon: Icon(Icons.tune_outlined),
             selectedIcon: Icon(Icons.tune_rounded),
-            label: 'تنظیمات',
+            label: context.tr('تنظیمات'),
           ),
         ],
       ),
@@ -1908,66 +2445,146 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           ? const LoadingNotice(label: 'در حال خواندن خانهٔ تو…')
           : switch (_selectedDestination) {
               0 => RefreshIndicator(
-              onRefresh: _controllerReady ? _refreshAllStates : _retryConnections,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-                children: <Widget>[
-                  if (_initializing || _refreshingNodes.any(_canUpdate) || _lastCheck != null)
-                    Padding(padding: const EdgeInsets.only(bottom: 12),
-                      child: Semantics(liveRegion: true, child: Text(
-                        _initializing ? 'در حال آماده‌سازی ارتباط…'
-                        : _refreshingNodes.any(_canUpdate) ? 'در حال تازه‌سازی؛ کنترل‌های آماده قابل استفاده‌اند.'
-                        : 'آخرین بررسی: ${toPersianDigits('${_lastCheck!.hour.toString().padLeft(2, '0')}:${_lastCheck!.minute.toString().padLeft(2, '0')}')}',
-                      ))),
-                  _HomeHealthCard(
-                    deviceCount: _devices.length,
-                    unavailableCount: _unavailableNodes.length,
-                    recovering: _retrying,
-                    checking: _initializing || _refreshingNodes.any(_canUpdate),
-                    ready: _controllerReady,
-                  ),
-                  if (_error != null) ...<Widget>[
-                    const SizedBox(height: 16),
-                    MaterialBanner(
-                      content: _MatterErrorNotice(error: _error!),
-                      actions: <Widget>[
-                        TextButton(
-                          onPressed: _retrying || _initializing ? null : _retryConnections,
+                onRefresh: _controllerReady
+                    ? _refreshAllStates
+                    : _retryConnections,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                  children: <Widget>[
+                    Row(
+                      children: [
+                        Expanded(
                           child: Text(
-                            _retrying ? 'در حال بررسی…' : 'تلاش دوباره',
+                            _homeProfile.name == ManisaHomeProfile.defaultName
+                                ? context.tr(_homeProfile.name)
+                                : _homeProfile.name,
+                            style: Theme.of(context).textTheme.headlineLarge,
                           ),
                         ),
-                        TextButton(
-                          onPressed: _retrying
-                              ? null
-                              : () => _updateState(() => _error = null),
-                          child: const Text('بستن'),
+                        RefreshAction(
+                          refreshing:
+                              _initializing || _refreshingNodes.any(_canUpdate),
+                          onRefresh: _controllerReady
+                              ? _refreshAllStates
+                              : _retryConnections,
+                          progressKey: const ValueKey('home-refresh-progress'),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          key: const ValueKey('home-add'),
+                          tooltip: context.tr('افزودن'),
+                          onPressed: _loading ? null : _showAddMenu,
+                          style: IconButton.styleFrom(
+                            backgroundColor: ManisaColors.ink,
+                            minimumSize: const Size(48, 48),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          icon: const Icon(Icons.add),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 20),
+                    HomeEnvironment(
+                      devices: _devices,
+                      observations: _sensorObservations,
+                      now: widget.clock(),
+                      roomName: _roomNameForDevice,
+                      onOpen: _openDevice,
+                      roomId: _selectedRoom,
+                      rooms: _roomCatalog,
+                    ),
+                    const SizedBox(height: 12),
+                    _roomFilter(),
+                    const SizedBox(height: 12),
+                    if (_initializing ||
+                        _refreshingNodes.any(_canUpdate) ||
+                        _lastCheck != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Semantics(
+                          liveRegion: true,
+                          child: AppText(
+                            _initializing
+                                ? 'در حال آماده‌سازی ارتباط…'
+                                : _refreshingNodes.any(_canUpdate)
+                                ? 'در حال تازه‌سازی؛ کنترل‌های آماده قابل استفاده‌اند.'
+                                : 'آخرین بررسی: ${toPersianDigits('${_lastCheck!.hour.toString().padLeft(2, '0')}:${_lastCheck!.minute.toString().padLeft(2, '0')}')}',
+                          ),
+                        ),
+                      ),
+                    if (_error == null &&
+                        _controllerReady &&
+                        _unavailableNodes.isNotEmpty)
+                      _HomeHealthCard(
+                        deviceCount: _devices.length,
+                        unavailableCount: _unavailableNodes.length,
+                        recovering: _retrying,
+                        checking:
+                            _initializing || _refreshingNodes.any(_canUpdate),
+                        ready: _controllerReady,
+                      ),
+                    if (_error != null) ...<Widget>[
+                      const SizedBox(height: 16),
+                      MaterialBanner(
+                        content: _MatterErrorNotice(error: _error!),
+                        actions: <Widget>[
+                          TextButton(
+                            onPressed: _retrying || _initializing
+                                ? null
+                                : _retryConnections,
+                            child: AppText(
+                              _retrying ? 'در حال بررسی…' : 'تلاش دوباره',
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _retrying
+                                ? null
+                                : () => _updateState(() => _error = null),
+                            child: const AppText('بستن'),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    if (_selectedRoom == null && _favorites.outputs.isNotEmpty)
+                      ..._favoriteSection(context),
+                    if (_catalogLoaded &&
+                        _error == null &&
+                        _devices.isEmpty &&
+                        _roomCatalog.rooms.isEmpty)
+                      const _EmptyDirectMatterState(),
+                    if (_devices.isNotEmpty || _roomCatalog.rooms.isNotEmpty)
+                      ..._roomSections(context),
+                    const SizedBox(height: 16),
+                    Card(
+                      child: ListTile(
+                        leading: const SwitchBacklightIcon(),
+                        title: const AppText('نور پس‌زمینهٔ کلیدها'),
+                        subtitle: const AppText(
+                          'رنگ خانه · قابل تغییر برای هر اتاق',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: _openBacklights,
+                      ),
+                    ),
                   ],
-                  const SizedBox(height: 24),
-                  if (_favorites.outputs.isNotEmpty)
-                    ..._favoriteSection(context),
-                  if (_catalogLoaded && _error == null && _devices.isEmpty && _roomCatalog.rooms.isEmpty)
-                    const _EmptyDirectMatterState(),
-                  if (_devices.isNotEmpty || _roomCatalog.rooms.isNotEmpty)
-                    ..._roomSections(context),
-                ],
+                ),
               ),
-            ),
               1 => _RoutinesHub(
-                  onOpenScenes: _openScenes,
-                  onOpenSchedules: _openAutomations,
-                ),
+                onOpenScenes: _openScenes,
+                onOpenSchedules: _openAutomations,
+              ),
               _ => _SettingsHub(
-                  homeName: _homeProfile.name,
-                  roomCount: _roomCatalog.rooms.length,
-                  deviceCount: _devices.length,
-                  onRenameHome: _editingMetadata ? null : _renameHome,
-                  onAddRoom: _editingMetadata ? null : _createRoom,
-                ),
+                homeName: _homeProfile.name,
+                onAddDevice: _controllerReady ? _addDevice : null,
+                roomCount: _roomCatalog.rooms.length,
+                deviceCount: _devices.length,
+                onRenameHome: _editingMetadata ? null : _renameHome,
+                onAddRoom: _editingMetadata ? null : _createRoom,
+              ),
             },
     );
   }
@@ -1991,23 +2608,31 @@ final class _HomeHealthCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final healthy = ready && unavailableCount == 0;
-    final icon = checking ? Icons.sync_rounded : healthy && ready ? Icons.check_circle_rounded : Icons.wifi_off_rounded;
-    final title = checking ? 'در حال دریافت وضعیت خانه'
-        : !ready ? 'ارتباط خانه آماده نیست'
+    final icon = checking
+        ? Icons.sync_rounded
+        : healthy && ready
+        ? Icons.check_circle_rounded
+        : Icons.wifi_off_rounded;
+    final title = checking
+        ? 'در حال دریافت وضعیت خانه'
+        : !ready
+        ? 'ارتباط خانه آماده نیست'
         : deviceCount == 0
         ? 'خانه برای اولین وسیله آماده است'
         : healthy
-            ? 'همه‌چیز آماده است'
-            : recovering
-                ? 'در حال بازیابی ارتباط'
-                : '${toPersianDigits(unavailableCount)} وسیله در دسترس نیست';
-    final subtitle = checking ? 'کنترل‌های آماده همچنان قابل استفاده‌اند.'
-        : !ready ? 'راه‌اندازی ارتباط را دوباره امتحان کن.'
+        ? 'همه‌چیز آماده است'
+        : recovering
+        ? 'در حال بازیابی ارتباط'
+        : '${toPersianDigits(unavailableCount)} وسیله در دسترس نیست';
+    final subtitle = checking
+        ? 'کنترل‌های آماده همچنان قابل استفاده‌اند.'
+        : !ready
+        ? 'راه‌اندازی ارتباط را دوباره امتحان کن.'
         : deviceCount == 0
         ? 'وسیله را اضافه کن و اولین کنترل را همین‌جا ببین.'
         : healthy
-            ? '${toPersianDigits(deviceCount)} وسیله در شبکهٔ خانه در دسترس است.'
-            : 'آخرین وضعیت معتبر حفظ شده و مانیسا دوباره تلاش می‌کند.';
+        ? '${toPersianDigits(deviceCount)} وسیله در شبکهٔ خانه در دسترس است.'
+        : 'آخرین وضعیت معتبر حفظ شده و مانیسا دوباره تلاش می‌کند.';
     final background = checking || healthy
         ? ManisaColors.mint
         : ManisaColors.warningSurface;
@@ -2034,18 +2659,16 @@ final class _HomeHealthCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(
+                    AppText(
                       title,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: foreground,
-                      ),
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(color: foreground),
                     ),
                     const SizedBox(height: 4),
-                    Text(
+                    AppText(
                       subtitle,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: ManisaColors.ink,
-                      ),
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(color: ManisaColors.ink),
                     ),
                   ],
                 ),
@@ -2071,10 +2694,14 @@ final class _RoutinesHub extends StatelessWidget {
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
     children: <Widget>[
-      Text('خانه با سبک زندگی تو هماهنگ می‌شود',
-        style: Theme.of(context).textTheme.headlineMedium),
+      AppText(
+        'خانه با سبک زندگی تو هماهنگ می‌شود',
+        style: Theme.of(context).textTheme.headlineMedium,
+      ),
       const SizedBox(height: 8),
-      const Text('چند وسیله را با یک لمس کنترل کن یا زمان اجرای آن را مشخص کن.'),
+      const AppText(
+        'چند وسیله را با یک لمس کنترل کن یا زمان اجرای آن را مشخص کن.',
+      ),
       const SizedBox(height: 24),
       _RoutineEntryCard(
         icon: Icons.play_circle_outline_rounded,
@@ -2132,14 +2759,18 @@ final class _RoutineEntryCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Text(title, style: Theme.of(context).textTheme.titleMedium),
+                  AppText(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                   const SizedBox(height: 4),
-                  Text(description),
+                  AppText(description),
                   const SizedBox(height: 10),
-                  Text(actionLabel,
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: ManisaColors.tealPressed,
-                    )),
+                  AppText(
+                    actionLabel,
+                    style: Theme.of(context).textTheme.labelLarge
+                        ?.copyWith(color: ManisaColors.tealPressed),
+                  ),
                 ],
               ),
             ),
@@ -2169,7 +2800,9 @@ final class _LocalTrustNotice extends StatelessWidget {
           Icon(Icons.phone_android_rounded, color: ManisaColors.teal),
           SizedBox(width: 12),
           Expanded(
-            child: Text('زمان‌بندی‌های فعلی روی همین گوشی اجرا می‌شوند. فرمان ناموفق خودکار تکرار نمی‌شود.'),
+            child: AppText(
+              'زمان‌بندی‌های فعلی روی همین گوشی اجرا می‌شوند. فرمان ناموفق خودکار تکرار نمی‌شود.',
+            ),
           ),
         ],
       ),
@@ -2184,6 +2817,7 @@ final class _SettingsHub extends StatelessWidget {
     required this.deviceCount,
     required this.onRenameHome,
     required this.onAddRoom,
+    required this.onAddDevice,
   });
 
   final String homeName;
@@ -2191,38 +2825,79 @@ final class _SettingsHub extends StatelessWidget {
   final int deviceCount;
   final VoidCallback? onRenameHome;
   final VoidCallback? onAddRoom;
+  final VoidCallback? onAddDevice;
 
   @override
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
     children: <Widget>[
-      Text('خانه و مانیسا', style: Theme.of(context).textTheme.headlineMedium),
-      const SizedBox(height: 8),
-      const Text('تنظیمات کم‌استفاده اینجا می‌مانند تا صفحهٔ کنترل ساده بماند.'),
+      AppText('تنظیمات', style: Theme.of(context).textTheme.headlineMedium),
+      const SizedBox(height: 24),
+      AppText('زبان برنامه', style: Theme.of(context).textTheme.titleMedium),
+      const SizedBox(height: 12),
+      Card(
+        child: Column(
+          children: [
+            for (final language in const [
+              ('fa', 'فارسی'),
+              ('en', 'English'),
+              ('ar', 'العربية'),
+            ])
+              ListTile(
+                title: AppText(language.$2),
+                subtitle: language.$1 == 'fa' ? const AppText('پیش‌فرض') : null,
+                trailing:
+                    Localizations.localeOf(context).languageCode == language.$1
+                    ? const Icon(Icons.check, color: ManisaColors.teal)
+                    : null,
+                onTap: () async {
+                  try {
+                    await ManisaLocaleScope.of(context)?.select(language.$1);
+                  } catch (_) {
+                    if (context.mounted)
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: AppText(
+                            'ذخیرهٔ تنظیمات انجام نشد. دوباره تلاش کن.',
+                          ),
+                        ),
+                      );
+                  }
+                },
+              ),
+          ],
+        ),
+      ),
       const SizedBox(height: 24),
       Card(
         child: Column(
           children: <Widget>[
             ListTile(
               leading: const Icon(Icons.home_outlined),
-              title: const Text('نام خانه'),
+              title: const AppText('نام خانه'),
               subtitle: Text(homeName),
               trailing: const Icon(Icons.chevron_left_rounded),
               onTap: onRenameHome,
             ),
             const Divider(indent: 56),
             ListTile(
+              leading: const Icon(Icons.add),
+              title: const AppText('افزودن دستگاه'),
+              onTap: onAddDevice,
+            ),
+            const Divider(indent: 56),
+            ListTile(
               leading: const Icon(Icons.meeting_room_outlined),
-              title: const Text('اتاق‌ها'),
-              subtitle: Text('${toPersianDigits(roomCount)} اتاق'),
+              title: const AppText('اتاق‌ها'),
+              subtitle: AppText('${toPersianDigits(roomCount)} اتاق'),
               trailing: const Icon(Icons.add_rounded),
               onTap: onAddRoom,
             ),
             const Divider(indent: 56),
             ListTile(
               leading: const Icon(Icons.devices_other_outlined),
-              title: const Text('وسایل ثبت‌شده'),
-              subtitle: Text('${toPersianDigits(deviceCount)} وسیله'),
+              title: const AppText('وسایل ثبت‌شده'),
+              subtitle: AppText('${toPersianDigits(deviceCount)} وسیله'),
             ),
           ],
         ),
@@ -2231,16 +2906,20 @@ final class _SettingsHub extends StatelessWidget {
       const Card(
         child: ListTile(
           leading: Icon(Icons.router_outlined),
-          title: Text('اتصال محلی'),
-          subtitle: Text('کنترل داخل خانه از شبکهٔ خانه استفاده می‌کند؛ اینترنت و شبکهٔ خانه یکسان نیستند.'),
+          title: AppText('اتصال محلی'),
+          subtitle: AppText(
+            'کنترل داخل خانه از شبکهٔ خانه استفاده می‌کند؛ اینترنت و شبکهٔ خانه یکسان نیستند.',
+          ),
         ),
       ),
       const SizedBox(height: 12),
       const Card(
         child: ListTile(
           leading: Icon(Icons.support_agent_rounded),
-          title: Text('راهنما و پشتیبانی'),
-          subtitle: Text('جزئیات فنی فقط هنگام نیاز به پشتیبانی نمایش داده می‌شود.'),
+          title: AppText('راهنما و پشتیبانی'),
+          subtitle: AppText(
+            'جزئیات فنی فقط هنگام نیاز به پشتیبانی نمایش داده می‌شود.',
+          ),
         ),
       ),
     ],
@@ -2259,12 +2938,12 @@ final class _EmptyDirectMatterState extends StatelessWidget {
           children: <Widget>[
             const Icon(Icons.lightbulb_outline, size: 52),
             const SizedBox(height: 16),
-            Text(
+            AppText(
               'اولین وسیله را اضافه کن',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
-            const Text(
+            const AppText(
               'کد روی وسیله را اسکن کن؛ مرحله‌به‌مرحله برای اتصال راهنمایی‌ات می‌کنیم.',
               textAlign: TextAlign.center,
             ),
@@ -2367,43 +3046,45 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Text(
+                      AppText(
                         device.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 2),
-                      Text(
+                      AppText(
                         device.productLabel,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: ManisaColors.mutedInk,
-                        ),
+                        style: Theme.of(context).textTheme.bodyMedium
+                            ?.copyWith(color: ManisaColors.mutedInk),
                       ),
-                      Text(
-                        device.onOffEndpoints.isEmpty && device.sensorCapabilities.isNotEmpty
+                      AppText(
+                        device.onOffEndpoints.isEmpty &&
+                                device.sensorCapabilities.isNotEmpty
                             ? (roomName ?? 'بدون اتاق')
                             : roomName == null
-                                ? '${toPersianDigits(device.onOffEndpoints.length)} خروجی'
-                                : '${toPersianDigits(device.onOffEndpoints.length)} خروجی · $roomName',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: ManisaColors.mutedInk,
-                        ),
+                            ? '${toPersianDigits(device.onOffEndpoints.length)} خروجی'
+                            : '${toPersianDigits(device.onOffEndpoints.length)} خروجی · $roomName',
+                        style: Theme.of(context).textTheme.bodyMedium
+                            ?.copyWith(color: ManisaColors.mutedInk),
                       ),
                       if (!unavailable || error == null) ...<Widget>[
                         const SizedBox(height: 8),
                         _DeviceAvailabilityBadge(
                           unavailable: unavailable,
-                          ready: controllerReady, checking: checking,
+                          ready: controllerReady,
+                          checking: checking,
                           initializing: !controllerReady && checking,
-                          pending: busy.any((key) => key.startsWith('${device.nodeId}:')),
+                          pending: busy.any(
+                            (key) => key.startsWith('${device.nodeId}:'),
+                          ),
                         ),
                       ],
                     ],
                   ),
                 ),
                 PopupMenuButton<String>(
-                  tooltip: 'تنظیمات وسیله',
+                  tooltip: context.tr('تنظیمات وسیله'),
                   onSelected: (value) {
                     if (value == 'remove') onRemove();
                     if (value == 'rename') onRename();
@@ -2414,15 +3095,24 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   itemBuilder: (_) => <PopupMenuEntry<String>>[
                     const PopupMenuItem(
                       value: 'rename',
-                      child: Text('تغییر نام وسیله'),
+                      child: AppText('تغییر نام وسیله'),
                     ),
-                    PopupMenuItem(value: 'room', child: Text('تغییر اتاق')),
-                    PopupMenuItem(value: 'share', enabled: controllerReady && !unavailable, child: Text('اشتراک‌گذاری')),
-                    if (device.onOffEndpoints.isNotEmpty) const PopupMenuItem(
-                      value: 'channels',
-                      child: Text('نام خروجی‌ها'),
+                    PopupMenuItem(value: 'room', child: AppText('تغییر اتاق')),
+                    PopupMenuItem(
+                      value: 'share',
+                      enabled: controllerReady && !unavailable,
+                      child: AppText('اشتراک‌گذاری'),
                     ),
-                    PopupMenuItem(value: 'remove', enabled: controllerReady, child: Text('حذف وسیله')),
+                    if (device.onOffEndpoints.isNotEmpty)
+                      const PopupMenuItem(
+                        value: 'channels',
+                        child: AppText('نام خروجی‌ها'),
+                      ),
+                    PopupMenuItem(
+                      value: 'remove',
+                      enabled: controllerReady,
+                      child: AppText('حذف وسیله'),
+                    ),
                   ],
                 ),
               ],
@@ -2440,7 +3130,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       if (unavailable)
-                        Text(
+                        AppText(
                           error!.startsWith('Could not refresh') ||
                                   error!.startsWith('Realtime')
                               ? 'ارتباط قطع است؛ وضعیت تازه دریافت نشده.'
@@ -2454,26 +3144,26 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         children: <Widget>[
                           TextButton(
                             onPressed: onRefresh,
-                            child: const Text('تلاش دوباره'),
+                            child: const AppText('تلاش دوباره'),
                           ),
                           if (unavailable)
                             TextButton(
                               onPressed: () => showDialog<void>(
                                 context: context,
                                 builder: (context) => AlertDialog(
-                                  title: const Text('بررسی ارتباط'),
+                                  title: const AppText('بررسی ارتباط'),
                                   content: SingleChildScrollView(
                                     child: _MatterErrorNotice(error: error!),
                                   ),
                                   actions: <Widget>[
                                     TextButton(
                                       onPressed: () => Navigator.pop(context),
-                                      child: const Text('بستن'),
+                                      child: const AppText('بستن'),
                                     ),
                                   ],
                                 ),
                               ),
-                              child: const Text('راهنمای اتصال'),
+                              child: const AppText('راهنمای اتصال'),
                             ),
                         ],
                       ),
@@ -2483,14 +3173,17 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 12),
-            if (device.onOffEndpoints.isEmpty && device.sensorCapabilities.isEmpty)
+            if (device.onOffEndpoints.isEmpty &&
+                device.sensorCapabilities.isEmpty)
               TextButton(
                 onPressed: onRefresh,
-                child: const Text('دریافت کنترل‌های وسیله'),
+                child: const AppText('دریافت کنترل‌های وسیله'),
               ),
             for (var index = 0; index < device.onOffEndpoints.length; index++)
               Builder(
-                key: ValueKey('output-row-${device.nodeId}-${device.onOffEndpoints[index]}'),
+                key: ValueKey(
+                  'output-row-${device.nodeId}-${device.onOffEndpoints[index]}',
+                ),
                 builder: (context) {
                   final endpoint = device.onOffEndpoints[index];
                   final key = _key(endpoint);
@@ -2502,7 +3195,8 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   return _DeviceOutputControl(
                     key: ValueKey('device-output-${device.nodeId}-$endpoint'),
                     device: device,
-                    controlReady: controllerReady, checking: checking,
+                    controlReady: controllerReady,
+                    checking: checking,
                     endpoint: endpoint,
                     outputIndex: index,
                     state: state,
@@ -2527,40 +3221,65 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
               ),
             for (final endpoint in device.colorCapabilities.keys)
               if (!device.onOffEndpoints.contains(endpoint)) ...<Widget>[
-                ListTile(title: Text(device.channelName(endpoint,
-                    device.colorCapabilities.keys.toList().indexOf(endpoint))),
-                  trailing: IconButton(tooltip: 'تغییر نام خروجی', icon: const Icon(Icons.edit_outlined),
-                    onPressed: () => onRenameChannel(endpoint))),
-                ColorControl(key: ValueKey('color-${device.nodeId}-$endpoint'),
-                  state: colors[_key(endpoint)], enabled: controllerReady && !busy.contains(_key(endpoint)) && !unavailable,
+                ListTile(
+                  title: Text(
+                    device.channelName(
+                      endpoint,
+                      device.colorCapabilities.keys.toList().indexOf(endpoint),
+                    ),
+                  ),
+                  trailing: IconButton(
+                    tooltip: context.tr('تغییر نام خروجی'),
+                    icon: const Icon(Icons.edit_outlined),
+                    onPressed: () => onRenameChannel(endpoint),
+                  ),
+                ),
+                ColorControl(
+                  key: ValueKey('color-${device.nodeId}-$endpoint'),
+                  state: colors[_key(endpoint)],
+                  enabled:
+                      controllerReady &&
+                      !busy.contains(_key(endpoint)) &&
+                      !unavailable,
                   stale: staleColors.contains(_key(endpoint)) || unavailable,
-                  onRefresh: onRefresh, onChanged: (color) => onColorChanged(endpoint, color)),
-                if (device.levelEndpoints.contains(endpoint)) _LevelControl(
-                  level: levels[_key(endpoint)], enabled: controllerReady && !busy.contains(_key(endpoint)) && !unavailable,
-                  onChanged: (value) => onLevelChanged(endpoint, value)),
+                  onRefresh: onRefresh,
+                  onChanged: (color) => onColorChanged(endpoint, color),
+                ),
+                if (device.levelEndpoints.contains(endpoint))
+                  _LevelControl(
+                    level: levels[_key(endpoint)],
+                    enabled:
+                        controllerReady &&
+                        !busy.contains(_key(endpoint)) &&
+                        !unavailable,
+                    onChanged: (value) => onLevelChanged(endpoint, value),
+                  ),
               ],
             if (powerController != null)
-              PowerSourcePanel(key: ValueKey('power-${device.nodeId}'),
-                nodeId: device.nodeId, controller: powerController!),
+              PowerSourcePanel(
+                key: ValueKey('power-${device.nodeId}'),
+                nodeId: device.nodeId,
+                controller: powerController!,
+              ),
             for (final entry in device.sensorCapabilities.entries)
               SensorMeasurementPanel(
                 key: ValueKey('sensors-${device.nodeId}-${entry.key}'),
-                supported: entry.value, observation: sensorObservations[_key(entry.key)],
-                now: DateTime.now(), onRefresh: onRefresh,
-                title: device.channelNames[entry.key] ?? (device.sensorCapabilities.length > 1
-                    ? 'سنسور ${toPersianDigits(device.sensorCapabilities.keys.toList().indexOf(entry.key)+1)}' : null),
+                supported: entry.value,
+                observation: sensorObservations[_key(entry.key)],
+                now: DateTime.now(),
+                onRefresh: onRefresh,
+                title:
+                    device.channelNames[entry.key] ??
+                    (device.sensorCapabilities.length > 1
+                        ? 'سنسور ${toPersianDigits(device.sensorCapabilities.keys.toList().indexOf(entry.key) + 1)}'
+                        : null),
               ),
             for (final entry in device.measurementCapabilities.entries)
               if (!device.onOffEndpoints.contains(entry.key))
                 _ElectricalMeasurementPanel(
                   title: device.measurementCapabilities.length == 1
                       ? 'اندازه‌گیری وسیله'
-                      : 'اندازه‌گیری ${toPersianDigits(
-                          device.measurementCapabilities.keys
-                                  .toList(growable: false)
-                                  .indexOf(entry.key) +
-                              1,
-                        )}',
+                      : 'اندازه‌گیری ${toPersianDigits(device.measurementCapabilities.keys.toList(growable: false).indexOf(entry.key) + 1)}',
                   supported: entry.value,
                   measurement: electricalMeasurements[_key(entry.key)],
                   staleMetrics: unavailable
@@ -2592,9 +3311,19 @@ final class _DeviceAvailabilityBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, label, foreground, background) = initializing
-        ? (Icons.sync_rounded, 'در حال اتصال', ManisaColors.tealPressed, ManisaColors.mint)
+        ? (
+            Icons.sync_rounded,
+            'در حال اتصال',
+            ManisaColors.tealPressed,
+            ManisaColors.mint,
+          )
         : !ready
-        ? (Icons.wifi_off_rounded, 'ارتباط آماده نیست', ManisaColors.warning, ManisaColors.warningSurface)
+        ? (
+            Icons.wifi_off_rounded,
+            'ارتباط آماده نیست',
+            ManisaColors.warning,
+            ManisaColors.warningSurface,
+          )
         : unavailable
         ? (
             Icons.wifi_off_rounded,
@@ -2603,20 +3332,25 @@ final class _DeviceAvailabilityBadge extends StatelessWidget {
             ManisaColors.warningSurface,
           )
         : checking
-            ? (Icons.sync_rounded, 'در حال دریافت وضعیت', ManisaColors.tealPressed, ManisaColors.mint)
+        ? (
+            Icons.sync_rounded,
+            'در حال دریافت وضعیت',
+            ManisaColors.tealPressed,
+            ManisaColors.mint,
+          )
         : pending
-            ? (
-                Icons.sync_rounded,
-                'در حال انجام',
-                ManisaColors.tealPressed,
-                ManisaColors.mint,
-              )
-            : (
-                Icons.check_circle_outline_rounded,
-                'در دسترس',
-                ManisaColors.tealPressed,
-                ManisaColors.mint,
-              );
+        ? (
+            Icons.sync_rounded,
+            'در حال انجام',
+            ManisaColors.tealPressed,
+            ManisaColors.mint,
+          )
+        : (
+            Icons.check_circle_outline_rounded,
+            'در دسترس',
+            ManisaColors.tealPressed,
+            ManisaColors.mint,
+          );
     return Semantics(
       label: label,
       child: DecoratedBox(
@@ -2631,13 +3365,15 @@ final class _DeviceAvailabilityBadge extends StatelessWidget {
             children: <Widget>[
               Icon(icon, size: 16, color: foreground),
               const SizedBox(width: 5),
-              Flexible(child: Text(
-                label,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: foreground,
-                  fontWeight: FontWeight.w700,
+              Flexible(
+                child: AppText(
+                  label,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: foreground,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              )),
+              ),
             ],
           ),
         ),
@@ -2710,7 +3446,8 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
 
   String get _stateLabel {
     final value = widget.state;
-    if (value == null) return widget.checking ? 'در حال دریافت وضعیت' : 'وضعیت دریافت نشده';
+    if (value == null)
+      return widget.checking ? 'در حال دریافت وضعیت' : 'وضعیت دریافت نشده';
     if (widget.unavailable) {
       return 'آخرین وضعیت: ${value ? 'روشن' : 'خاموش'}';
     }
@@ -2728,14 +3465,14 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
     final statusColor = widget.unavailable
         ? ManisaColors.warning
         : value == true
-            ? ManisaColors.tealPressed
-            : ManisaColors.mutedInk;
+        ? ManisaColors.tealPressed
+        : ManisaColors.mutedInk;
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Material(
         color: value == true && !widget.unavailable
-            ? ManisaColors.mint.withValues(alpha: .32)
+            ? ManisaColors.mint
             : ManisaColors.canvas,
         clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(
@@ -2750,32 +3487,60 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
           children: <Widget>[
             if (value == null)
               ListTile(
-                contentPadding: const EdgeInsetsDirectional.fromSTEB(8, 4, 12, 4),
+                contentPadding: const EdgeInsetsDirectional.fromSTEB(
+                  8,
+                  4,
+                  12,
+                  4,
+                ),
                 title: Text(
-                  widget.device.channelName(widget.endpoint, widget.outputIndex),
+                  widget.device.channelName(
+                    widget.endpoint,
+                    widget.outputIndex,
+                  ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: widget.showDetailsButton
                     ? _statusAndDetails(statusColor)
-                    : Text(_stateLabel, style: TextStyle(color: statusColor)),
+                    : AppText(
+                        _stateLabel,
+                        style: TextStyle(color: statusColor),
+                      ),
                 leading: _favoriteButton(),
                 trailing: TextButton(
-                  onPressed: !widget.controlReady || widget.checking || widget.busy || widget.unavailable ? null : widget.onRefresh,
-                  child: const Text('بررسی'),
+                  onPressed:
+                      !widget.controlReady ||
+                          widget.checking ||
+                          widget.busy ||
+                          widget.unavailable
+                      ? null
+                      : widget.onRefresh,
+                  child: const AppText('بررسی'),
                 ),
               )
             else
               SwitchListTile.adaptive(
-                contentPadding: const EdgeInsetsDirectional.fromSTEB(8, 4, 12, 4),
+                contentPadding: const EdgeInsetsDirectional.fromSTEB(
+                  8,
+                  4,
+                  12,
+                  4,
+                ),
                 title: Text(
-                  widget.device.channelName(widget.endpoint, widget.outputIndex),
+                  widget.device.channelName(
+                    widget.endpoint,
+                    widget.outputIndex,
+                  ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: widget.showDetailsButton
                     ? _statusAndDetails(statusColor)
-                    : Text(_stateLabel, style: TextStyle(color: statusColor)),
+                    : AppText(
+                        _stateLabel,
+                        style: TextStyle(color: statusColor),
+                      ),
                 value: value,
                 onChanged: enabled ? widget.onChanged : null,
                 secondary: _favoriteButton(),
@@ -2786,47 +3551,56 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                 child: !_detailsOpen
                     ? const SizedBox(width: double.infinity)
                     : Padding(
-                  padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 12, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      TextButton.icon(
-                        key: ValueKey(
-                          'rename-output-${widget.device.nodeId}-${widget.endpoint}',
+                        padding: const EdgeInsetsDirectional.fromSTEB(
+                          12,
+                          0,
+                          12,
+                          12,
                         ),
-                        onPressed: widget.onRename,
-                        icon: const Icon(Icons.edit_outlined, size: 18),
-                        label: const Text('تغییر نام خروجی'),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            TextButton.icon(
+                              key: ValueKey(
+                                'rename-output-${widget.device.nodeId}-${widget.endpoint}',
+                              ),
+                              onPressed: widget.onRename,
+                              icon: const Icon(Icons.edit_outlined, size: 18),
+                              label: const AppText('تغییر نام خروجی'),
+                            ),
+                            if (widget.device.colorCapabilities.containsKey(
+                              widget.endpoint,
+                            ))
+                              ColorControl(
+                                key: ValueKey(
+                                  'color-${widget.device.nodeId}-${widget.endpoint}',
+                                ),
+                                state: widget.color,
+                                enabled: enabled,
+                                stale: widget.colorIsStale,
+                                onRefresh: widget.onRefresh,
+                                onChanged: widget.onColorChanged,
+                              ),
+                            if (widget.device.levelEndpoints.contains(
+                              widget.endpoint,
+                            ))
+                              _LevelControl(
+                                level: widget.level,
+                                enabled: enabled && widget.level != null,
+                                onChanged: widget.onLevelChanged,
+                              ),
+                            if (widget.device.measurementCapabilities
+                                .containsKey(widget.endpoint))
+                              _ElectricalMeasurementPanel(
+                                supported: widget
+                                    .device
+                                    .measurementCapabilities[widget.endpoint]!,
+                                measurement: widget.measurement,
+                                staleMetrics: widget.staleElectricalMetrics,
+                              ),
+                          ],
+                        ),
                       ),
-                      if (widget.device.colorCapabilities
-                          .containsKey(widget.endpoint))
-                        ColorControl(
-                          key: ValueKey(
-                            'color-${widget.device.nodeId}-${widget.endpoint}',
-                          ),
-                          state: widget.color,
-                          enabled: enabled,
-                          stale: widget.colorIsStale,
-                          onRefresh: widget.onRefresh,
-                          onChanged: widget.onColorChanged,
-                        ),
-                      if (widget.device.levelEndpoints.contains(widget.endpoint))
-                        _LevelControl(
-                          level: widget.level,
-                          enabled: enabled && widget.level != null,
-                          onChanged: widget.onLevelChanged,
-                        ),
-                      if (widget.device.measurementCapabilities
-                          .containsKey(widget.endpoint))
-                        _ElectricalMeasurementPanel(
-                          supported: widget.device
-                              .measurementCapabilities[widget.endpoint]!,
-                          measurement: widget.measurement,
-                          staleMetrics: widget.staleElectricalMetrics,
-                        ),
-                    ],
-                  ),
-                ),
               ),
             ],
           ],
@@ -2837,7 +3611,9 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
 
   Widget _statusAndDetails(Color statusColor) => Row(
     children: <Widget>[
-      Expanded(child: Text(_stateLabel, style: TextStyle(color: statusColor))),
+      Expanded(
+        child: AppText(_stateLabel, style: TextStyle(color: statusColor)),
+      ),
       Semantics(
         expanded: _detailsOpen,
         child: IconButton(
@@ -2938,17 +3714,16 @@ final class _ElectricalMeasurementPanel extends StatelessWidget {
               const Icon(Icons.bolt_outlined, size: 20),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
+                child: AppText(
                   title,
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
               if (staleMetrics.isNotEmpty)
-                Text(
+                AppText(
                   'نیاز به به‌روزرسانی',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+                  style: Theme.of(context).textTheme.labelSmall
+                      ?.copyWith(color: Theme.of(context).colorScheme.error),
                 ),
             ],
           ),
@@ -2958,16 +3733,16 @@ final class _ElectricalMeasurementPanel extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: <Widget>[
-                  Expanded(child: Text(_label(metric))),
+                  Expanded(child: AppText(_label(metric))),
                   if (staleMetrics.contains(metric)) ...<Widget>[
-                    Icon(Icons.sync_problem_outlined, size: 16,
-                      color: Theme.of(context).colorScheme.error),
+                    Icon(
+                      Icons.sync_problem_outlined,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                     const SizedBox(width: 4),
                   ],
-                  Text(
-                    _value(metric),
-                    textDirection: TextDirection.rtl,
-                  ),
+                  AppText(_value(metric), textDirection: TextDirection.rtl),
                 ],
               ),
             ),
@@ -3009,7 +3784,7 @@ final class _LevelControlState extends State<_LevelControl> {
         padding: EdgeInsetsDirectional.only(start: 16, end: 16, bottom: 8),
         child: Align(
           alignment: AlignmentDirectional.centerStart,
-          child: Text('شدت نور دریافت نشده'),
+          child: AppText('شدت نور دریافت نشده'),
         ),
       );
     }
@@ -3025,8 +3800,8 @@ final class _LevelControlState extends State<_LevelControl> {
             padding: const EdgeInsetsDirectional.only(start: 8, end: 8),
             child: Row(
               children: <Widget>[
-                const Expanded(child: Text('شدت نور')),
-                Text(label),
+                const Expanded(child: AppText('شدت نور')),
+                AppText(label),
               ],
             ),
           ),
@@ -3090,21 +3865,21 @@ final class _FavoriteOutputTile extends StatelessWidget {
     if (value == null) {
       return ListTile(
         title: Text(device.channelName(endpoint, outputIndex)),
-        subtitle: Text('$subtitlePrefix · وضعیت دریافت نشده'),
+        subtitle: AppText('$subtitlePrefix · وضعیت دریافت نشده'),
         leading: IconButton(
-          tooltip: 'حذف از علاقه‌مندی‌ها',
+          tooltip: context.tr('حذف از علاقه‌مندی‌ها'),
           onPressed: onRemove,
           icon: const Icon(Icons.star_rounded),
         ),
         trailing: TextButton(
           onPressed: busy ? null : onRefresh,
-          child: const Text('بررسی'),
+          child: const AppText('بررسی'),
         ),
       );
     }
     return SwitchListTile.adaptive(
       title: Text(device.channelName(endpoint, outputIndex)),
-      subtitle: Text(
+      subtitle: AppText(
         unavailable
             ? '$subtitlePrefix · در دسترس نیست؛ آخرین وضعیت: ${value ? 'روشن' : 'خاموش'}'
             : '$subtitlePrefix · ${value ? 'روشن' : 'خاموش'}',
@@ -3112,7 +3887,7 @@ final class _FavoriteOutputTile extends StatelessWidget {
       value: value,
       onChanged: busy || unavailable ? null : onChanged,
       secondary: IconButton(
-        tooltip: 'حذف از علاقه‌مندی‌ها',
+        tooltip: context.tr('حذف از علاقه‌مندی‌ها'),
         onPressed: onRemove,
         icon: const Icon(Icons.star_rounded),
       ),
@@ -3137,7 +3912,9 @@ final class DirectMatterAddDeviceScreen extends StatefulWidget {
 
 final class _DirectMatterAddDeviceScreenState
     extends State<DirectMatterAddDeviceScreen> {
-  final TextEditingController _name = TextEditingController(text: 'وسیلهٔ خانه');
+  final TextEditingController _name = TextEditingController(
+    text: 'وسیلهٔ خانه',
+  );
   final TextEditingController _payload = TextEditingController();
   final TextEditingController _ssid = TextEditingController();
   final TextEditingController _password = TextEditingController();
@@ -3154,14 +3931,19 @@ final class _DirectMatterAddDeviceScreenState
   DirectMatterDevice? _pendingDevice;
 
   @override
-  void initState() { super.initState(); _restoreWifi(); }
+  void initState() {
+    super.initState();
+    _restoreWifi();
+  }
 
   Future<void> _restoreWifi() async {
     try {
       final ssid = await _credentials.lastSsid();
       if (ssid == null || !mounted || _ssid.text.isNotEmpty) return;
       await _selectWifi(ssid);
-    } catch (_) { /* Secure storage failure must not block manual commissioning. */ }
+    } catch (_) {
+      /* Secure storage failure must not block manual commissioning. */
+    }
   }
 
   Future<void> _selectWifi(String ssid) async {
@@ -3169,77 +3951,134 @@ final class _DirectMatterAddDeviceScreenState
     _password.clear();
     try {
       final password = await _credentials.password(ssid);
-      if (mounted && _ssid.text == ssid) setState(() => _password.text = password ?? '');
+      if (mounted && _ssid.text == ssid)
+        setState(() => _password.text = password ?? '');
     } catch (_) {
-      if (mounted) setState(() => _discoveryNotice = 'رمز ذخیره‌شده خوانده نشد؛ رمز را وارد کن.');
+      if (mounted)
+        setState(
+          () => _discoveryNotice = 'رمز ذخیره‌شده خوانده نشد؛ رمز را وارد کن.',
+        );
     }
   }
 
   Future<void> _useCurrentWifi() async {
     if (_discovering || _adding) return;
-    setState(() { _discovering = true; _error = null; _discoveryNotice = 'در حال دریافت وای‌فای متصل گوشی…'; });
+    setState(() {
+      _discovering = true;
+      _error = null;
+      _discoveryNotice = 'در حال دریافت وای‌فای متصل گوشی…';
+    });
     try {
-      final network = await onboardingChannel.invokeMapMethod<String, Object?>('currentWifi');
+      final network = await onboardingChannel.invokeMapMethod<String, Object?>(
+        'currentWifi',
+      );
       if (!mounted) return;
       final ssid = network?['ssid'];
-      if (ssid is! String || ssid.isEmpty) throw const FormatException('Missing connected SSID');
+      if (ssid is! String || ssid.isEmpty)
+        throw const FormatException('Missing connected SSID');
       await _selectWifi(ssid);
       if (!mounted) return;
       final saved = await _credentials.password(ssid);
       if (!mounted || _ssid.text != ssid) return;
-      setState(() => _discoveryNotice = saved == null
-          ? 'وای‌فای متصل انتخاب شد؛ رمز را فقط بار اول وارد کن.'
-          : 'وای‌فای متصل و رمز ذخیره‌شده آماده‌اند.');
+      setState(
+        () => _discoveryNotice = saved == null
+            ? 'وای‌فای متصل انتخاب شد؛ رمز را فقط بار اول وارد کن.'
+            : 'وای‌فای متصل و رمز ذخیره‌شده آماده‌اند.',
+      );
     } catch (_) {
-      if (mounted) setState(() => _discoveryNotice = 'وای‌فای متصل قابل دریافت نیست؛ شبکه را انتخاب یا نامش را وارد کن.');
-    } finally { if (mounted) setState(() => _discovering = false); }
+      if (mounted)
+        setState(
+          () => _discoveryNotice = 'وای‌فای متصل قابل دریافت نیست؛ شبکه را انتخاب یا نامش را وارد کن.',
+        );
+    } finally {
+      if (mounted) setState(() => _discovering = false);
+    }
   }
 
   Future<void> _discover(String method) async {
     if (_discovering) return;
-    setState(() { _discovering = true; _error = null;
-      _discoveryNotice = method == 'readMatterNfc' ? 'گوشی را نزدیک تگ NFC وسیله نگه دار…' : 'در حال جست‌وجو…'; });
+    setState(() {
+      _discovering = true;
+      _error = null;
+      _discoveryNotice = method == 'readMatterNfc'
+          ? 'گوشی را نزدیک تگ NFC وسیله نگه دار…'
+          : 'در حال جست‌وجو…';
+    });
     try {
       final response = await onboardingChannel.invokeMethod<Object?>(method);
       if (!mounted) return;
       if (method == 'readMatterNfc') {
-        setState(() { _payload.text = response as String; _discoveryNotice = 'کد NFC دریافت شد.'; });
+        setState(() {
+          _payload.text = response as String;
+          _discoveryNotice = 'کد NFC دریافت شد.';
+        });
         return;
       }
       final wifiResponse = response as Map<Object?, Object?>;
       final rawItems = wifiResponse['networks'] as List<Object?>;
       final items = rawItems.cast<Map<Object?, Object?>>();
-      setState(() => _discoveryNotice = items.isEmpty
-          ? 'شبکه‌ای پیدا نشد؛ دوباره جست‌وجو کن یا نام را دستی وارد کن.'
-          : wifiResponse['fresh'] != true ? 'آخرین شبکه‌های دیده‌شده؛ اسکن تازه فعلاً در دسترس نیست.' : null);
+      setState(
+        () => _discoveryNotice = items.isEmpty
+            ? 'شبکه‌ای پیدا نشد؛ دوباره جست‌وجو کن یا نام را دستی وارد کن.'
+            : wifiResponse['fresh'] != true
+            ? 'آخرین شبکه‌های دیده‌شده؛ اسکن تازه فعلاً در دسترس نیست.'
+            : null,
+      );
       if (items.isEmpty) return;
       // Radio discovery is finished; choosing a result must not leave a spinner
       // animating behind the modal or block the next stage indefinitely.
       setState(() => _discovering = false);
       final selected = await showModalBottomSheet<Map<Object?, Object?>>(
-        context: context, isScrollControlled: true,
-        builder: (context) => SafeArea(child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * .6,
-          child: Column(children: [
-            const Padding(padding: EdgeInsets.all(16), child: Text('انتخاب وای‌فای')),
-            Expanded(child: ListView(children: [for (final item in items)
-              ListTile(leading: const Icon(Icons.wifi),
-                title: Text(item['ssid'] as String),
-                subtitle: Text((item['frequency'] as int) < 3000 ? '۲٫۴ گیگاهرتز' : '۵ یا ۶ گیگاهرتز؛ سازگاری وسیله را بررسی کن'),
-                onTap: () => Navigator.pop(context, item)),
-            ])),
-          ]),
-        )),
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * .6,
+            child: Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: AppText('انتخاب وای‌فای'),
+                ),
+                Expanded(
+                  child: ListView(
+                    children: [
+                      for (final item in items)
+                        ListTile(
+                          leading: const Icon(Icons.wifi),
+                          title: AppText(item['ssid'] as String),
+                          subtitle: AppText(
+                            (item['frequency'] as int) < 3000
+                                ? '۲٫۴ گیگاهرتز'
+                                : '۵ یا ۶ گیگاهرتز؛ سازگاری وسیله را بررسی کن',
+                          ),
+                          onTap: () => Navigator.pop(context, item),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
       if (selected == null || !mounted) return;
       await _selectWifi(selected['ssid'] as String);
-    } catch (error) { if (mounted) setState(() => _error = onboardingError(error)); }
-    finally { if (mounted) setState(() => _discovering = false); }
+    } catch (error) {
+      if (mounted) setState(() => _error = onboardingError(error));
+    } finally {
+      if (mounted) setState(() => _discovering = false);
+    }
   }
 
   @override
   void dispose() {
-    if (_discovering) unawaited(onboardingChannel.invokeMethod<void>('cancelDiscovery').catchError((Object _) {}));
+    if (_discovering)
+      unawaited(
+        onboardingChannel
+            .invokeMethod<void>('cancelDiscovery')
+            .catchError((Object _) {}),
+      );
     _name.dispose();
     _payload.dispose();
     _ssid.dispose();
@@ -3264,7 +4103,9 @@ final class _DirectMatterAddDeviceScreenState
     final name = _name.text.trim();
     final payload = _payload.text.trim();
     final ssid = _ssid.text;
-    if (name.isEmpty || !payload.startsWith('MT:') || (!_sharedDevice && ssid.isEmpty)) {
+    if (name.isEmpty ||
+        !payload.startsWith('MT:') ||
+        (!_sharedDevice && ssid.isEmpty)) {
       setState(() {
         _error = 'نام وسیله، کد اتصال و نام وای‌فای را بررسی کن.';
       });
@@ -3282,19 +4123,22 @@ final class _DirectMatterAddDeviceScreenState
       if (_pendingDevice == null) {
         final DirectMatterCommissionResult result;
         if (_sharedDevice) {
-          final response = await onboardingChannel.invokeMapMethod<Object?, Object?>('commissionWifi', {
-            'setupPayload': payload, 'ssid': _sharedDevice ? '' : ssid,
-            'password': _sharedDevice ? '' : _password.text,
-            'onNetwork': _sharedDevice,
-          });
-          if (response == null) throw const FormatException('Missing commissioning result');
+          final response = await onboardingChannel
+              .invokeMapMethod<Object?, Object?>('commissionWifi', {
+                'setupPayload': payload,
+                'ssid': _sharedDevice ? '' : ssid,
+                'password': _sharedDevice ? '' : _password.text,
+                'onNetwork': _sharedDevice,
+              });
+          if (response == null)
+            throw const FormatException('Missing commissioning result');
           result = DirectMatterCommissionResult.fromMap(response);
         } else {
           result = await widget.controller.commissionWifi(
-          setupPayload: payload,
-          ssid: ssid,
-          password: _password.text,
-        );
+            setupPayload: payload,
+            ssid: ssid,
+            password: _password.text,
+          );
         }
         _pendingDevice = DirectMatterDevice(
           nodeId: result.nodeId,
@@ -3306,10 +4150,18 @@ final class _DirectMatterAddDeviceScreenState
       await widget.deviceStore.save(device);
       if (!_sharedDevice) {
         try {
-          if (_rememberWifi) { await _credentials.remember(ssid, _password.text); }
-          else { await _credentials.forget(ssid); }
+          if (_rememberWifi) {
+            await _credentials.remember(ssid, _password.text);
+          } else {
+            await _credentials.forget(ssid);
+          }
         } catch (_) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('وسیله اضافه شد؛ ذخیرهٔ امن رمز انجام نشد.')));
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: AppText('وسیله اضافه شد؛ ذخیرهٔ امن رمز انجام نشد.'),
+              ),
+            );
         }
       }
       if (mounted) {
@@ -3358,7 +4210,7 @@ final class _DirectMatterAddDeviceScreenState
       canPop: !_adding && _pendingDevice == null,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('افزودن وسیله'),
+          title: const AppText('افزودن وسیله'),
           leading: BackButton(
             onPressed: () {
               if (_adding || _pendingDevice != null) return;
@@ -3378,7 +4230,7 @@ final class _DirectMatterAddDeviceScreenState
           children: <Widget>[
             _CommissioningProgress(currentStep: _step),
             const SizedBox(height: 20),
-            Text(
+            AppText(
               titles[_step],
               style: Theme.of(context).textTheme.headlineMedium,
             ),
@@ -3386,119 +4238,175 @@ final class _DirectMatterAddDeviceScreenState
             if (_step == 0) ...<Widget>[
               const Icon(Icons.qr_code_2, size: 80),
               const SizedBox(height: 16),
-              const Text(
+              const AppText(
                 'کد QR روی وسیله یا جعبه را اسکن کن. برای این کار اجازهٔ دوربین لازم است.',
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
                 onPressed: _discovering ? null : _scan,
                 icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('اسکن کد وسیله'),
+                label: const AppText('اسکن کد وسیله'),
               ),
               const SizedBox(height: 16),
-              SwitchListTile(contentPadding: EdgeInsets.zero,
-                title: const Text('وسیلهٔ اشتراکی'),
-                subtitle: const Text('اسکن QR موقت از گوشی صاحب وسیله؛ بدون ورود رمز وای‌فای'),
-                value: _sharedDevice, onChanged: _discovering ? null : (value) => setState(() {
-                  _sharedDevice = value;
-                })),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const AppText('وسیلهٔ اشتراکی'),
+                subtitle: const AppText(
+                  'اسکن QR موقت از گوشی صاحب وسیله؛ بدون ورود رمز وای‌فای',
+                ),
+                value: _sharedDevice,
+                onChanged: _discovering
+                    ? null
+                    : (value) => setState(() {
+                        _sharedDevice = value;
+                      }),
+              ),
               if (!_sharedDevice) ...[
-                OutlinedButton.icon(onPressed: _discovering ? null : () => _discover('readMatterNfc'),
-                  icon: const Icon(Icons.nfc), label: const Text('خواندن تگ NFC')),
+                OutlinedButton.icon(
+                  onPressed: _discovering
+                      ? null
+                      : () => _discover('readMatterNfc'),
+                  icon: const Icon(Icons.nfc),
+                  label: const AppText('خواندن تگ NFC'),
+                ),
               ],
               TextField(
                 controller: _payload,
                 textDirection: TextDirection.ltr,
                 autocorrect: false,
                 enableSuggestions: false,
-                decoration: const InputDecoration(
-                  labelText: 'متن کد QR',
+                decoration: InputDecoration(
+                  labelText: context.tr('متن کد QR'),
                   hintText: 'MT:…',
-                  helperText: 'اگر متن QR را داری، اینجا وارد کن.',
+                  helperText: context.tr('اگر متن QR را داری، اینجا وارد کن.'),
                 ),
               ),
             ],
             if (_step == 1) ...<Widget>[
               const Icon(Icons.bluetooth_searching, size: 64),
               const SizedBox(height: 16),
-              Text(_sharedDevice ? 'به همان شبکهٔ وسیله وصل باش؛ کد اشتراک‌گذاری باید هنوز معتبر باشد. نیازی به بازنشانی وسیله نیست.' : 'وسیله روشن باشد و گوشی نزدیک آن بماند.'),
-              const SizedBox(height: 16),
-              if (!_sharedDevice) const Text(
-                'طبق راهنمای وسیله، آن را در حالت اتصال قرار بده. بازنشانی کارخانه با حالت اتصال فرق دارد.',
+              AppText(
+                _sharedDevice
+                    ? 'به همان شبکهٔ وسیله وصل باش؛ کد اشتراک‌گذاری باید هنوز معتبر باشد. نیازی به بازنشانی وسیله نیست.'
+                    : 'وسیله روشن باشد و گوشی نزدیک آن بماند.',
               ),
               const SizedBox(height: 16),
-              if (!_sharedDevice) const Text(
-                'بلوتوث و وای‌فای را روشن کن. هنگام درخواست دسترسی به دستگاه‌های نزدیک، اجازه بده؛ در نسخه‌های قدیمی Android ممکن است اجازهٔ موقعیت لازم باشد.',
-              ),
+              if (!_sharedDevice)
+                const AppText(
+                  'طبق راهنمای وسیله، آن را در حالت اتصال قرار بده. بازنشانی کارخانه با حالت اتصال فرق دارد.',
+                ),
+              const SizedBox(height: 16),
+              if (!_sharedDevice)
+                const AppText(
+                  'بلوتوث و وای‌فای را روشن کن. هنگام درخواست دسترسی به دستگاه‌های نزدیک، اجازه بده؛ در نسخه‌های قدیمی Android ممکن است اجازهٔ موقعیت لازم باشد.',
+                ),
             ],
             if (_step == 2) ...<Widget>[
               if (!_sharedDevice) ...[
-              const Text(
-                'شبکهٔ خانه را انتخاب کن. برای بیشتر وسایل، شبکهٔ ۲٫۴ گیگاهرتز مناسب است.',
-              ),
-              OutlinedButton.icon(onPressed: _discovering || _adding ? null : _useCurrentWifi,
-                icon: const Icon(Icons.wifi), label: const Text('استفاده از وای‌فای متصل گوشی')),
-              OutlinedButton.icon(onPressed: _discovering || _adding ? null : () => _discover('scanWifi'),
-                icon: const Icon(Icons.wifi_find), label: const Text('نمایش شبکه‌های وای‌فای')),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _ssid,
-                onChanged: (_) { _password.clear(); },
-                enabled: !_adding && _pendingDevice == null,
-                textDirection: TextDirection.ltr,
-                autocorrect: false,
-                enableSuggestions: false,
-                decoration: const InputDecoration(labelText: 'نام وای‌فای'),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _password,
-                enabled: !_adding && _pendingDevice == null,
-                textDirection: TextDirection.ltr,
-                obscureText: !_showPassword,
-                autocorrect: false,
-                enableSuggestions: false,
-                decoration: InputDecoration(
-                  labelText: 'رمز وای‌فای',
-                  suffixIcon: IconButton(
-                    tooltip: _showPassword ? 'پنهان‌کردن رمز' : 'نمایش رمز',
-                    onPressed: () =>
-                        setState(() => _showPassword = !_showPassword),
-                    icon: Icon(
-                      _showPassword ? Icons.visibility_off : Icons.visibility,
+                const AppText(
+                  'شبکهٔ خانه را انتخاب کن. برای بیشتر وسایل، شبکهٔ ۲٫۴ گیگاهرتز مناسب است.',
+                ),
+                OutlinedButton.icon(
+                  onPressed: _discovering || _adding ? null : _useCurrentWifi,
+                  icon: const Icon(Icons.wifi),
+                  label: const AppText('استفاده از وای‌فای متصل گوشی'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _discovering || _adding
+                      ? null
+                      : () => _discover('scanWifi'),
+                  icon: const Icon(Icons.wifi_find),
+                  label: const AppText('نمایش شبکه‌های وای‌فای'),
+                ),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: _ssid,
+                  onChanged: (_) {
+                    _password.clear();
+                  },
+                  enabled: !_adding && _pendingDevice == null,
+                  textDirection: TextDirection.ltr,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: InputDecoration(
+                    labelText: context.tr('نام وای‌فای'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _password,
+                  enabled: !_adding && _pendingDevice == null,
+                  textDirection: TextDirection.ltr,
+                  obscureText: !_showPassword,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: InputDecoration(
+                    labelText: context.tr('رمز وای‌فای'),
+                    suffixIcon: IconButton(
+                      tooltip: _showPassword ? 'پنهان‌کردن رمز' : 'نمایش رمز',
+                      onPressed: () =>
+                          setState(() => _showPassword = !_showPassword),
+                      icon: Icon(
+                        _showPassword ? Icons.visibility_off : Icons.visibility,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              CheckboxListTile(contentPadding: EdgeInsets.zero, value: _rememberWifi,
-                title: const Text('رمز روی این گوشی به‌خاطر سپرده شود'),
-                onChanged: _adding ? null : (value) => setState(() => _rememberWifi = value ?? false)),
-              TextButton(onPressed: _adding ? null : () async {
-                try {
-                  await _credentials.forget(_ssid.text);
-                  if (mounted) setState(() { _password.clear(); _rememberWifi = false; _discoveryNotice = 'رمز ذخیره‌شده پاک شد.'; });
-                } catch (_) { if (mounted) setState(() => _error = 'حذف رمز انجام نشد؛ دوباره تلاش کن.'); }
-              }, child: const Text('پاک‌کردن رمز ذخیره‌شدهٔ این شبکه')),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _rememberWifi,
+                  title: const AppText('رمز روی این گوشی به‌خاطر سپرده شود'),
+                  onChanged: _adding
+                      ? null
+                      : (value) =>
+                            setState(() => _rememberWifi = value ?? false),
+                ),
+                TextButton(
+                  onPressed: _adding
+                      ? null
+                      : () async {
+                          try {
+                            await _credentials.forget(_ssid.text);
+                            if (mounted)
+                              setState(() {
+                                _password.clear();
+                                _rememberWifi = false;
+                                _discoveryNotice = 'رمز ذخیره‌شده پاک شد.';
+                              });
+                          } catch (_) {
+                            if (mounted)
+                              setState(
+                                () => _error =
+                                    'حذف رمز انجام نشد؛ دوباره تلاش کن.',
+                              );
+                          }
+                        },
+                  child: const AppText('پاک‌کردن رمز ذخیره‌شدهٔ این شبکه'),
+                ),
               ],
               const SizedBox(height: 20),
               TextField(
                 controller: _name,
                 enabled: !_adding && _pendingDevice == null,
-                decoration: const InputDecoration(
-                  labelText: 'نام وسیله',
-                  helperText: 'مثلاً کلید پذیرایی',
+                decoration: InputDecoration(
+                  labelText: context.tr('نام وسیله'),
+                  helperText: context.tr('مثلاً کلید پذیرایی'),
                 ),
               ),
               const SizedBox(height: 20),
               if (_adding) const LinearProgressIndicator(),
               const SizedBox(height: 12),
-              Semantics(liveRegion: true, child: Text(_stage)),
+              Semantics(liveRegion: true, child: AppText(_stage)),
             ],
             if (_discovering) ...[
               const LinearProgressIndicator(),
-              TextButton(onPressed: () => onboardingChannel.invokeMethod<void>('cancelDiscovery'), child: const Text('لغو جست‌وجو')),
+              TextButton(
+                onPressed: () =>
+                    onboardingChannel.invokeMethod<void>('cancelDiscovery'),
+                child: const AppText('لغو جست‌وجو'),
+              ),
             ],
-            if (_discoveryNotice != null) Text(_discoveryNotice!),
+            if (_discoveryNotice != null) AppText(_discoveryNotice!),
             if (_error != null) ...<Widget>[
               const SizedBox(height: 16),
               _MatterErrorNotice(error: _error!),
@@ -3509,14 +4417,14 @@ final class _DirectMatterAddDeviceScreenState
                 onPressed: _discovering ? null : _next,
                 child: const Padding(
                   padding: EdgeInsets.all(14),
-                  child: Text('ادامه'),
+                  child: AppText('ادامه'),
                 ),
               )
             else
               FilledButton.icon(
                 onPressed: _adding || _discovering ? null : _commission,
                 icon: const Icon(Icons.add_link),
-                label: Text(
+                label: AppText(
                   _adding
                       ? 'در حال اتصال…'
                       : _pendingDevice != null
@@ -3540,24 +4448,23 @@ final class _CommissioningProgress extends StatelessWidget {
   Widget build(BuildContext context) {
     const labels = <String>['کد', 'آماده‌سازی', 'وای‌فای'];
     return Semantics(
-      label: 'مرحلهٔ ${toPersianDigits(currentStep + 1)} از ۳: ${labels[currentStep]}',
+      label:
+          'مرحلهٔ ${toPersianDigits(currentStep + 1)} از ۳: ${labels[currentStep]}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Row(
             children: <Widget>[
-              Text(
+              AppText(
                 'مرحلهٔ ${toPersianDigits(currentStep + 1)} از ۳',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: ManisaColors.tealPressed,
-                ),
+                style: Theme.of(context).textTheme.labelLarge
+                    ?.copyWith(color: ManisaColors.tealPressed),
               ),
               const Spacer(),
-              Text(
+              AppText(
                 labels[currentStep],
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: ManisaColors.mutedInk,
-                ),
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: ManisaColors.mutedInk),
               ),
             ],
           ),
@@ -3572,7 +4479,9 @@ final class _CommissioningProgress extends StatelessWidget {
                     duration: const Duration(milliseconds: 180),
                     height: 5,
                     decoration: BoxDecoration(
-                      color: complete ? ManisaColors.teal : ManisaColors.outline,
+                      color: complete
+                          ? ManisaColors.teal
+                          : ManisaColors.outline,
                       borderRadius: BorderRadius.circular(99),
                     ),
                   ),
@@ -3591,15 +4500,18 @@ final class _MatterErrorNotice extends StatelessWidget {
   final String error;
 
   String get message {
-    if (error.startsWith('Could not load home')) return 'خانه خوانده نشد. دوباره تلاش کن.';
+    if (error.startsWith('Could not load home'))
+      return 'خانه خوانده نشد. دوباره تلاش کن.';
     if (error.contains('matter_ble_failed'))
       return 'وسیله پیدا نشد. نزدیک آن بمان و حالت اتصال و بلوتوث را بررسی کن.';
     if (error.startsWith('Remove failed'))
       return 'حذف تأیید نشد. وسیله در فهرست باقی مانده؛ اتصال آن را بررسی کن و دوباره تلاش کن.';
     if (error.startsWith('Command failed'))
       return 'تغییر وضعیت تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
-    if (error.startsWith('Sensor read failed')) return 'دادهٔ تازهٔ سنسور دریافت نشد. اتصال وسیله را بررسی کن و دوباره تلاش کن.';
-    if (error.startsWith('Color command failed')) return 'رنگ تأیید نشد. برای دریافت رنگ واقعی، وضعیت را دوباره بررسی کن.';
+    if (error.startsWith('Sensor read failed'))
+      return 'دادهٔ تازهٔ سنسور دریافت نشد. اتصال وسیله را بررسی کن و دوباره تلاش کن.';
+    if (error.startsWith('Color command failed'))
+      return 'رنگ تأیید نشد. برای دریافت رنگ واقعی، وضعیت را دوباره بررسی کن.';
     if (error.startsWith('Level command failed'))
       return 'تغییر شدت نور تأیید نشد. وضعیت وسیله را دوباره بررسی کن.';
     if (error.startsWith('Could not save discovered channels'))
@@ -3619,14 +4531,14 @@ final class _MatterErrorNotice extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: <Widget>[
-      Text(
+      AppText(
         message,
         style: TextStyle(color: Theme.of(context).colorScheme.error),
       ),
       if (message != error)
         ExpansionTile(
           tilePadding: EdgeInsets.zero,
-          title: const Text('جزئیات برای پشتیبانی'),
+          title: const AppText('جزئیات برای پشتیبانی'),
           children: <Widget>[
             SelectableText(
               // Native exception messages can contain setup data; expose only
@@ -3654,7 +4566,7 @@ final class _DirectMatterQrScannerState extends State<_DirectMatterQrScanner> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('اسکن کد وسیله')),
+      appBar: AppBar(title: const AppText('اسکن کد وسیله')),
       body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
@@ -3681,7 +4593,7 @@ final class _DirectMatterQrScannerState extends State<_DirectMatterQrScanner> {
             child: Card(
               child: Padding(
                 padding: EdgeInsets.all(16),
-                child: Text(
+                child: AppText(
                   'کد QR روی وسیله را داخل کادر قرار بده.',
                   textAlign: TextAlign.center,
                 ),
@@ -3749,7 +4661,7 @@ final class _RoomNameDialogState extends State<_RoomNameDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.title),
+    title: AppText(widget.title),
     content: TextField(
       controller: _name,
       autofocus: true,
@@ -3757,17 +4669,17 @@ final class _RoomNameDialogState extends State<_RoomNameDialog> {
       textInputAction: TextInputAction.done,
       onSubmitted: (_) => _submit(),
       decoration: InputDecoration(
-        labelText: 'نام اتاق',
-        helperText: 'مثلاً پذیرایی یا اتاق خواب',
-        errorText: _error,
+        labelText: context.tr('نام اتاق'),
+        helperText: context.tr('مثلاً پذیرایی یا اتاق خواب'),
+        errorText: _error == null ? null : context.tr(_error!),
       ),
     ),
     actions: <Widget>[
       TextButton(
         onPressed: () => Navigator.of(context).pop(),
-        child: const Text('انصراف'),
+        child: const AppText('انصراف'),
       ),
-      FilledButton(onPressed: _submit, child: Text(widget.actionLabel)),
+      FilledButton(onPressed: _submit, child: AppText(widget.actionLabel)),
     ],
   );
 }
@@ -3804,7 +4716,7 @@ final class _HomeNameDialogState extends State<_HomeNameDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('نام خانه'),
+    title: const AppText('نام خانه'),
     content: TextField(
       controller: _name,
       autofocus: true,
@@ -3812,24 +4724,28 @@ final class _HomeNameDialogState extends State<_HomeNameDialog> {
       textInputAction: TextInputAction.done,
       onSubmitted: (_) => _submit(),
       decoration: InputDecoration(
-        labelText: 'نام خانه',
-        helperText: 'مثلاً خانهٔ ما',
-        errorText: _error,
+        labelText: context.tr('نام خانه'),
+        helperText: context.tr('مثلاً خانهٔ ما'),
+        errorText: _error == null ? null : context.tr(_error!),
       ),
     ),
     actions: <Widget>[
       TextButton(
         onPressed: () => Navigator.of(context).pop(),
-        child: const Text('انصراف'),
+        child: const AppText('انصراف'),
       ),
-      FilledButton(onPressed: _submit, child: const Text('ذخیره')),
+      FilledButton(onPressed: _submit, child: const AppText('ذخیره')),
     ],
   );
 }
 
 final class _RenameDeviceDialog extends StatefulWidget {
-  const _RenameDeviceDialog({required this.initialName, required this.onSave,
-    this.title = 'تغییر نام وسیله', this.emptyMessage = 'یک نام برای وسیله بنویس.'});
+  const _RenameDeviceDialog({
+    required this.initialName,
+    required this.onSave,
+    this.title = 'تغییر نام وسیله',
+    this.emptyMessage = 'یک نام برای وسیله بنویس.',
+  });
   final String title;
   final String emptyMessage;
   final String initialName;
@@ -3881,7 +4797,7 @@ final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving,
     child: AlertDialog(
-      title: Text(widget.title),
+      title: AppText(widget.title),
       content: SingleChildScrollView(
         child: TextField(
           controller: _name,
@@ -3891,20 +4807,24 @@ final class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _save(),
           decoration: InputDecoration(
-            labelText: widget.title == 'تغییر نام خروجی' ? 'نام خروجی' : 'نام وسیله',
-            helperText: widget.title == 'تغییر نام خروجی' ? 'مثلاً خروجی ۱ اتاق کودک' : 'مثلاً کلید پذیرایی',
-            errorText: _error,
+            labelText: widget.title == 'تغییر نام خروجی'
+                ? 'نام خروجی'
+                : 'نام وسیله',
+            helperText: widget.title == 'تغییر نام خروجی'
+                ? 'مثلاً خروجی ۱ اتاق کودک'
+                : 'مثلاً کلید پذیرایی',
+            errorText: _error == null ? null : context.tr(_error!),
           ),
         ),
       ),
       actions: <Widget>[
         TextButton(
           onPressed: _saving ? null : () => Navigator.of(context).pop(),
-          child: const Text('انصراف'),
+          child: const AppText('انصراف'),
         ),
         FilledButton(
           onPressed: _saving ? null : _save,
-          child: Text(_saving ? 'در حال ذخیره…' : 'ذخیره'),
+          child: AppText(_saving ? 'در حال ذخیره…' : 'ذخیره'),
         ),
       ],
     ),
@@ -3997,12 +4917,12 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving && _testing == null,
     child: AlertDialog(
-      title: const Text('نام خروجی‌ها'),
+      title: const AppText('نام خروجی‌ها'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const Text(
+            const AppText(
               'هر نام به خروجی واقعی دستگاه متصل می‌ماند. برای شناسایی، خودت می‌توانی خروجی را امتحان کنی.',
             ),
             const SizedBox(height: 16),
@@ -4034,7 +4954,7 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.power_settings_new),
-                  label: Text(
+                  label: AppText(
                     _testing == widget.device.onOffEndpoints[index]
                         ? 'در حال امتحان…'
                         : 'امتحان این خروجی',
@@ -4044,7 +4964,7 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
               const SizedBox(height: 8),
             ],
             if (_error != null)
-              Text(
+              AppText(
                 _error!,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
@@ -4056,11 +4976,11 @@ final class _ChannelNamesDialogState extends State<_ChannelNamesDialog> {
           onPressed: _saving || _testing != null
               ? null
               : () => Navigator.of(context).pop(),
-          child: const Text('انصراف'),
+          child: const AppText('انصراف'),
         ),
         FilledButton(
           onPressed: _saving || _testing != null ? null : _save,
-          child: Text(_saving ? 'در حال ذخیره…' : 'ذخیره'),
+          child: AppText(_saving ? 'در حال ذخیره…' : 'ذخیره'),
         ),
       ],
     ),
