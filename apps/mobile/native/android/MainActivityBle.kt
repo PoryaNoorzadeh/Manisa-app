@@ -612,11 +612,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         return alreadyCommissioned
     }
 
-    override fun onDestroy() {
-        if (::controller.isInitialized) cancelCommissioning()
-        super.onDestroy()
-    }
-
     private fun clearDeviceTracking(nodeId: Long) {
         levelSubscriptionEndpoints.remove(nodeId)
         onOffSubscriptionEndpoints.remove(nodeId)
@@ -880,6 +875,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     }
 
     override fun onDestroy() {
+        if (::controller.isInitialized) cancelCommissioning()
         discovery.cancel()
         eventSink = null
         levelEventSink = null
