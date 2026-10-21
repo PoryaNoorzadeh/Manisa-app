@@ -90,6 +90,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         private const val STATUS_OK = 0L
         private const val PERMISSION_REQUEST_MATTER = 9101
         private const val DEVICE_ATTESTATION_TIMEOUT = 600
+        private const val COMMISSION_TIMEOUT_MS = 120_000L
     }
 
     private data class CommissionRequest(
@@ -125,8 +126,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         mutableMapOf<Long, List<Triple<Int, Long, Long>>>()
     private val levelSubscriptionEndpoints = mutableMapOf<Long, List<Int>>()
     private val onOffSubscriptionEndpoints = mutableMapOf<Long, List<Int>>()
-    private var pendingCommission: MethodChannel.Result? = null
-    private var pendingCommissionNodeId: Long = 0
+    private class CommissionAttempt(val nodeId: Long, val result: MethodChannel.Result) {
+        var commissioned = false
+        var timeout: Runnable? = null
+    }
+    private val commissionGate = ManisaCommissioningGate<CommissionAttempt>()
+    private val pendingCommission: CommissionAttempt? get() = commissionGate.current
     private var pendingPermissionCommission: CommissionRequest? = null
     private val discovery by lazy { ManisaDiscovery(this) }
     private val sharingNodes = mutableSetOf<Long>()
@@ -211,19 +216,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         ).also { sharedController = it }
         controller.setAttestationTrustStoreDelegate(ManisaTestAttestationTrustStore())
 
-        // M1 validation devices use development credentials. Match CHIPTool's behavior and
-        // explicitly continue after the attestation callback. Production will replace this with
-        // strict PAA/DCL verification before release.
-        controller.setDeviceAttestationDelegate(DEVICE_ATTESTATION_TIMEOUT) {
-            devicePtr,
-            _,
-            errorCode ->
-            Log.i(TAG, "Device attestation completed errorCode=$errorCode")
-            runOnUiThread {
-                controller.continueCommissioning(devicePtr, true)
-            }
-        }
-        controller.setCompletionListener(commissioningListener)
+        controller.setCompletionListener(GenericChipDeviceListener())
         controller.startDnssd()
         Log.i(TAG, "Matter operational discovery ready; controllerNodeId=${controller.controllerNodeId}")
     }
@@ -241,6 +234,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             when (call.method) {
                 "isSupported" -> result.success(true)
                 "commissionWifi" -> commissionWifi(call, result)
+                "cancelCommissioning" -> result.success(cancelCommissioning())
                 "scanWifi" -> discovery.wifi(result)
                 "currentWifi" -> discovery.currentWifi(result)
                 "readMatterNfc" -> discovery.nfc(result)
@@ -348,6 +342,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             return
         }
 
+        commissionGate.clearOutcome()
         val setupPayload = call.argument<String>("setupPayload")?.trim().orEmpty()
         val ssid = call.argument<String>("ssid").orEmpty()
         val password = call.argument<String>("password").orEmpty()
@@ -430,18 +425,27 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
             .setICDRegistrationInfo(null)
             .build()
 
-        pendingCommission = request.result
-        pendingCommissionNodeId = nodeId
-        controller.setCompletionListener(commissioningListener)
+        val attempt = CommissionAttempt(nodeId, request.result)
+        check(commissionGate.begin(attempt))
+        attempt.timeout = Runnable {
+            if (pendingCommission !== attempt) return@Runnable
+            if (attempt.commissioned) completeCommission(attempt, emptyList<Any>())
+            else failPendingCommission(attempt, "commissioning_timeout", "Matter commissioning timed out; retry is available", null)
+        }.also { sensorHandler.postDelayed(it, COMMISSION_TIMEOUT_MS) }
+        try {
+            controller.setCompletionListener(commissioningListener(attempt))
+            bindAttestationDelegate(attempt)
+        } catch (error: Exception) {
+            failPendingCommission(attempt, "commissioning_error", error.message ?: "Unable to prepare commissioning", null)
+            return
+        }
 
         if (request.onNetwork) {
             try {
                 controller.pairDeviceWithCode(nodeId, request.setupPayload, false, true,
                     CommissionParameters.Builder().build())
-            } catch (_: Exception) {
-                pendingCommission = null
-                pendingCommissionNodeId = 0
-                request.result.error("network_commission_failed", "اتصال انجام نشد؛ هر دو گوشی و وسیله باید روی یک شبکه باشند.", null)
+            } catch (error: Exception) {
+                failPendingCommission(attempt, "network_commission_failed", "اتصال انجام نشد؛ هر دو گوشی و وسیله باید روی یک شبکه باشند.", error.message)
             }
             return
         }
@@ -457,11 +461,14 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         )
 
         bleCommissioner?.cancel()
-        bleCommissioner = ManisaBleCommissioner(this, platform).also { commissioner ->
+        val commissioner = ManisaBleCommissioner(this, platform, controller)
+        bleCommissioner = commissioner
+        try {
             commissioner.start(
                 discriminator = discriminator,
                 isShortDiscriminator = isShortDiscriminator,
                 connected = { gatt, connectionId ->
+                    if (pendingCommission !== attempt) return@start
                     try {
                         Log.i(TAG, "BLE rendezvous ready connectionId=$connectionId")
                         controller.pairDeviceThroughBLE(
@@ -473,112 +480,141 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                         )
                     } catch (error: Throwable) {
                         failPendingCommission(
-                            "matter_ble_pairing_failed",
+                            attempt, "matter_ble_pairing_failed",
                             error.message ?: "Unable to start Matter BLE pairing",
                             null,
                         )
                     }
                 },
                 failed = { message ->
-                    failPendingCommission("matter_ble_failed", message, null)
+                    failPendingCommission(attempt, "matter_ble_failed", message, null)
                 },
             )
+        } catch (error: Throwable) {
+            failPendingCommission(attempt, "matter_ble_failed", error.message ?: "Unable to start Bluetooth commissioning", null)
         }
     }
 
-    private val commissioningListener = object : GenericChipDeviceListener() {
-        override fun onPairingComplete(code: Long) {
-            Log.i(TAG, "Matter pairing complete errorCode=$code")
-            if (code != STATUS_OK && pendingCommission != null) {
-                failPendingCommission(
-                    "pairing_failed",
-                    "Matter pairing failed (error $code)",
-                    code,
-                )
+    private fun bindAttestationDelegate(attempt: CommissionAttempt) {
+        // M1 validation uses development roots. Bind to this attempt rather than
+        // attributing a late callback to whichever device is currently pending.
+        controller.setDeviceAttestationDelegate(DEVICE_ATTESTATION_TIMEOUT) { devicePtr, _, errorCode ->
+            runOnUiThread {
+                if (pendingCommission !== attempt || attempt.commissioned) return@runOnUiThread
+                // Both APIs use the native CommissioneeDeviceProxy pointer in SDK
+                // v1.5.1.0. Never continue a proxy belonging to a retired attempt.
+                val currentPointer = try {
+                    controller.getDeviceBeingCommissionedPointer(attempt.nodeId)
+                } catch (_: Exception) {
+                    // A native callback can already be queued while cancellation stops
+                    // its proxy, or while the next attempt is still scanning.
+                    return@runOnUiThread
+                }
+                if (devicePtr == 0L || currentPointer != devicePtr) return@runOnUiThread
+                try {
+                    Log.i(TAG, "Device attestation completed nodeId=${attempt.nodeId} errorCode=$errorCode")
+                    controller.continueCommissioning(devicePtr, true)
+                } catch (error: Exception) {
+                    failPendingCommission(attempt, "commissioning_error", error.message ?: "Attestation continuation failed", null)
+                }
             }
+        }
+    }
+
+    private fun commissioningListener(attempt: CommissionAttempt) = object : GenericChipDeviceListener() {
+        override fun onPairingComplete(code: Long) {
+            // SDK v1.5.1.0 dispatches through its mutable completionListener field.
+            // This callback has no node ID, so a delayed prior attempt can arrive
+            // on the current listener. Only node-qualified completion may settle it.
+            Log.i(TAG, "Matter pairing status (unqualified) errorCode=$code")
         }
 
         override fun onCommissioningStatusUpdate(nodeId: Long, stage: String, errorCode: Long) {
-            Log.i(
-                TAG,
-                "Commissioning status nodeId=$nodeId stage=$stage errorCode=$errorCode",
-            )
-        }
-
-        override fun onCommissioningStageStart(nodeId: Long, stage: String) {
-            Log.i(TAG, "Commissioning stage started nodeId=$nodeId stage=$stage")
+            Log.i(TAG, "Commissioning status nodeId=$nodeId stage=$stage errorCode=$errorCode")
         }
 
         override fun onCommissioningComplete(nodeId: Long, errorCode: Long) {
-            Log.i(TAG, "Matter commissioning complete nodeId=$nodeId errorCode=$errorCode")
-            val pending = pendingCommission ?: return
-            if (nodeId != pendingCommissionNodeId) return
-
-            if (errorCode != STATUS_OK) {
-                failPendingCommission(
-                    "commissioning_failed",
-                    "Matter commissioning failed (error $errorCode)",
-                    errorCode,
-                )
-                return
+            runOnUiThread {
+                if (pendingCommission !== attempt || nodeId != attempt.nodeId || attempt.commissioned) return@runOnUiThread
+                if (errorCode != STATUS_OK) {
+                    failPendingCommission(attempt, "commissioning_failed", "Matter commissioning failed (error $errorCode)", errorCode)
+                    return@runOnUiThread
+                }
+                // The node is already on this fabric. Discovery is optional and must never
+                // turn a successful add into a timeout/failure that loses its local record.
+                attempt.commissioned = true
+                attempt.timeout?.let { sensorHandler.removeCallbacks(it) }
+                attempt.timeout = Runnable { completeCommission(attempt, emptyList<Any>()) }
+                    .also { sensorHandler.postDelayed(it, 8_000L) }
+                try {
+                    discoverOnOffEndpoints(nodeId, object : MethodChannel.Result {
+                        override fun success(result: Any?) {
+                            runOnUiThread { completeCommission(attempt, result as? List<*> ?: emptyList<Any>()) }
+                        }
+                        override fun error(code: String, message: String?, details: Any?) { success(emptyList<Any>()) }
+                        override fun notImplemented() { success(emptyList<Any>()) }
+                    }, subscribe = false)
+                } catch (error: Exception) {
+                    completeCommission(attempt, emptyList<Any>())
+                }
             }
-
-            discoverOnOffEndpoints(
-                nodeId,
-                object : MethodChannel.Result {
-                    override fun success(result: Any?) {
-                        val endpoints = result as? List<*> ?: emptyList<Any>()
-                        pendingCommission = null
-                        pendingCommissionNodeId = 0
-                        bleCommissioner = null
-                        pending.success(
-                            mapOf(
-                                "nodeId" to nodeId,
-                                "onOffEndpoints" to endpoints,
-                            ),
-                        )
-                    }
-
-                    override fun error(
-                        errorCode: String,
-                        errorMessage: String?,
-                        errorDetails: Any?,
-                    ) {
-                        // Pairing succeeded. Optional OnOff discovery must not lose
-                        // a sensor-only node that has already joined this fabric.
-                        Log.w(TAG, "Post-commission OnOff discovery unavailable: $errorCode")
-                        success(emptyList<Any>())
-                    }
-
-                    override fun notImplemented() {
-                        success(emptyList<Any>())
-                    }
-                },
-                subscribe = true,
-            )
         }
 
         override fun onError(error: Throwable?) {
-            Log.e(TAG, "Matter commissioning listener error", error)
-            if (pendingCommission != null) {
-                failPendingCommission(
-                    "commissioning_error",
-                    error?.message ?: "Matter commissioning error",
-                    null,
-                )
-            }
+            // Identity-less SDK errors are diagnostic hints, not proof that this
+            // attempt failed. Node-qualified completion or the bounded watchdog
+            // settles the request; locally caught exceptions still fail immediately.
+            Log.w(TAG, "Matter listener error (unqualified); awaiting node completion or timeout", error)
         }
     }
 
-    private fun failPendingCommission(code: String, message: String, details: Any?) {
-        val pending = pendingCommission ?: return
-        pendingCommission = null
-        pendingCommissionNodeId = 0
+    private fun releaseCommission(attempt: CommissionAttempt, stop: Boolean): Boolean {
+        // Detach before native cleanup: stopDevicePairing may synchronously invoke callbacks.
+        if (!commissionGate.finish(attempt, succeeded = !stop)) return false
+        attempt.timeout?.let { sensorHandler.removeCallbacks(it) }
+        controller.setCompletionListener(GenericChipDeviceListener())
+        if (stop) {
+            try { controller.stopDevicePairing(attempt.nodeId) }
+            catch (error: Exception) { Log.w(TAG, "Unable to stop finished commissioning", error) }
+        }
+        // In SDK v1.5.1.0 close() clears only the Java BLE connection-id guard.
+        // It does not destroy the shared controller or erase fabric/device storage.
+        controller.close()
         bleCommissioner?.cancel()
         bleCommissioner = null
-        runOnUiThread {
-            pending.error(code, message, details)
+        return true
+    }
+
+    private fun completeCommission(attempt: CommissionAttempt, endpoints: List<*>) {
+        if (!releaseCommission(attempt, stop = false)) return
+        attempt.result.success(mapOf("nodeId" to attempt.nodeId, "onOffEndpoints" to endpoints))
+    }
+
+    private fun failPendingCommission(attempt: CommissionAttempt, code: String, message: String, details: Any?) {
+        if (attempt.commissioned) {
+            completeCommission(attempt, emptyList<Any>())
+            return
         }
+        if (!releaseCommission(attempt, stop = true)) return
+        attempt.result.error(code, message, details)
+    }
+
+    private fun cancelCommissioning(): Boolean {
+        val attempt = pendingCommission
+        val alreadyCommissioned = attempt?.commissioned == true ||
+            (attempt == null && commissionGate.lastSucceeded)
+        val permission = pendingPermissionCommission
+        pendingPermissionCommission = null
+        permission?.result?.error("commissioning_cancelled", "Matter commissioning cancelled", null)
+        attempt?.let {
+            failPendingCommission(it, "commissioning_cancelled", "Matter commissioning cancelled", null)
+        }
+        return alreadyCommissioned
+    }
+
+    override fun onDestroy() {
+        if (::controller.isInitialized) cancelCommissioning()
+        super.onDestroy()
     }
 
     private fun clearDeviceTracking(nodeId: Long) {

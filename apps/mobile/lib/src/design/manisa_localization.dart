@@ -224,6 +224,24 @@ final class ManisaCopy {
     ),
   ];
   static const translations = <String, List<String>>{
+    'خاموش کردن': ['Turn off', 'إيقاف'],
+    'روشن کردن': ['Turn on', 'تشغيل'],
+
+    'توقف اتصال': ['Stop connecting', 'إيقاف الاتصال'],
+    'در حال پایان‌دادن اتصال…': ['Ending connection…', 'جارٍ إنهاء الاتصال…'],
+    'اتصال متوقف شد؛ می‌توانی دوباره تلاش کنی.': [
+      'Connection stopped. You can try again.',
+      'تم إيقاف الاتصال. يمكنك المحاولة مجددًا.',
+    ],
+    'پاک‌سازی اتصال کامل نشد؛ دوباره تلاش کن.': [
+      'Connection cleanup did not finish. Try again.',
+      'لم يكتمل إنهاء الاتصال. حاول مجددًا.',
+    ],
+    'زمان اتصال تمام شد؛ حالت اتصال وسیله را بررسی کن و دوباره تلاش کن.': [
+      'Connection timed out. Check pairing mode and try again.',
+      'انتهت مهلة الاتصال. تحقق من وضع الاقتران وحاول مجددًا.',
+    ],
+
     'آخرین وضعیت: روشن': ['Last confirmed: On', 'آخر حالة مؤكدة: يعمل'],
     'آخرین وضعیت: خاموش': ['Last confirmed: Off', 'آخر حالة مؤكدة: متوقف'],
     'رنگ انتخاب‌شده': ['Selected color', 'اللون المحدد'],

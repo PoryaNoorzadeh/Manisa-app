@@ -29,7 +29,7 @@ jobs:
           test -n "$APP_VERSION"
           test -n "$BUILD_NUMBER"
           test "$APP_VERSION" != "$RAW_VERSION"
-          FILE_STEM="manisa-m13-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
+          FILE_STEM="manisa-m14-v${APP_VERSION}-build${BUILD_NUMBER}-arm64-release"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "apk_name=${FILE_STEM}.apk" >> "$GITHUB_OUTPUT"
@@ -95,6 +95,14 @@ jobs:
             -include-runtime -d "$RUNNER_TEMP/sensor-codec-tests.jar"
           java -jar "$RUNNER_TEMP/sensor-codec-tests.jar"
 
+      - name: Verify native commissioning retry ownership
+        run: |
+          "$RUNNER_TEMP/kotlinc/bin/kotlinc" \
+            apps/mobile/native/android/ManisaCommissioningGate.kt \
+            apps/mobile/native/tests/ManisaCommissioningGateTest.kt \
+            -include-runtime -d "$RUNNER_TEMP/commissioning-tests.jar"
+          java -jar "$RUNNER_TEMP/commissioning-tests.jar"
+
       - name: Build Matter Android controller libraries
         working-directory: matter
         run: |
@@ -138,6 +146,8 @@ jobs:
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/ManisaSensorCodec.kt
           cp apps/mobile/native/android/GenericChipDeviceListener.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/GenericChipDeviceListener.kt
+          cp apps/mobile/native/android/ManisaCommissioningGate.kt \
+            apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/ManisaCommissioningGate.kt
           cp apps/mobile/native/android/ManisaBleCommissioner.kt \
             apps/mobile/android/app/src/main/kotlin/com/manisa/manisa_mobile/ManisaBleCommissioner.kt
 
@@ -196,7 +206,7 @@ jobs:
           )
           {
             echo "product=Manisa"
-            echo "milestone=M13"
+            echo "milestone=M14"
             echo "version=${{ steps.build_meta.outputs.app_version }}"
             echo "build_number=${{ steps.build_meta.outputs.build_number }}"
             echo "abi=arm64-v8a"
@@ -205,7 +215,10 @@ jobs:
             echo "workflow_run=${{ github.run_id }}"
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
-          Manisa M13 home design candidate - physical acceptance pending
+          Manisa M14 responsive controls and retry recovery - physical acceptance pending
+          - Failed-add cleanup, bounded cancellation and retry without restarting
+          - Circular color wheel with local preview and latest-selection coalescing
+          - Direct accessory power actions and quiet node-scoped background recovery
           - Reviewed Manisa visual system with original ribbon symbol and correct brand name
           - Persian-first persistent English and Arabic selection
           - Unified device/room add menu, room filters and sensor summaries

@@ -27,8 +27,13 @@ abstract interface class SensorMeasurementController {
 
 abstract interface class ColorControlController {
   Future<Map<int, DirectColorState>> readColors(int nodeId);
-  Future<void> setColor({required int nodeId, required int endpoint,
-    required String mode, required int first, required int second});
+  Future<void> setColor({
+    required int nodeId,
+    required int endpoint,
+    required String mode,
+    required int first,
+    required int second,
+  });
   Stream<DirectColorEvent> watchColors();
 }
 
@@ -49,12 +54,14 @@ final class DirectMatterCommissionResult {
     }
     return DirectMatterCommissionResult(
       nodeId: nodeId,
-      onOffEndpoints: endpoints.map((item) {
-        if (item is! int) {
-          throw const FormatException('invalid Matter endpoint');
-        }
-        return item;
-      }).toList(growable: false),
+      onOffEndpoints: endpoints
+          .map((item) {
+            if (item is! int) {
+              throw const FormatException('invalid Matter endpoint');
+            }
+            return item;
+          })
+          .toList(growable: false),
     );
   }
 }
@@ -139,6 +146,11 @@ abstract interface class DirectMatterController {
   Future<void> removeDevice(int nodeId);
 }
 
+/// Ends an unfinished add-device attempt without removing any paired device.
+abstract interface class CommissioningRecoveryController {
+  Future<bool> cancelCommissioning();
+}
+
 abstract interface class DeviceTypeReader {
   Future<Map<int, List<int>>> readDeviceTypes(int nodeId);
 }
@@ -179,20 +191,27 @@ final class PlatformDirectMatterController
         LocalDeviceForgetter,
         ElectricalMeasurementController,
         ElectricalMeasurementEventController,
-        ConnectionRecoveryController {
+        ConnectionRecoveryController,
+        CommissioningRecoveryController {
   const PlatformDirectMatterController({
     MethodChannel methods = const MethodChannel(_methodChannelName),
     EventChannel events = const EventChannel(_eventChannelName),
     EventChannel levelEvents = const EventChannel(_levelEventChannelName),
-    EventChannel colorEvents = const EventChannel('com.manisa/matter/color_events'),
-    EventChannel electricalEvents = const EventChannel('com.manisa/matter/electrical_events'),
-    EventChannel sensorEvents = const EventChannel('com.manisa/matter/sensor_events'),
-  })  : _methods = methods,
-        _events = events,
-        _levelEvents = levelEvents,
-        _colorEvents = colorEvents,
-        _electricalEvents = electricalEvents,
-        _sensorEvents = sensorEvents;
+    EventChannel colorEvents = const EventChannel(
+      'com.manisa/matter/color_events',
+    ),
+    EventChannel electricalEvents = const EventChannel(
+      'com.manisa/matter/electrical_events',
+    ),
+    EventChannel sensorEvents = const EventChannel(
+      'com.manisa/matter/sensor_events',
+    ),
+  }) : _methods = methods,
+       _events = events,
+       _levelEvents = levelEvents,
+       _colorEvents = colorEvents,
+       _electricalEvents = electricalEvents,
+       _sensorEvents = sensorEvents;
 
   static const String _methodChannelName = 'com.manisa/matter/methods';
   static const String _eventChannelName = 'com.manisa/matter/events';
@@ -208,33 +227,48 @@ final class PlatformDirectMatterController
   @override
   Future<Map<int, PowerSource>> readPowerSources(int nodeId) async {
     final raw = await _methods.invokeMapMethod<Object?, Object?>(
-      'readPowerSources', <String, Object?>{'nodeId': nodeId});
-    if (raw == null) throw const FormatException('missing power source response');
+      'readPowerSources',
+      <String, Object?>{'nodeId': nodeId},
+    );
+    if (raw == null)
+      throw const FormatException('missing power source response');
     final result = <int, PowerSource>{};
     for (final entry in raw.entries) {
       final endpoint = int.tryParse(entry.key.toString());
-      if (endpoint == null || endpoint < 0 || endpoint > 65534 ||
+      if (endpoint == null ||
+          endpoint < 0 ||
+          endpoint > 65534 ||
           entry.value is! Map<Object?, Object?>) {
         throw const FormatException('invalid power source endpoint');
       }
-      result[endpoint] = PowerSource.fromMap(entry.value! as Map<Object?, Object?>);
+      result[endpoint] = PowerSource.fromMap(
+        entry.value! as Map<Object?, Object?>,
+      );
     }
     return result;
   }
 
   @override
-  Future<Map<int, DirectSensorMeasurement>> readSensorMeasurements(int nodeId) async {
+  Future<Map<int, DirectSensorMeasurement>> readSensorMeasurements(
+    int nodeId,
+  ) async {
     final raw = await _methods.invokeMapMethod<Object?, Object?>(
-      'readSensorMeasurements', <String, Object?>{'nodeId': nodeId});
+      'readSensorMeasurements',
+      <String, Object?>{'nodeId': nodeId},
+    );
     if (raw == null) throw const FormatException('missing sensor response');
     final result = <int, DirectSensorMeasurement>{};
     for (final entry in raw.entries) {
       final endpoint = int.tryParse(entry.key.toString());
-      if (endpoint == null || endpoint <= 0 || endpoint > 65534 ||
+      if (endpoint == null ||
+          endpoint <= 0 ||
+          endpoint > 65534 ||
           entry.value is! Map<Object?, Object?>) {
         throw const FormatException('invalid sensor response');
       }
-      result[endpoint] = DirectSensorMeasurement.fromMap(entry.value! as Map<Object?, Object?>);
+      result[endpoint] = DirectSensorMeasurement.fromMap(
+        entry.value! as Map<Object?, Object?>,
+      );
     }
     return result;
   }
@@ -242,7 +276,8 @@ final class PlatformDirectMatterController
   @override
   Stream<DirectSensorEvent> watchSensorMeasurements() =>
       _sensorEvents.receiveBroadcastStream().map((event) {
-        if (event is! Map<Object?, Object?>) throw const FormatException('invalid sensor event');
+        if (event is! Map<Object?, Object?>)
+          throw const FormatException('invalid sensor event');
         return DirectSensorEvent.fromMap(event);
       });
 
@@ -258,38 +293,56 @@ final class PlatformDirectMatterController
   @override
   Future<Map<int, DirectColorState>> readColors(int nodeId) async {
     final raw = await _methods.invokeMapMethod<Object?, Object?>(
-        'readColors', <String, Object?>{'nodeId': nodeId});
+      'readColors',
+      <String, Object?>{'nodeId': nodeId},
+    );
     if (raw == null) throw const FormatException('missing color response');
     final result = <int, DirectColorState>{};
     for (final entry in raw.entries) {
       final endpoint = int.tryParse(entry.key.toString());
-      if (endpoint == null || endpoint <= 0 || entry.value is! Map<Object?, Object?>) {
+      if (endpoint == null ||
+          endpoint <= 0 ||
+          entry.value is! Map<Object?, Object?>) {
         throw const FormatException('invalid color response');
       }
-      final color = DirectColorState.fromMap(entry.value! as Map<Object?, Object?>);
+      final color = DirectColorState.fromMap(
+        entry.value! as Map<Object?, Object?>,
+      );
       if (color.supportsColor) result[endpoint] = color;
     }
     return result;
   }
 
   @override
-  Future<void> setColor({required int nodeId, required int endpoint,
-    required String mode, required int first, required int second}) {
+  Future<void> setColor({
+    required int nodeId,
+    required int endpoint,
+    required String mode,
+    required int first,
+    required int second,
+  }) {
     final maximum = mode == 'hs' ? 254 : 65279;
-    if ((mode != 'hs' && mode != 'xy') || endpoint <= 0 ||
-        first < 0 || first > maximum || second < 0 || second > maximum ||
+    if ((mode != 'hs' && mode != 'xy') ||
+        endpoint <= 0 ||
+        first < 0 ||
+        first > maximum ||
+        second < 0 ||
+        second > maximum ||
         (mode == 'xy' && (second == 0 || first + second > 65536))) {
       throw ArgumentError('invalid color command');
     }
     return _methods.invokeMethod<void>('setColor', <String, Object?>{
-      'nodeId': nodeId, 'endpoint': endpoint, 'mode': mode,
-      'first': first, 'second': second,
+      'nodeId': nodeId,
+      'endpoint': endpoint,
+      'mode': mode,
+      'first': first,
+      'second': second,
     });
   }
 
   @override
-  Stream<DirectColorEvent> watchColors() => _colorEvents.receiveBroadcastStream()
-      .map((event) {
+  Stream<DirectColorEvent> watchColors() =>
+      _colorEvents.receiveBroadcastStream().map((event) {
         if (event is! Map<Object?, Object?>) {
           throw const FormatException('invalid color event');
         }
@@ -324,14 +377,17 @@ final class PlatformDirectMatterController
   @override
   Future<Map<int, List<int>>> readDeviceTypes(int nodeId) async {
     final raw = await _methods.invokeMapMethod<Object?, Object?>(
-      'readDeviceTypes', <String, Object?>{'nodeId': nodeId},
+      'readDeviceTypes',
+      <String, Object?>{'nodeId': nodeId},
     );
     if (raw == null) throw const FormatException('missing device types');
     final result = <int, List<int>>{};
     for (final entry in raw.entries) {
       final endpoint = int.tryParse(entry.key.toString());
       final values = entry.value;
-      if (endpoint == null || endpoint < 0 || values is! List ||
+      if (endpoint == null ||
+          endpoint < 0 ||
+          values is! List ||
           values.any((value) => value is! int || value < 0)) {
         throw const FormatException('invalid device types');
       }
@@ -343,14 +399,17 @@ final class PlatformDirectMatterController
   @override
   Future<Map<int, int?>> readLevels(int nodeId) async {
     final raw = await _methods.invokeMapMethod<Object?, Object?>(
-      'readLevels', <String, Object?>{'nodeId': nodeId},
+      'readLevels',
+      <String, Object?>{'nodeId': nodeId},
     );
-    if (raw == null) throw const FormatException('missing LevelControl response');
+    if (raw == null)
+      throw const FormatException('missing LevelControl response');
     final result = <int, int?>{};
     for (final entry in raw.entries) {
       final endpoint = int.tryParse(entry.key.toString());
       final level = entry.value;
-      if (endpoint == null || endpoint <= 0 ||
+      if (endpoint == null ||
+          endpoint <= 0 ||
           (level != null && (level is! int || level < 1 || level > 254))) {
         throw const FormatException('invalid LevelControl response');
       }
@@ -360,12 +419,18 @@ final class PlatformDirectMatterController
   }
 
   @override
-  Future<void> setLevel({required int nodeId, required int endpoint, required int level}) {
+  Future<void> setLevel({
+    required int nodeId,
+    required int endpoint,
+    required int level,
+  }) {
     if (level < 1 || level > 254) {
       throw RangeError.range(level, 1, 254, 'level');
     }
     return _methods.invokeMethod<void>('setLevel', <String, Object?>{
-      'nodeId': nodeId, 'endpoint': endpoint, 'level': level,
+      'nodeId': nodeId,
+      'endpoint': endpoint,
+      'level': level,
     });
   }
 
@@ -406,6 +471,10 @@ final class PlatformDirectMatterController
   }
 
   @override
+  Future<bool> cancelCommissioning() async =>
+      await _methods.invokeMethod<bool>('cancelCommissioning') ?? false;
+
+  @override
   Future<List<int>> discoverOnOffEndpoints(int nodeId) async {
     final result = await _methods.invokeListMethod<Object?>(
       'discoverOnOffEndpoints',
@@ -414,12 +483,14 @@ final class PlatformDirectMatterController
     if (result == null) {
       return const <int>[];
     }
-    return result.map((item) {
-      if (item is! int) {
-        throw const FormatException('invalid Matter endpoint');
-      }
-      return item;
-    }).toList(growable: false);
+    return result
+        .map((item) {
+          if (item is! int) {
+            throw const FormatException('invalid Matter endpoint');
+          }
+          return item;
+        })
+        .toList(growable: false);
   }
 
   @override
@@ -442,22 +513,18 @@ final class PlatformDirectMatterController
     required int nodeId,
     required int endpoint,
     required bool value,
-  }) =>
-      _methods.invokeMethod<void>(
-        'setOnOff',
-        <String, Object?>{
-          'nodeId': nodeId,
-          'endpoint': endpoint,
-          'value': value,
-        },
-      );
+  }) => _methods.invokeMethod<void>('setOnOff', <String, Object?>{
+    'nodeId': nodeId,
+    'endpoint': endpoint,
+    'value': value,
+  });
 
   @override
   Future<void> toggleOnOff({required int nodeId, required int endpoint}) =>
-      _methods.invokeMethod<void>(
-        'toggleOnOff',
-        <String, Object?>{'nodeId': nodeId, 'endpoint': endpoint},
-      );
+      _methods.invokeMethod<void>('toggleOnOff', <String, Object?>{
+        'nodeId': nodeId,
+        'endpoint': endpoint,
+      });
 
   @override
   Stream<DirectMatterOnOffEvent> watchOnOff() => _events
@@ -475,15 +542,19 @@ final class PlatformDirectMatterController
 
   @override
   Future<void> forgetDeviceLocally(int nodeId) => _methods.invokeMethod<void>(
-    'forgetDeviceLocally', <String, Object?>{'nodeId': nodeId});
+    'forgetDeviceLocally',
+    <String, Object?>{'nodeId': nodeId},
+  );
 
   @override
   Future<void> resetConnection(int nodeId) => _methods.invokeMethod<void>(
-    'resetConnection', <String, Object?>{'nodeId': nodeId});
+    'resetConnection',
+    <String, Object?>{'nodeId': nodeId},
+  );
 
   @override
   Future<void> removeDevice(int nodeId) => _methods.invokeMethod<void>(
-        'removeDevice',
-        <String, Object?>{'nodeId': nodeId},
-      );
+    'removeDevice',
+    <String, Object?>{'nodeId': nodeId},
+  );
 }

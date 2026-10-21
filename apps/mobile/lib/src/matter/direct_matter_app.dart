@@ -10,6 +10,7 @@ import '../design/loading_feedback.dart';
 import '../design/manisa_brand.dart';
 import '../design/manisa_localization.dart';
 import '../design/manisa_theme.dart';
+import '../design/output_power_tile.dart';
 import 'backlight_policy.dart';
 import 'backlight_screen.dart';
 import 'color_control.dart';
@@ -183,6 +184,9 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
   StreamSubscription<DirectMatterLevelEvent>? _levelEvents;
   StreamSubscription<DirectElectricalEvent>? _electricalEvents;
   final Set<int> _refreshingNodes = <int>{};
+  final Set<int> _visibleRefreshingNodes = <int>{};
+  final Map<String, HSVColor> _queuedColors = <String, HSVColor>{};
+  final Set<String> _colorWrites = <String>{};
   final Set<int> _readingCapabilities = <int>{};
   final Set<int> _removingNodes = <int>{};
   final Set<int> _fabricRemovedNodes = <int>{};
@@ -637,6 +641,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         if (!_controllerReady || !_foreground || !_canUpdate(nodeId)) return;
         await _refreshDevice(
           _devices.firstWhere((device) => device.nodeId == nodeId),
+          visible: false,
         );
         if (_unavailableNodes.contains(nodeId)) _scheduleConnectionRetry();
       } finally {
@@ -667,7 +672,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         .readOnOff(nodeId: nodeId, endpoint: endpoint)
         .timeout(_readTimeout);
     if (!_canUpdate(nodeId) || _stateRevisions[key] != revision) return;
-    _updateState(() => _states[key] = value);
+    if (_states[key] != value) _updateState(() => _states[key] = value);
   }
 
   Future<void> _reconcileControls(DirectMatterDevice device) async {
@@ -734,7 +739,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
 
   Future<void> _performRefreshAll() async {
     await Future.wait(
-      List<DirectMatterDevice>.of(_devices).map(_refreshDevice),
+      List<DirectMatterDevice>.of(_devices)
+          .map((device) => _refreshDevice(device)),
     );
     if (!mounted) return;
     _updateState(() => _lastCheck = DateTime.now());
@@ -747,16 +753,27 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     }
   }
 
-  Future<void> _refreshDevice(DirectMatterDevice device) {
+  Future<void> _refreshDevice(
+    DirectMatterDevice device, {
+    bool visible = true,
+  }) {
     if (!_controllerReady || !_canUpdate(device.nodeId))
       return Future<void>.value();
     final existing = _deviceRefreshTasks[device.nodeId];
-    if (existing != null) return existing;
+    if (existing != null) {
+      if (visible && !_visibleRefreshingNodes.contains(device.nodeId)) {
+        _updateState(() => _visibleRefreshingNodes.add(device.nodeId));
+      }
+      return existing;
+    }
+    if (visible) _updateState(() => _visibleRefreshingNodes.add(device.nodeId));
     final task = _performRefreshDevice(device);
     _deviceRefreshTasks[device.nodeId] = task;
     return task.whenComplete(() {
       if (identical(_deviceRefreshTasks[device.nodeId], task)) {
         _deviceRefreshTasks.remove(device.nodeId);
+        if (mounted)
+          _updateState(() => _visibleRefreshingNodes.remove(device.nodeId));
       }
     });
   }
@@ -1016,9 +1033,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         !state.supportsColor ||
         !_canUpdate(device.nodeId) ||
         _unavailableNodes.contains(device.nodeId) ||
-        _staleColors.contains(key) ||
-        !_busy.add(key))
+        _staleColors.contains(key))
       return;
+    if (_colorWrites.contains(key)) {
+      _queuedColors[key] = color;
+      return;
+    }
+    if (!_busy.add(key)) return;
+    _colorWrites.add(key);
     final lifetime = _colorLifetimes.putIfAbsent(device.nodeId, Object.new);
     bool active() =>
         _canUpdate(device.nodeId) &&
@@ -1062,7 +1084,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           _deviceErrors[device.nodeId] = 'Color command failed';
         });
     } finally {
-      if (active()) _updateState(() => _busy.remove(key));
+      _colorWrites.remove(key);
+      final next = _queuedColors.remove(key);
+      if (active()) {
+        _updateState(() => _busy.remove(key));
+        // No queued write is replayed after failure, removal or loss of color state.
+        if (next != null && !_staleColors.contains(key))
+          await _setColor(device, endpoint, next);
+      }
     }
   }
 
@@ -1217,7 +1246,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       if (_controllerReady) await _refreshAllStates();
       return;
     }
-    await _recoverConnections();
+    await _recoverConnections(visible: true);
   }
 
   void _scheduleConnectionRetry() {
@@ -1245,7 +1274,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     );
   }
 
-  Future<void> _recoverConnections() async {
+  Future<void> _recoverConnections({bool visible = false}) async {
     if (!mounted || !_foreground || !_controllerReady || _retrying) return;
     _connectionRetryTimer?.cancel();
     _connectionRetryTimer = null;
@@ -1264,7 +1293,12 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         }
       }
       if (mounted) _updateState(() => _error = null);
-      await _refreshAllStates();
+      final failed = Set<int>.of(_unavailableNodes);
+      await Future.wait([
+        for (final device in List<DirectMatterDevice>.of(_devices))
+          if (failed.contains(device.nodeId))
+            _refreshDevice(device, visible: visible),
+      ]);
     } finally {
       if (mounted) {
         _updateState(() => _retrying = false);
@@ -2137,7 +2171,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
       MaterialPageRoute<void>(
         builder: (_) => DeviceDetailScreen(
           updates: _deviceViewChanges,
-          refreshing: () => _initializing || _refreshingNodes.contains(nodeId),
+          refreshing: () =>
+              _initializing || _visibleRefreshingNodes.contains(nodeId),
           resolve: () {
             if (!mounted) return null;
             for (final device in _devices) {
@@ -2157,7 +2192,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
     return _DirectMatterDeviceCard(
       device: device,
       controllerReady: _controllerReady,
-      checking: _refreshingNodes.contains(device.nodeId) || _initializing,
+      checking:
+          _visibleRefreshingNodes.contains(device.nodeId) || _initializing,
       roomName: _roomNameForDevice(device.nodeId),
       states: _states,
       levels: _levels,
@@ -2173,6 +2209,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
           : null,
       staleElectricalMetrics: _staleElectricalMetrics,
       busy: _busy,
+      colorWrites: _colorWrites,
       error: _deviceErrors[device.nodeId],
       unavailable: _unavailableNodes.contains(device.nodeId),
       favorites: _favorites,
@@ -2211,7 +2248,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
         unavailable: unavailable,
         ready: _controllerReady,
         initializing: _initializing,
-        checking: _refreshingNodes.contains(device.nodeId),
+        checking: _visibleRefreshingNodes.contains(device.nodeId),
         pending: _busy.any((key) => key.startsWith('${device.nodeId}:')),
       ),
       errorMessage:
@@ -2284,12 +2321,14 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
               staleElectricalMetrics: _staleElectricalMetrics[key] ?? const {},
               colorIsStale: _staleColors.contains(key) || unavailable,
               busy: _busy.contains(key),
+              colorPending: _colorWrites.contains(key),
               unavailable: unavailable,
               favorite: _favorites.contains(device.nodeId, endpoint),
               showDetailsButton: false,
               controlReady: _controllerReady,
               checking:
-                  _initializing || _refreshingNodes.contains(device.nodeId),
+                  _initializing ||
+                  _visibleRefreshingNodes.contains(device.nodeId),
               onChanged: (value) => _setOnOff(device, endpoint, value),
               onLevelChanged: (level) => _setLevel(device, endpoint, level),
               onColorChanged: (color) => _setColor(device, endpoint, color),
@@ -2464,7 +2503,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                         ),
                         RefreshAction(
                           refreshing:
-                              _initializing || _refreshingNodes.any(_canUpdate),
+                              _initializing ||
+                              _visibleRefreshingNodes.any(_canUpdate),
                           onRefresh: _controllerReady
                               ? _refreshAllStates
                               : _retryConnections,
@@ -2500,7 +2540,7 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                     _roomFilter(),
                     const SizedBox(height: 12),
                     if (_initializing ||
-                        _refreshingNodes.any(_canUpdate) ||
+                        _visibleRefreshingNodes.any(_canUpdate) ||
                         _lastCheck != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
@@ -2509,8 +2549,8 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                           child: AppText(
                             _initializing
                                 ? 'در حال آماده‌سازی ارتباط…'
-                                : _refreshingNodes.any(_canUpdate)
-                                ? 'در حال تازه‌سازی؛ کنترل‌های آماده قابل استفاده‌اند.'
+                                : _lastCheck == null
+                                ? 'در حال دریافت وضعیت خانه'
                                 : 'آخرین بررسی: ${toPersianDigits('${_lastCheck!.hour.toString().padLeft(2, '0')}:${_lastCheck!.minute.toString().padLeft(2, '0')}')}',
                           ),
                         ),
@@ -2521,9 +2561,11 @@ final class _DirectMatterHomeScreenState extends State<DirectMatterHomeScreen>
                       _HomeHealthCard(
                         deviceCount: _devices.length,
                         unavailableCount: _unavailableNodes.length,
-                        recovering: _retrying,
+                        recovering:
+                            _retrying && _visibleRefreshingNodes.isNotEmpty,
                         checking:
-                            _initializing || _refreshingNodes.any(_canUpdate),
+                            _initializing ||
+                            _visibleRefreshingNodes.any(_canUpdate),
                         ready: _controllerReady,
                       ),
                     if (_error != null) ...<Widget>[
@@ -2971,6 +3013,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
     required this.powerController,
     required this.staleElectricalMetrics,
     required this.busy,
+    required this.colorWrites,
     required this.error,
     required this.unavailable,
     required this.favorites,
@@ -3000,6 +3043,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
   final PowerSourceController? powerController;
   final Map<String, Set<ElectricalMetric>> staleElectricalMetrics;
   final Set<String> busy;
+  final Set<String> colorWrites;
   final String? error;
   final bool unavailable;
   final FavoriteCatalog favorites;
@@ -3208,6 +3252,7 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                         : staleElectricalMetrics[key] ?? const {},
                     colorIsStale: staleColors.contains(key) || unavailable,
                     busy: isBusy,
+                    colorPending: colorWrites.contains(key),
                     unavailable: unavailable,
                     favorite: favorite,
                     onChanged: (next) => onChanged(endpoint, next),
@@ -3239,8 +3284,10 @@ final class _DirectMatterDeviceCard extends StatelessWidget {
                   state: colors[_key(endpoint)],
                   enabled:
                       controllerReady &&
-                      !busy.contains(_key(endpoint)) &&
-                      !unavailable,
+                      !unavailable &&
+                      (!busy.contains(_key(endpoint)) ||
+                          colorWrites.contains(_key(endpoint))),
+                  busy: colorWrites.contains(_key(endpoint)),
                   stale: staleColors.contains(_key(endpoint)) || unavailable,
                   onRefresh: onRefresh,
                   onChanged: (color) => onColorChanged(endpoint, color),
@@ -3388,6 +3435,7 @@ final class _DeviceOutputControl extends StatefulWidget {
   const _DeviceOutputControl({
     super.key,
     this.controlReady = true,
+    this.colorPending = false,
     this.checking = false,
     this.showDetailsButton = true,
     required this.device,
@@ -3411,6 +3459,7 @@ final class _DeviceOutputControl extends StatefulWidget {
   });
 
   final bool controlReady;
+  final bool colorPending;
   final bool checking;
   final bool showDetailsButton;
   final DirectMatterDevice device;
@@ -3472,8 +3521,8 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
       padding: const EdgeInsets.only(top: 10),
       child: Material(
         color: value == true && !widget.unavailable
-            ? ManisaColors.mint
-            : ManisaColors.canvas,
+            ? const Color(0xFFFFF2D6)
+            : Colors.white,
         clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
@@ -3520,7 +3569,14 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                 ),
               )
             else
-              SwitchListTile.adaptive(
+              OutputPowerTile(
+                powerKey: ValueKey(
+                  'power-${widget.device.nodeId}-${widget.endpoint}',
+                ),
+                label: widget.device.channelName(
+                  widget.endpoint,
+                  widget.outputIndex,
+                ),
                 contentPadding: const EdgeInsetsDirectional.fromSTEB(
                   8,
                   4,
@@ -3576,7 +3632,11 @@ final class _DeviceOutputControlState extends State<_DeviceOutputControl> {
                                   'color-${widget.device.nodeId}-${widget.endpoint}',
                                 ),
                                 state: widget.color,
-                                enabled: enabled,
+                                enabled:
+                                    widget.controlReady &&
+                                    !widget.unavailable &&
+                                    (!widget.busy || widget.colorPending),
+                                busy: widget.colorPending,
                                 stale: widget.colorIsStale,
                                 onRefresh: widget.onRefresh,
                                 onChanged: widget.onColorChanged,
@@ -3877,7 +3937,9 @@ final class _FavoriteOutputTile extends StatelessWidget {
         ),
       );
     }
-    return SwitchListTile.adaptive(
+    return OutputPowerTile(
+      powerKey: ValueKey('favorite-power-${device.nodeId}-$endpoint'),
+      label: device.channelName(endpoint, outputIndex),
       title: Text(device.channelName(endpoint, outputIndex)),
       subtitle: AppText(
         unavailable
@@ -3919,6 +3981,8 @@ final class _DirectMatterAddDeviceScreenState
   final TextEditingController _ssid = TextEditingController();
   final TextEditingController _password = TextEditingController();
   bool _adding = false;
+  bool _cancelling = false;
+  int _commissionGeneration = 0;
   String? _error;
   String _stage = 'کد روی وسیله را اسکن کن';
   int _step = 0;
@@ -4073,6 +4137,12 @@ final class _DirectMatterAddDeviceScreenState
 
   @override
   void dispose() {
+    _commissionGeneration++;
+    if (_adding && _pendingDevice == null) {
+      unawaited(
+        _releaseCommissioning().then<void>((_) {}, onError: (Object _) {}),
+      );
+    }
     if (_discovering)
       unawaited(
         onboardingChannel
@@ -4098,8 +4168,65 @@ final class _DirectMatterAddDeviceScreenState
     }
   }
 
+  Future<bool> _releaseCommissioning() async {
+    final controller = widget.controller;
+    if (controller is CommissioningRecoveryController) {
+      return await (controller as CommissioningRecoveryController)
+          .cancelCommissioning()
+          .timeout(const Duration(seconds: 5));
+    } else if (_sharedDevice) {
+      return await onboardingChannel
+              .invokeMethod<bool>('cancelCommissioning')
+              .timeout(const Duration(seconds: 5)) ??
+          false;
+    }
+    return false;
+  }
+
+  Future<void> _cancelCommissioning() async {
+    if (_cancelling || _pendingDevice != null) return;
+    var released = false;
+    setState(() => _cancelling = true);
+    try {
+      final alreadyCommissioned = await _releaseCommissioning();
+      if (alreadyCommissioned || _pendingDevice != null) return;
+      _commissionGeneration++;
+      released = true;
+      if (mounted)
+        setState(() {
+          _stage = 'اتصال متوقف شد؛ می‌توانی دوباره تلاش کنی.';
+          _error = null;
+        });
+    } catch (_) {
+      if (mounted)
+        setState(() => _error = 'پاک‌سازی اتصال کامل نشد؛ دوباره تلاش کن.');
+    } finally {
+      if (mounted)
+        setState(() {
+          if (released) _adding = false;
+          _cancelling = false;
+        });
+    }
+  }
+
+  Future<DirectMatterCommissionResult> _awaitCommission(
+    Future<DirectMatterCommissionResult> task,
+    int generation,
+  ) async {
+    try {
+      return await task.timeout(const Duration(seconds: 140));
+    } on TimeoutException {
+      if (!mounted || generation != _commissionGeneration) rethrow;
+      // Cancellation can race successful commissioning. Keep its original
+      // result so a paired node is persisted even if discovery ran late.
+      final alreadyCommissioned = await _releaseCommissioning();
+      if (alreadyCommissioned) return task.timeout(const Duration(seconds: 5));
+      rethrow;
+    }
+  }
+
   Future<void> _commission() async {
-    if (_adding) return;
+    if (_adding || _cancelling) return;
     final name = _name.text.trim();
     final payload = _payload.text.trim();
     final ssid = _ssid.text;
@@ -4112,6 +4239,7 @@ final class _DirectMatterAddDeviceScreenState
       return;
     }
 
+    final generation = ++_commissionGeneration;
     setState(() {
       _adding = true;
       _error = null;
@@ -4123,23 +4251,30 @@ final class _DirectMatterAddDeviceScreenState
       if (_pendingDevice == null) {
         final DirectMatterCommissionResult result;
         if (_sharedDevice) {
-          final response = await onboardingChannel
+          final task = onboardingChannel
               .invokeMapMethod<Object?, Object?>('commissionWifi', {
                 'setupPayload': payload,
-                'ssid': _sharedDevice ? '' : ssid,
-                'password': _sharedDevice ? '' : _password.text,
-                'onNetwork': _sharedDevice,
+                'ssid': '',
+                'password': '',
+                'onNetwork': true,
+              })
+              .then((response) {
+                if (response == null)
+                  throw const FormatException('Missing commissioning result');
+                return DirectMatterCommissionResult.fromMap(response);
               });
-          if (response == null)
-            throw const FormatException('Missing commissioning result');
-          result = DirectMatterCommissionResult.fromMap(response);
+          result = await _awaitCommission(task, generation);
         } else {
-          result = await widget.controller.commissionWifi(
-            setupPayload: payload,
-            ssid: ssid,
-            password: _password.text,
+          result = await _awaitCommission(
+            widget.controller.commissionWifi(
+              setupPayload: payload,
+              ssid: ssid,
+              password: _password.text,
+            ),
+            generation,
           );
         }
+        if (!mounted || generation != _commissionGeneration) return;
         _pendingDevice = DirectMatterDevice(
           nodeId: result.nodeId,
           name: name,
@@ -4173,6 +4308,14 @@ final class _DirectMatterAddDeviceScreenState
         Navigator.of(context).pop(device);
       }
     } catch (error) {
+      if (!mounted || generation != _commissionGeneration) return;
+      if (error is TimeoutException && _pendingDevice == null) {
+        if (mounted)
+          setState(
+            () => _error = 'زمان اتصال تمام شد؛ حالت اتصال وسیله را بررسی کن و دوباره تلاش کن.',
+          );
+        return;
+      }
       if (mounted) {
         setState(() {
           _error = error.toString();
@@ -4182,7 +4325,7 @@ final class _DirectMatterAddDeviceScreenState
         });
       }
     } finally {
-      if (mounted) {
+      if (mounted && generation == _commissionGeneration) {
         setState(() => _adding = false);
       }
     }
@@ -4213,7 +4356,12 @@ final class _DirectMatterAddDeviceScreenState
           title: const AppText('افزودن وسیله'),
           leading: BackButton(
             onPressed: () {
-              if (_adding || _pendingDevice != null) return;
+              if (_adding) {
+                if (!_cancelling && _pendingDevice == null)
+                  unawaited(_cancelCommissioning());
+                return;
+              }
+              if (_pendingDevice != null) return;
               if (_step > 0) {
                 setState(() {
                   _step--;
@@ -4422,7 +4570,9 @@ final class _DirectMatterAddDeviceScreenState
               )
             else
               FilledButton.icon(
-                onPressed: _adding || _discovering ? null : _commission,
+                onPressed: _adding || _cancelling || _discovering
+                    ? null
+                    : _commission,
                 icon: const Icon(Icons.add_link),
                 label: AppText(
                   _adding
@@ -4430,6 +4580,13 @@ final class _DirectMatterAddDeviceScreenState
                       : _pendingDevice != null
                       ? 'ذخیرهٔ دوباره'
                       : 'اتصال وسیله',
+                ),
+              ),
+            if (_adding && _pendingDevice == null)
+              TextButton(
+                onPressed: _cancelling ? null : _cancelCommissioning,
+                child: AppText(
+                  _cancelling ? 'در حال پایان‌دادن اتصال…' : 'توقف اتصال',
                 ),
               ),
           ],

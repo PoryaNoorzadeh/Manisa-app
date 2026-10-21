@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../core/persian_digits.dart';
+import '../design/color_wheel.dart';
 import '../design/manisa_localization.dart';
 import 'color_control.dart';
 
@@ -11,10 +11,12 @@ final class ColorControl extends StatefulWidget {
     required this.stale,
     required this.onChanged,
     required this.onRefresh,
+    this.busy = false,
     super.key,
   });
   final DirectColorState? state;
   final bool enabled;
+  final bool busy;
   final bool stale;
   final ValueChanged<HSVColor> onChanged;
   final VoidCallback onRefresh;
@@ -24,14 +26,24 @@ final class ColorControl extends StatefulWidget {
 
 final class _ColorControlState extends State<ColorControl> {
   HSVColor? _draft;
+  bool _dragging = false;
   @override
   void didUpdateWidget(ColorControl oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.state != widget.state || !widget.enabled) _draft = null;
+    if (!widget.enabled || widget.stale) {
+      _draft = null;
+      _dragging = false;
+    } else if (!_dragging &&
+        (!widget.busy && (oldWidget.state != widget.state || oldWidget.busy))) {
+      _draft = null;
+    }
   }
 
   void _send(HSVColor color) {
-    setState(() => _draft = null);
+    setState(() {
+      _dragging = false;
+      _draft = color;
+    });
     widget.onChanged(color);
   }
 
@@ -62,17 +74,15 @@ final class _ColorControlState extends State<ColorControl> {
                   style: TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
-              if (shown != null)
+              if (confirmed != null)
                 Semantics(
-                  label: _draft == null
-                      ? 'رنگ دریافت‌شده از وسیله'
-                      : 'پیش‌نمایش رنگ',
+                  label: context.tr('رنگ دریافت‌شده از وسیله'),
                   child: Container(
                     key: const ValueKey('confirmed-color'),
                     width: 28,
                     height: 28,
                     decoration: BoxDecoration(
-                      color: shown.toColor(),
+                      color: confirmed.toColor(),
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: Theme.of(context).colorScheme.outline,
@@ -94,73 +104,45 @@ final class _ColorControlState extends State<ColorControl> {
               ],
             ),
           if (shown != null) ...<Widget>[
-            Semantics(
-              label: 'انتخاب رنگ از طیف',
-              child: Stack(
-                alignment: Alignment.center,
-                children: <Widget>[
-                  Container(
-                    height: 18,
-                    margin: const EdgeInsets.symmetric(horizontal: 24),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      gradient: const LinearGradient(
-                        colors: <Color>[
-                          Color(0xffff0000),
-                          Color(0xffffff00),
-                          Color(0xff00ff00),
-                          Color(0xff00ffff),
-                          Color(0xff0000ff),
-                          Color(0xffff00ff),
-                          Color(0xffff0000),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // Physical spectrum and slider both run left-to-right, even in Persian.
-                  Directionality(
-                    textDirection: TextDirection.ltr,
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 18,
-                        activeTrackColor: Colors.transparent,
-                        inactiveTrackColor: Colors.transparent,
-                        disabledActiveTrackColor: Colors.transparent,
-                        disabledInactiveTrackColor: Colors.transparent,
-                        thumbColor: HSVColor.fromAHSV(
-                          1,
-                          shown.hue,
-                          1,
-                          1,
-                        ).toColor(),
-                      ),
-                      child: Slider(
-                        key: const ValueKey('color-hue'),
-                        min: 0,
-                        max: 360,
-                        value: shown.hue,
-                        semanticFormatterCallback: (value) =>
-                            'رنگ ${toPersianDigits(value.round())}',
-                        onChanged: active
-                            ? (value) => setState(
-                                () => _draft = HSVColor.fromAHSV(
-                                  1,
-                                  value % 360,
-                                  1,
-                                  1,
-                                ),
-                              )
-                            : null,
-                        onChangeEnd: active
-                            ? (value) =>
-                                  _send(HSVColor.fromAHSV(1, value % 360, 1, 1))
-                            : null,
-                      ),
-                    ),
-                  ),
-                ],
+            Center(
+              child: ColorWheel(
+                key: const ValueKey('color-wheel'),
+                value: shown,
+                enabled: active,
+                semanticLabel: context.tr('انتخاب رنگ از طیف'),
+                onChanged: (color) => setState(() {
+                  _dragging = true;
+                  _draft = color;
+                }),
+                onChangeEnd: _send,
+                onCancel: () => setState(() {
+                  _dragging = false;
+                  _draft = null;
+                }),
               ),
             ),
+            if (_draft != null)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    key: const ValueKey('color-preview'),
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: shown.toColor(),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const AppText('پیش‌نمایش رنگ'),
+                ],
+              ),
+            if (widget.busy) const LinearProgressIndicator(),
+            const SizedBox(height: 8),
           ],
           Wrap(
             spacing: 6,
