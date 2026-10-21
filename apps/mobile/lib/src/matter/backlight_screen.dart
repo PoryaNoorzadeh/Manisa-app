@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design/color_wheel.dart';
 import '../design/manisa_brand.dart';
 import '../design/manisa_localization.dart';
 import 'backlight_policy.dart';
@@ -282,8 +283,7 @@ class _BacklightScreenState extends State<BacklightScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Center(
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
+                            child: Container(
                               width: 88,
                               height: 88,
                               decoration: BoxDecoration(
@@ -304,56 +304,20 @@ class _BacklightScreenState extends State<BacklightScreen> {
                               textAlign: TextAlign.center,
                             ),
                           const SizedBox(height: 12),
-                          Directionality(
-                            textDirection: TextDirection.ltr,
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                Container(
-                                  height: 20,
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 24,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(12),
-                                    gradient: const LinearGradient(
-                                      colors: [
-                                        Colors.red,
-                                        Colors.yellow,
-                                        Colors.green,
-                                        Colors.cyan,
-                                        Colors.blue,
-                                        Colors.purple,
-                                        Colors.red,
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                SliderTheme(
-                                  data: SliderTheme.of(context).copyWith(
-                                    trackHeight: 20,
-                                    activeTrackColor: Colors.transparent,
-                                    inactiveTrackColor: Colors.transparent,
-                                    thumbColor: shown?.toColor(),
-                                  ),
-                                  child: Slider(
-                                    value: shown?.hue ?? 240,
-                                    min: 0,
-                                    max: 360,
-                                    onChanged: _working
-                                        ? null
-                                        : (h) => setState(() {
-                                            _draft = HSVColor.fromAHSV(
-                                              1,
-                                              h % 360,
-                                              1,
-                                              1,
-                                            );
-                                            _results.clear();
-                                          }),
-                                  ),
-                                ),
-                              ],
+                          Center(
+                            child: ColorWheel(
+                              key: const ValueKey('backlight-color-wheel'),
+                              value:
+                                  shown ??
+                                  const HSVColor.fromAHSV(1, 240, 1, 1),
+                              enabled: !_working,
+                              semanticLabel: context.tr('انتخاب رنگ از طیف'),
+                              onChanged: (color) => setState(() {
+                                _draft = color;
+                                _results.clear();
+                              }),
+                              // Backlight changes remain local until explicit Apply.
+                              onChangeEnd: (_) {},
                             ),
                           ),
                           const SizedBox(height: 12),

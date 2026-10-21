@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:manisa_mobile/src/matter/color_control.dart';
 import 'package:manisa_mobile/src/matter/direct_device_store.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_app.dart';
 import 'package:manisa_mobile/src/matter/direct_matter_controller.dart';
@@ -41,7 +42,28 @@ class VisualDevices extends TestDevices {
 }
 
 class VisualController extends TestController
-    implements SensorMeasurementController {
+    implements SensorMeasurementController, ColorControlController {
+  @override
+  Future<Map<int, DirectColorState>> readColors(int nodeId) async => nodeId == 1
+      ? {
+          1: DirectColorState.fromMap({
+            'capabilities': 1,
+            'mode': 0,
+            'hue': 85,
+            'saturation': 254,
+          }),
+        }
+      : {};
+  @override
+  Future<void> setColor({
+    required int nodeId,
+    required int endpoint,
+    required String mode,
+    required int first,
+    required int second,
+  }) async {}
+  @override
+  Stream<DirectColorEvent> watchColors() => const Stream.empty();
   @override
   Future<List<int>> discoverOnOffEndpoints(int nodeId) async =>
       nodeId == 1 ? [1] : [];
@@ -121,6 +143,25 @@ void main() {
 
       expect(find.text('۲۳٫۴ °C'), findsWidgets);
       await capture('home-fa');
+      await tester.ensureVisible(find.byKey(const ValueKey('open-device-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('open-device-1')));
+      await tester.pumpAndSettle();
+      await capture('device-power-fa');
+      await tester.tap(find.byTooltip('نور و مصرف'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('color-wheel')));
+      await tester.pumpAndSettle();
+      await capture('device-color-fa');
+      Navigator.of(
+        tester.element(find.byKey(const ValueKey('device-detail-screen'))),
+      ).pop();
+      await tester.pumpAndSettle();
+      tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position
+          .jumpTo(0);
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('افزودن'));
       await tester.pumpAndSettle();
       await capture('add-fa');

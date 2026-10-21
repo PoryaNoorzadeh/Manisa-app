@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import android.util.Log
+import chip.devicecontroller.ChipDeviceController
 import chip.platform.AndroidChipPlatform
 import chip.platform.BleCallback
 import java.util.UUID
@@ -30,6 +31,7 @@ import java.util.UUID
 internal class ManisaBleCommissioner(
     private val context: Context,
     private val platform: AndroidChipPlatform,
+    private val controller: ChipDeviceController,
 ) : BleCallback {
     companion object {
         private const val TAG = "ManisaMatterBle"
@@ -43,7 +45,10 @@ internal class ManisaBleCommissioner(
     private var scannerCallback: ScanCallback? = null
     private var bleGatt: BluetoothGatt? = null
     private var connectionId: Int = 0
+    @Volatile private var active = false
     private var completedGattSetup = false
+    private var scanTimeout: Runnable? = null
+    private var setupTimeout: Runnable? = null
     private var onConnected: ((BluetoothGatt, Int) -> Unit)? = null
     private var onFailure: ((String) -> Unit)? = null
 
@@ -53,7 +58,8 @@ internal class ManisaBleCommissioner(
         connected: (BluetoothGatt, Int) -> Unit,
         failed: (String) -> Unit,
     ) {
-        cancelScan()
+        cancel()
+        active = true
         completedGattSetup = false
         onConnected = connected
         onFailure = failed
@@ -88,13 +94,18 @@ internal class ManisaBleCommissioner(
 
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                Log.i(TAG, "Matter BLE device discovered: ${result.device.address}")
-                cancelScan()
-                connect(result.device)
+                dispatch {
+                    if (!active || scannerCallback !== this) return@dispatch
+                    Log.i(TAG, "Matter BLE device discovered: ${result.device.address}")
+                    cancelScan()
+                    connect(result.device)
+                }
             }
 
             override fun onScanFailed(errorCode: Int) {
-                fail("Matter BLE scan failed (error $errorCode)")
+                dispatch {
+                    if (active && scannerCallback === this) fail("Matter BLE scan failed (error $errorCode)")
+                }
             }
         }
         scannerCallback = callback
@@ -103,28 +114,38 @@ internal class ManisaBleCommissioner(
             "Starting Matter BLE scan discriminator=$discriminator short=$isShortDiscriminator",
         )
         scanner.startScan(listOf(filter), settings, callback)
-        handler.postDelayed(
-            {
-                if (scannerCallback != null) {
-                    fail("Matter device was not found over Bluetooth")
-                }
-            },
-            SCAN_TIMEOUT_MS,
-        )
+        scanTimeout = Runnable {
+            if (active && scannerCallback === callback) fail("Matter device was not found over Bluetooth")
+        }.also { handler.postDelayed(it, SCAN_TIMEOUT_MS) }
     }
 
     fun cancel() {
-        cancelScan()
-        if (!completedGattSetup) {
-            bleGatt?.disconnect()
-            bleGatt?.close()
-            bleGatt = null
-        }
+        active = false
         onConnected = null
         onFailure = null
+        cancelScan()
+        setupTimeout?.let { handler.removeCallbacks(it) }
+        setupTimeout = null
+        closeGatt()
+    }
+
+    private fun closeGatt() {
+        val gatt = bleGatt
+        bleGatt = null
+        val id = connectionId
+        connectionId = 0
+        if (id != 0 && platform.bleManager.getConnection(id) === gatt) {
+            platform.bleManager.removeConnection(id)
+        }
+        try { gatt?.disconnect() } catch (error: Exception) { Log.w(TAG, "BLE disconnect failed", error) }
+        try { gatt?.close() } catch (error: Exception) { Log.w(TAG, "BLE close failed", error) }
     }
 
     private fun connect(device: BluetoothDevice) {
+        if (!active) return
+        setupTimeout = Runnable {
+            if (active && !completedGattSetup) fail("Matter Bluetooth connection setup timed out")
+        }.also { handler.postDelayed(it, 20_000L) }
         val callback = createGattCallback()
         Log.i(TAG, "Connecting to Matter BLE device ${device.address}")
         val gatt = device.connectGatt(context, false, callback)
@@ -142,50 +163,68 @@ internal class ManisaBleCommissioner(
             private var state = 1
 
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-                super.onConnectionStateChange(gatt, status, newState)
-                wrappedCallback.onConnectionStateChange(gatt, status, newState)
-                Log.i(TAG, "BLE state status=$status newState=$newState")
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    super.onConnectionStateChange(gatt, status, newState)
+                    wrappedCallback.onConnectionStateChange(gatt, status, newState)
+                    Log.i(TAG, "BLE state status=$status newState=$newState")
 
-                if (newState == BluetoothProfile.STATE_CONNECTED &&
-                    status == BluetoothGatt.GATT_SUCCESS
-                ) {
-                    state = 2
-                    gatt?.discoverServices()
-                } else if (!completedGattSetup && newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    fail("Matter BLE connection closed before commissioning started (status $status)")
+                    if (newState == BluetoothProfile.STATE_CONNECTED &&
+                        status == BluetoothGatt.GATT_SUCCESS
+                    ) {
+                        state = 2
+                        gatt?.discoverServices()
+                    } else if (!completedGattSetup && newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        fail("Matter BLE connection closed before commissioning started (status $status)")
+                    }
                 }
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-                wrappedCallback.onServicesDiscovered(gatt, status)
-                Log.i(TAG, "BLE services discovered status=$status")
-                if (state != 2 || status != BluetoothGatt.GATT_SUCCESS) {
-                    fail("Matter BLE service discovery failed (status $status)")
-                    return
-                }
-                state = 3
-                if (gatt?.requestMtu(247) != true) {
-                    fail("Matter BLE MTU request could not be started")
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    wrappedCallback.onServicesDiscovered(gatt, status)
+                    Log.i(TAG, "BLE services discovered status=$status")
+                    if (state != 2) return@dispatch
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        fail("Matter BLE service discovery failed (status $status)")
+                        return@dispatch
+                    }
+                    state = 3
+                    if (gatt?.requestMtu(247) != true) {
+                        fail("Matter BLE MTU request could not be started")
+                    }
                 }
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
-                super.onMtuChanged(gatt, mtu, status)
-                wrappedCallback.onMtuChanged(gatt, mtu, status)
-                Log.i(TAG, "BLE MTU changed mtu=$mtu status=$status")
-                if (state != 3 || gatt == null || status != BluetoothGatt.GATT_SUCCESS) {
-                    fail("Matter BLE MTU negotiation failed (status $status)")
-                    return
+                dispatch {
+                    if (!active || gatt !== bleGatt || completedGattSetup) return@dispatch
+                    super.onMtuChanged(gatt, mtu, status)
+                    wrappedCallback.onMtuChanged(gatt, mtu, status)
+                    Log.i(TAG, "BLE MTU changed mtu=$mtu status=$status")
+                    if (state != 3) return@dispatch
+                    if (gatt == null || status != BluetoothGatt.GATT_SUCCESS) {
+                        fail("Matter BLE MTU negotiation failed (status $status)")
+                        return@dispatch
+                    }
+                    completedGattSetup = true
+                    setupTimeout?.let { handler.removeCallbacks(it) }
+                    setupTimeout = null
+                    val connected = onConnected
+                    onConnected = null
+                    if (active) connected?.invoke(gatt, connectionId)
                 }
-                completedGattSetup = true
-                onConnected?.invoke(gatt, connectionId)
             }
 
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
             ) {
-                wrappedCallback.onCharacteristicChanged(gatt, characteristic)
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    wrappedCallback.onCharacteristicChanged(gatt, characteristic)
+                }
             }
 
             override fun onCharacteristicRead(
@@ -193,7 +232,10 @@ internal class ManisaBleCommissioner(
                 characteristic: BluetoothGattCharacteristic,
                 status: Int,
             ) {
-                wrappedCallback.onCharacteristicRead(gatt, characteristic, status)
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    wrappedCallback.onCharacteristicRead(gatt, characteristic, status)
+                }
             }
 
             override fun onCharacteristicWrite(
@@ -201,7 +243,10 @@ internal class ManisaBleCommissioner(
                 characteristic: BluetoothGattCharacteristic,
                 status: Int,
             ) {
-                wrappedCallback.onCharacteristicWrite(gatt, characteristic, status)
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    wrappedCallback.onCharacteristicWrite(gatt, characteristic, status)
+                }
             }
 
             override fun onDescriptorRead(
@@ -209,7 +254,10 @@ internal class ManisaBleCommissioner(
                 descriptor: BluetoothGattDescriptor,
                 status: Int,
             ) {
-                wrappedCallback.onDescriptorRead(gatt, descriptor, status)
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    wrappedCallback.onDescriptorRead(gatt, descriptor, status)
+                }
             }
 
             override fun onDescriptorWrite(
@@ -217,20 +265,41 @@ internal class ManisaBleCommissioner(
                 descriptor: BluetoothGattDescriptor,
                 status: Int,
             ) {
-                wrappedCallback.onDescriptorWrite(gatt, descriptor, status)
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    wrappedCallback.onDescriptorWrite(gatt, descriptor, status)
+                }
             }
 
             override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
-                wrappedCallback.onReadRemoteRssi(gatt, rssi, status)
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    wrappedCallback.onReadRemoteRssi(gatt, rssi, status)
+                }
             }
 
             override fun onReliableWriteCompleted(gatt: BluetoothGatt, status: Int) {
-                wrappedCallback.onReliableWriteCompleted(gatt, status)
+                dispatch {
+                    if (!active || gatt !== bleGatt) return@dispatch
+                    wrappedCallback.onReliableWriteCompleted(gatt, status)
+                }
             }
         }
     }
 
+    // Serialize Android binder callbacks with MethodChannel cancellation. Also make
+    // permission/Bluetooth exceptions in asynchronous setup settle the pending add.
+    private fun dispatch(action: () -> Unit) {
+        handler.post {
+            if (!active) return@post
+            try { action() }
+            catch (error: Exception) { fail(error.message ?: "Matter Bluetooth operation failed") }
+        }
+    }
+
     private fun cancelScan() {
+        scanTimeout?.let { handler.removeCallbacks(it) }
+        scanTimeout = null
         val callback = scannerCallback ?: return
         try {
             bluetoothAdapter?.bluetoothLeScanner?.stopScan(callback)
@@ -241,17 +310,11 @@ internal class ManisaBleCommissioner(
     }
 
     private fun fail(message: String) {
+        if (!active) return
         Log.e(TAG, message)
-        cancelScan()
-        if (!completedGattSetup) {
-            bleGatt?.disconnect()
-            bleGatt?.close()
-            bleGatt = null
-        }
         val callback = onFailure
-        onConnected = null
-        onFailure = null
-        callback?.invoke(message)
+        cancel()
+        handler.post { callback?.invoke(message) }
     }
 
     private fun getServiceData(discriminator: Int): ByteArray {
@@ -271,14 +334,23 @@ internal class ManisaBleCommissioner(
     }
 
     override fun onCloseBleComplete(connId: Int) {
-        Log.i(TAG, "Matter BLE close complete connId=$connId")
-        connectionId = 0
+        dispatch {
+            if (connId != connectionId) return@dispatch
+            Log.i(TAG, "Matter BLE close complete connId=$connId")
+            // The bridge owns BleCallback, so it must also release the controller's
+            // Java connection-id guard. Otherwise every later pair reports busy.
+            controller.onCloseBleComplete(connId)
+            bleGatt = null // AndroidBleManager already closed this GATT.
+            connectionId = 0
+        }
     }
 
     override fun onNotifyChipConnectionClosed(connId: Int) {
-        Log.i(TAG, "Matter requested BLE connection close connId=$connId")
-        bleGatt?.close()
-        bleGatt = null
-        connectionId = 0
+        dispatch {
+            if (connId != connectionId) return@dispatch
+            Log.i(TAG, "Matter requested BLE connection close connId=$connId")
+            controller.onNotifyChipConnectionClosed(connId)
+            closeGatt()
+        }
     }
 }
