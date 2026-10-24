@@ -103,6 +103,24 @@ jobs:
             -include-runtime -d "$RUNNER_TEMP/commissioning-tests.jar"
           java -jar "$RUNNER_TEMP/commissioning-tests.jar"
 
+      - name: Verify commissioning callbacks never reenter the native lock
+        env:
+          KOTLINC: ${{ runner.temp }}/kotlinc/bin/kotlinc
+        run: python3 apps/mobile/native/tests/check_commissioning_reentrancy.py
+
+      - name: Verify BLE callback packet integrity and cleanup order
+        run: |
+          "$RUNNER_TEMP/kotlinc/bin/kotlinc" \
+            apps/mobile/native/tests/ble_stubs/*.kt \
+            apps/mobile/native/android/ManisaBleCommissioner.kt \
+            apps/mobile/native/tests/ManisaBleCommissionerTest.kt \
+            -nowarn -include-runtime -d "$RUNNER_TEMP/ble-transport-tests.jar"
+          java -jar "$RUNNER_TEMP/ble-transport-tests.jar"
+
+      - name: Verify commissioning callbacks do not re-enter JNI
+        run: |
+          KOTLINC="$RUNNER_TEMP/kotlinc/bin/kotlinc" python3 apps/mobile/native/tests/check_commissioning_reentrancy.py
+
       - name: Build Matter Android controller libraries
         working-directory: matter
         run: |
@@ -216,6 +234,10 @@ jobs:
           } > "dist/${{ steps.build_meta.outputs.metadata_name }}"
           cat > "dist/${{ steps.build_meta.outputs.notes_name }}" <<'NOTES'
           Manisa M14 responsive controls and retry recovery - physical acceptance pending
+          - Defer attestation and completion callbacks until the native Matter lock is released
+          - Defer attestation/completion work until the native callback releases Matter StackLock
+          - Snapshot BLE indication bytes before queueing; support Android 13 callback values
+          - Reject null/empty BLE payloads before JNI; stop native pairing before GATT cleanup
           - Failed-add cleanup, bounded cancellation and retry without restarting
           - Circular color wheel with local preview and latest-selection coalescing
           - Direct accessory power actions and quiet node-scoped background recovery
