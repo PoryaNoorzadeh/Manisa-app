@@ -19,6 +19,7 @@ import android.util.Log
 import chip.devicecontroller.ChipDeviceController
 import chip.platform.AndroidChipPlatform
 import chip.platform.BleCallback
+import java.nio.ByteBuffer
 import java.util.UUID
 
 /**
@@ -221,10 +222,17 @@ internal class ManisaBleCommissioner(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
             ) {
-                dispatch {
-                    if (!active || gatt !== bleGatt) return@dispatch
-                    wrappedCallback.onCharacteristicChanged(gatt, characteristic)
-                }
+                receiveIndication(gatt, characteristic, characteristic.value)
+            }
+
+            // Android 13+ supplies the immutable-at-callback value separately from
+            // the cached characteristic. Do not fall back to characteristic.value.
+            override fun onCharacteristicChanged(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                value: ByteArray,
+            ) {
+                receiveIndication(gatt, characteristic, value)
             }
 
             override fun onCharacteristicRead(
@@ -287,6 +295,36 @@ internal class ManisaBleCommissioner(
         }
     }
 
+    private fun receiveIndication(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray?,
+    ) {
+        // BluetoothGattCharacteristic is reused by Android. Capture each packet
+        // BEFORE posting, otherwise two indications can both deliver the last one.
+        val payload = value?.copyOf()
+        val service = characteristic.service?.uuid
+        val characteristicId = characteristic.uuid
+        dispatch {
+            if (gatt !== bleGatt) return@dispatch
+            if (payload == null || payload.isEmpty()) {
+                fail("Matter BLE indication had no payload")
+                return@dispatch
+            }
+            if (service == null) {
+                fail("Matter BLE indication had no service")
+                return@dispatch
+            }
+            val id = connectionId
+            if (id == 0 || platform.bleManager.getConnection(id) !== gatt) return@dispatch
+            // Match AndroidBleManager's big-endian UUID encoding, but never let
+            // JNI read the mutable characteristic or receive a null byte array.
+            fun bytes(uuid: UUID) = ByteBuffer.allocate(16)
+                .putLong(uuid.mostSignificantBits).putLong(uuid.leastSignificantBits).array()
+            platform.handleIndicationReceived(id, bytes(service), bytes(characteristicId), payload)
+        }
+    }
+
     // Serialize Android binder callbacks with MethodChannel cancellation. Also make
     // permission/Bluetooth exceptions in asynchronous setup settle the pending add.
     private fun dispatch(action: () -> Unit) {
@@ -313,8 +351,11 @@ internal class ManisaBleCommissioner(
         if (!active) return
         Log.e(TAG, message)
         val callback = onFailure
-        cancel()
-        handler.post { callback?.invoke(message) }
+        onFailure = null
+        // The owner must stop native commissioning before its transport is removed.
+        // releaseCommission() may cancel us reentrantly; final cleanup is idempotent.
+        try { callback?.invoke(message) }
+        finally { cancel() }
     }
 
     private fun getServiceData(discriminator: Int): ByteArray {

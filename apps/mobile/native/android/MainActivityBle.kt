@@ -498,9 +498,12 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
     private fun bindAttestationDelegate(attempt: CommissionAttempt) {
         // M1 validation uses development roots. Bind to this attempt rather than
         // attributing a late callback to whichever device is currently pending.
+        // Always enqueue, even on the main thread: BLE JNI can call this
+        // delegate synchronously with the non-reentrant Matter StackLock held.
+        // Activity.runOnUiThread would execute inline and deadlock re-entering JNI.
         controller.setDeviceAttestationDelegate(DEVICE_ATTESTATION_TIMEOUT) { devicePtr, _, errorCode ->
-            runOnUiThread {
-                if (pendingCommission !== attempt || attempt.commissioned) return@runOnUiThread
+            sensorHandler.post {
+                if (pendingCommission !== attempt || attempt.commissioned) return@post
                 // Both APIs use the native CommissioneeDeviceProxy pointer in SDK
                 // v1.5.1.0. Never continue a proxy belonging to a retired attempt.
                 val currentPointer = try {
@@ -508,9 +511,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 } catch (_: Exception) {
                     // A native callback can already be queued while cancellation stops
                     // its proxy, or while the next attempt is still scanning.
-                    return@runOnUiThread
+                    return@post
                 }
-                if (devicePtr == 0L || currentPointer != devicePtr) return@runOnUiThread
+                if (devicePtr == 0L || currentPointer != devicePtr) return@post
                 try {
                     Log.i(TAG, "Device attestation completed nodeId=${attempt.nodeId} errorCode=$errorCode")
                     controller.continueCommissioning(devicePtr, true)
@@ -534,11 +537,11 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
         }
 
         override fun onCommissioningComplete(nodeId: Long, errorCode: Long) {
-            runOnUiThread {
-                if (pendingCommission !== attempt || nodeId != attempt.nodeId || attempt.commissioned) return@runOnUiThread
+            sensorHandler.post {
+                if (pendingCommission !== attempt || nodeId != attempt.nodeId || attempt.commissioned) return@post
                 if (errorCode != STATUS_OK) {
                     failPendingCommission(attempt, "commissioning_failed", "Matter commissioning failed (error $errorCode)", errorCode)
-                    return@runOnUiThread
+                    return@post
                 }
                 // The node is already on this fabric. Discovery is optional and must never
                 // turn a successful add into a timeout/failure that loses its local record.
@@ -549,7 +552,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, EventCh
                 try {
                     discoverOnOffEndpoints(nodeId, object : MethodChannel.Result {
                         override fun success(result: Any?) {
-                            runOnUiThread { completeCommission(attempt, result as? List<*> ?: emptyList<Any>()) }
+                            sensorHandler.post { completeCommission(attempt, result as? List<*> ?: emptyList<Any>()) }
                         }
                         override fun error(code: String, message: String?, details: Any?) { success(emptyList<Any>()) }
                         override fun notImplemented() { success(emptyList<Any>()) }
